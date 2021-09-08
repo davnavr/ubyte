@@ -113,8 +113,6 @@ module InstructionSet =
 
 
         // Register
-        | ``reg.load`` = 0x15u
-        | ``reg.store`` = 0x16u
         | ``reg.move`` = 0x17u
 
         // Arithmetic
@@ -154,6 +152,9 @@ module InstructionSet =
         /// </remarks>
         | Call of method: MethodIndex * arguments: ImmutableArray<RegisterIndex> * results: vector<RegisterIndex>
 
+        // TODO: After move, will source register still contain same value?
+        //| Reg_move of source: RegisterIndex * destination: RegisterIndex
+
         // Arithmetic
         /// <summary>
         /// Computes the sum of the values in registers <paramref name="x"/> and <paramref name="y"/>, and stores the sum in the
@@ -162,13 +163,13 @@ module InstructionSet =
         | Add of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
 
         /// Stores a signed 32-bit integer into the specified register.
-        | Const_s32 of int32 * RegisterIndex
+        | Const_s32 of value: int32 * destination: RegisterIndex
 
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
 type IdentifierSection =
     { Identifiers: vector<Name> }
 
-    member Item : index: IdentifierIndex -> Name
+    member Item : index: IdentifierIndex -> Name with get
 
 [<RequireQualifiedAccess; NoComparison; StructuralEquality>]
 type PrimitiveType =
@@ -217,7 +218,7 @@ type FieldImport =
 [<NoComparison; NoEquality>]
 type MethodImport =
     { MethodName: Name
-      //TypeParameters: 
+      TypeParameters: uvarint
       Signature: MethodSignature }
 
 type TypeDefinitionKindTag =
@@ -229,7 +230,7 @@ type TypeDefinitionKindTag =
 type TypeDefinitionImport =
     { TypeName: Name
       TypeKind: TypeDefinitionKindTag
-      //TypeParameters: 
+      TypeParameters: uvarint
       Fields: vector<FieldImport>
       Methods: vector<MethodImport> }
 
@@ -316,28 +317,16 @@ type TypeDefinition =
       TypeKind: TypeDefinitionKind
       TypeVisibility: VisibilityFlags
       TypeLayout: TypeDefinitionLayout
-      ///ImplementedInterfaces: vector<unit>
+      ImplementedInterfaces: vector<unit>
       TypeParameters: vector<unit>
       /// An array of annotations applied to the type.
       TypeAnnotations: vector<unit>
       Fields: vector<Field>
       Methods: vector<unit> }
 
-[<IsReadOnly; Struct; StructuralComparison; StructuralEquality>]
-type NamespaceName =
-    internal { Name: vector<Name> }
-
-    override ToString : unit -> string
-
-    interface IEquatable<NamespaceName>
-
-val (|NamespaceName|) : name: NamespaceName -> vector<Name>
-
-// TODO: Have function to turn a string "bleh.blah.bleh" into a vector<Name> for NamespaceName
-
 [<NoComparison; NoEquality>]
 type NamespaceImport =
-    { NamespaceName: NamespaceName // TODO: Namespace name should be an identifier index.
+    { NamespaceName: vector<IdentifierIndex>
       /// An array of the user-defined types imported from this namespace.
       TypeImports: LengthEncoded<vector<TypeDefinitionImport>>
       /// An array of the imported type aliases from this namespace.
@@ -345,9 +334,33 @@ type NamespaceImport =
 
 [<NoComparison; NoEquality>]
 type Namespace =
-    { NamespaceName: NamespaceName // TODO: Namespace name should be an identifier index.
+    { NamespaceName: vector<IdentifierIndex>
       TypeDefinitions: LengthEncoded<vector<TypeDefinition>>
       TypeAliases: LengthEncoded<vector<TypeAlias>> }
+
+[<Flags>]
+type RegisterFlags =
+    /// Indicates that the pointer stored in the register points to an object that is tracked by the garbage collector.
+    | Pinned = 0b0000_0010uy
+    | ValidMask = 0b0000_0000uy
+
+[<IsReadOnly; Struct; NoComparison; NoEquality>]
+type RegisterType =
+    { RegisterType: TypeIndex
+      RegisterFlags: RegisterFlags }
+
+[<NoComparison; NoEquality>]
+type Code =
+    { /// The types and special flags for the registers of the method. A length precedes each register type and flag byte to
+      /// allow easy duplication
+      RegisterTypes: vector<struct(uvarint * RegisterType)>
+      /// The instructions that make up the method body. Both the byte length and the actual number of instructions are included
+      /// to simplify parsing.
+      Instructions: LengthEncoded<vector<InstructionSet.Instruction>> }
+
+    member RegisterCount : uvarint
+
+type Debug = unit
 
 [<NoComparison; StructuralEquality>]
 type ModuleIdentifier =
@@ -380,30 +393,6 @@ type ModuleHeader =
 
     /// A LEB128 unsigned integer preceding the header indicating the number of fields in the header.
     member FieldCount: uvarint
-
-[<Flags>]
-type RegisterFlags =
-    /// Indicates that the pointer stored in the register points to an object that is tracked by the garbage collector.
-    | Pinned = 0b0000_0010uy
-    | ValidMask = 0b0000_0000uy
-
-[<IsReadOnly; Struct; NoComparison; NoEquality>]
-type RegisterType =
-    { RegisterType: TypeIndex
-      RegisterFlags: RegisterFlags }
-
-[<NoComparison; NoEquality>]
-type Code =
-    { /// The types and special flags for the registers of the method. A length precedes each register type and flag byte to
-      /// allow easy duplication
-      RegisterTypes: vector<struct(uvarint * RegisterType)>
-      /// The instructions that make up the method body. Both the byte length and the actual number of instructions are included
-      /// to simplify parsing.
-      Instructions: LengthEncoded<vector<InstructionSet.Instruction>> }
-
-    member RegisterCount : uvarint
-
-type Debug = unit
 
 [<NoComparison; NoEquality>]
 type Module =
