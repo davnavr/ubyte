@@ -8,8 +8,8 @@
 
   <ItemGroup>
     <Compile Include="Compare.fs" />
-    <Compile Include="Format.fsi" />
-    <Compile Include="Format.fs" />
+    <Compile Include="Model.fsi" />
+    <Compile Include="Model.fs" />
     <Compile Include="WriteModule.fsi" />
     <Compile Include="Span.fs" />
     <Compile Include="ParseModule.fsi" />

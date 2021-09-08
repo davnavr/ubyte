@@ -4,7 +4,7 @@ open System.Collections.Generic
 open System.IO
 
 open UByte.Format
-open UByte.Format.Format
+open UByte.Format.Model
 
 [<Sealed>]
 type RuntimeModule (m: Module) =

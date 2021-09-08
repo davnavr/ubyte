@@ -8,7 +8,7 @@ open UByte.Format
 
 [<Sealed>]
 type RuntimeModule =
-    member Module: Format.Module
+    member Module: Model.Module
 
 [<Sealed>]
 type State =

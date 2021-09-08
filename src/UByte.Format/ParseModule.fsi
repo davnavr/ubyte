@@ -8,14 +8,14 @@ open System.IO
 /// <exception cref="T:System.ArgumentNullException">
 /// Thrown when the <paramref name="source"/> is <see langword="null"/>.
 /// </exception>
-val fromStream : source: Stream -> Format.Module
+val fromStream : source: Stream -> Model.Module
 
 /// <exception cref="T:System.ArgumentNullException">
 /// Thrown when the <paramref name="source"/> is <see langword="null"/>.
 /// </exception>
-val fromFile : source: FileInfo -> Format.Module
+val fromFile : source: FileInfo -> Model.Module
 
 /// <exception cref="T:System.ArgumentNullException">
 /// Thrown when the <paramref name="source"/> is <see langword="null"/>.
 /// </exception>
-val fromPath : source: string -> Format.Module
+val fromPath : source: string -> Model.Module

@@ -5,6 +5,8 @@ open System.Collections.Immutable
 open System.IO
 open System.Runtime.CompilerServices
 
+open UByte.Format.Model
+
 [<Interface>]
 type IByteSequence = abstract Read: buffer: Span<byte> -> int32
 
@@ -46,7 +48,7 @@ module LEB128 =
 
     [<Struct; NoComparison; NoEquality>]
     type UInt =
-        interface IParser<Format.uvarint> with member _.Parse source = unsigned 32 uint32 source
+        interface IParser<uvarint> with member _.Parse source = unsigned 32 uint32 source
 
 [<IsReadOnly; Struct>]
 type StreamWrapper (stream: Stream) =
@@ -55,10 +57,10 @@ type StreamWrapper (stream: Stream) =
 
 // TODO: Have base class for exceptions.
 let magic (source: #IByteSequence) =
-    let magic' = Format.magic.Magic
+    let magic' = Model.magic.Magic
     let buffer = Span.stackalloc magic'.Length
     if source.Read buffer = 4 && Equality.spans (Span.asReadOnly buffer) (magic'.AsSpan()) then
-        Format.magic
+        Model.magic
     else failwithf "TODO: Error for invalid magic"
 
 let vector<'Parser, 'Result, 'Source
@@ -76,7 +78,7 @@ let vector<'Parser, 'Result, 'Source
 
     Unsafe.As<_, ImmutableArray<'Result>> &items
 
-let versions source = Format.VersionNumbers(vector<LEB128.UInt, _, _> source)
+let versions source = VersionNumbers(vector<LEB128.UInt, _, _> source)
 
 let lengthEncodedData (source: #IByteSequence) =
     let data =
@@ -97,7 +99,7 @@ let header source =
 let fromBytes (source: #IByteSequence) =
     let magic' = magic source
     let fversion = versions source
-    if fversion <> Format.currentFormatVersion then failwithf "TODO: Error for unsupported version %O" fversion
+    if fversion <> Model.currentFormatVersion then failwithf "TODO: Error for unsupported version %O" fversion
     
     ()
 

@@ -1,4 +1,4 @@
-﻿module UByte.Format.Format
+﻿module UByte.Format.Model
 
 open System
 open System.Collections.Immutable
