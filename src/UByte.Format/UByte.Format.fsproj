@@ -10,6 +10,8 @@
     <Compile Include="Compare.fs" />
     <Compile Include="Format.fsi" />
     <Compile Include="Format.fs" />
+    <Compile Include="WriteModule.fsi" />
+    <Compile Include="ParseModule.fsi" />
   </ItemGroup>
 
 </Project>
