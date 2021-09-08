@@ -7,7 +7,11 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="Runtime.fsi" />
+    <Compile Include="Runtime.fs" />
     <Compile Include="Program.fs" />
+
+    <PackageReference Include="Argu" Version="6.1.1" />
 
     <ProjectReference Include="$(RootDirectory)\src\UByte.Format\UByte.Format.fsproj" />
   </ItemGroup>

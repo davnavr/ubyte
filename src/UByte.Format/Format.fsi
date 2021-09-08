@@ -369,10 +369,12 @@ type ModuleIdentifier =
 
     interface IEquatable<ModuleIdentifier>
 
-[<NoComparison; NoEquality>]
+[<NoComparison; StructuralEquality>]
 type ModuleImport =
     { ImportedModule: ModuleIdentifier
       ImportedNamespaces: vector<NamespaceImport> }
+
+    interface IEquatable<ModuleImport>
 
 [<Flags>]
 type ModuleHeaderFlags =
@@ -408,7 +410,8 @@ type Module =
       /// An array of the namespaces defined in the module, which contain the module's types.
       Namespaces: LengthEncoded<vector<Namespace>>
       /// An optional index specifying the entry point method of the application.
-      /// The entry point method must not 
+      /// The entry point method must not have any type parameters. It is up to the compiler or runtime to determine if the
+      /// signature of the entry point method is valid.
       EntryPoint: LengthEncoded<MethodIndex voption>
       Code: LengthEncoded<vector<Code>>
       Debug: LengthEncoded<Debug> }

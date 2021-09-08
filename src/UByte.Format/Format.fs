@@ -314,6 +314,7 @@ type Debug = unit
 [<NoComparison; StructuralEquality>]
 type ModuleIdentifier = { ModuleName: Name; Version: VersionNumbers }
 
+[<NoComparison; StructuralEquality>]
 type ModuleImport = { ImportedModule: ModuleIdentifier; ImportedNamespaces: vector<NamespaceImport> }
 
 [<Flags>]
