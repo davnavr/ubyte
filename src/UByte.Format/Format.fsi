@@ -12,6 +12,7 @@ val (|Magic|) : magic: Magic -> ImmutableArray<byte>
 
 val magic : Magic
 
+/// Represents an array preceded by an LEB128 encoded unsigned integer indicating the number of items.
 type vector<'T> = ImmutableArray<'T>
 
 /// Represents a LEB128 encoded unsigned integer.
@@ -57,14 +58,16 @@ type Name =
 val (|Name|) : name: Name -> UString
 
 /// Represents data that is preceded by a LEB128 unsigned integer indicating the byte length of the following data.
-type Section<'Data> = 'Data
+type LengthEncoded<'Data> = 'Data
 
 [<RequireQualifiedAccess>]
 module IndexKinds =
     type [<AbstractClass>] Kind = class end
     type [<Sealed; Class>] Identifier = inherit Kind
+    type [<Sealed; Class>] Data = inherit Kind
     type [<Sealed; Class>] Type = inherit Kind
     type [<Sealed; Class>] MethodBody = inherit Kind
+    type [<Sealed; Class>] Register = inherit Kind
 
 [<IsReadOnly; Struct; StructuralComparison; StructuralEquality>]
 type Index<'Kind when 'Kind :> IndexKinds.Kind> =
@@ -72,10 +75,63 @@ type Index<'Kind when 'Kind :> IndexKinds.Kind> =
 
     interface IEquatable<Index<'Kind>>
 
-/// Represents an index into the module's identifiers. The index of the first identifier is 0.
+/// <summary>Represents an index into the module's identifiers. The index of the first identifier is <c>0</c>.</summary>
 type IdentifierIndex = Index<IndexKinds.Identifier>
 
+/// <summary>Represents an index into the module's method bodies. The index of the first method body is <c>0</c>.</summary>
 type MethodBodyIndex = Index<IndexKinds.MethodBody>
+
+/// <summary>
+/// Represents an index into the module's imported types or defined types. The index of the first imported type or type alias, if
+/// any, is <c>0</c>. The index of the first type or type alias defined in this module is equal to the number of type aliases.
+/// </summary>
+type TypeIndex = Index<IndexKinds.Type>
+
+/// <summary>
+/// Represents an index to an index. The index of the first register not representing a method parameter is equal to the number
+/// of method parameters. The index of the first method parameter, if any are defined, is <c>0</c>.
+/// </summary>
+type RegisterIndex = Index<IndexKinds.Register>
+
+module InstructionSet =
+    /// Opcodes are represented as LEB128 encoded unsigned integers.
+    type Opcode =
+        | nop = 0u
+        | ret = 1u
+
+        | call = 0x10u
+
+        // Arithmetic
+        | add = 0x20u
+        | sub = 0x21u
+        | mul = 0x22u
+        | div = 0x23u
+
+        | ``const.s32`` = 0x30u
+        | ``const.s64`` = 0x31u
+        | ``const.f32`` = 0x32u
+        | ``const.f64`` = 0x33u
+        | ``const.true`` = 0x34u
+        | ``const.zero`` = 0x35u
+        | ``const.false`` = 0x35u
+
+        // Branching
+        | br = 0x40u
+        | ``br.eq`` = 0x41u
+
+    [<NoComparison; NoEquality>]
+    type Instruction =
+        | Nop
+        | Ret of vector<RegisterIndex>
+
+        // Arithmetic
+        /// <summary>
+        /// Computes the sum of the values in registers <c>x</c> and <c>y</c>, and stores the sum in the <c>result</c> register.
+        /// </summary>
+        | Add of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
+
+        /// Stores a signed 32-bit integer into the specified register.
+        | Const_s32 of int32 * RegisterIndex
 
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
 type IdentifierSection =
@@ -117,15 +173,15 @@ type AnyType =
 [<NoComparison; StructuralEquality>]
 type MethodSignature =
     { /// The types of the values returned by the method. Currently, only one type is allowed.
-      ReturnType: vector<AnyType>
-      ParameterTypes: vector<AnyType> }
+      ReturnType: vector<TypeIndex>
+      ParameterTypes: vector<TypeIndex> }
 
     interface IEquatable<MethodSignature>
 
 [<NoComparison; NoEquality>]
 type FieldImport =
     { FieldName: Name
-      FieldType: AnyType }
+      FieldType: TypeIndex }
 
 [<NoComparison; NoEquality>]
 type MethodImport =
@@ -167,7 +223,7 @@ type Field =
     { FieldName: Name
       FieldFlags: FieldFlags
       FieldVisibility: VisibilityFlags
-      FieldType: AnyType
+      FieldType: TypeIndex
       /// An array of annotations applied to the field.
       FieldAnnotations: vector<unit> }
 
@@ -200,7 +256,7 @@ type Method =
 type TypeAlias =
     { AliasName: Name
       AliasVisibility: VisibilityFlags
-      AliasOf: AnyType } // TODO: Consider using index to point to an AnyType for defined TypeAliases and have a Section<vector<AnyType>>. Or maybe just use TypeIndices to point to TypeAliases (do the latter!)
+      AliasOf: AnyType }
 
 [<Flags>]
 type ClassDefinitionFlags =
@@ -211,7 +267,7 @@ type ClassDefinitionFlags =
 
 [<NoComparison; NoEquality>]
 type TypeDefinitionKind =
-    | Class of extends: Index<unit> * flags: ClassDefinitionFlags
+    | Class of extends: TypeIndex * flags: ClassDefinitionFlags
     | Interface
     /// A type whose instances can only be allocated on the stack.
     | Struct
@@ -221,7 +277,7 @@ type TypeDefinitionKind =
 type TypeDefinitionLayout =
     | Unspecified
     | Sequential
-    ///| Explicit
+    ///| Explicit of
 
 [<NoComparison; NoEquality>]
 type TypeDefinition =
@@ -250,17 +306,17 @@ val (|NamespaceName|) : name: NamespaceName -> vector<Name>
 
 [<NoComparison; NoEquality>]
 type NamespaceImport =
-    { NamespaceName: NamespaceName
+    { NamespaceName: NamespaceName // TODO: Namespace name should be an identifier index.
       /// An array of the user-defined types imported from this namespace.
-      TypeImports: Section<vector<TypeDefinitionImport>>
+      TypeImports: LengthEncoded<vector<TypeDefinitionImport>>
       /// An array of the imported type aliases from this namespace.
-      TypeAliases: Section<vector<Name>> }
+      TypeAliases: LengthEncoded<vector<Name>> }
 
 [<NoComparison; NoEquality>]
 type Namespace =
-    { NamespaceName: NamespaceName
-      TypeDefinitions: Section<vector<TypeDefinition>>
-      TypeAliases: Section<vector<TypeAlias>> }
+    { NamespaceName: NamespaceName // TODO: Namespace name should be an identifier index.
+      TypeDefinitions: LengthEncoded<vector<TypeDefinition>>
+      TypeAliases: LengthEncoded<vector<TypeAlias>> }
 
 [<NoComparison; StructuralEquality>]
 type ModuleIdentifier =
@@ -291,28 +347,35 @@ type ModuleHeader =
       /// The size, in bytes, of an unsafe pointer or object reference.
       PointerSize: uvarint }
 
+    /// A LEB128 unsigned integer preceding the header indicating the number of fields in the header.
+    member FieldCount: uvarint
+
 [<NoComparison; NoEquality>]
 type MethodBodyCode =
-    { Locals: vector<AnyType> }
+    { RegisterTypes: vector<TypeIndex>
+      /// The instructions that make up the method body. Both the byte length and the actual number of instructions are included
+      /// to simplify parsing.
+      Instructions: LengthEncoded<vector<InstructionSet.Instruction>> }
 
-/// Contains the names for methods parameters and local variables.
-type DebugNames = unit
+    member RegisterCount : uvarint
+
+type Debug = unit
 
 [<NoComparison; NoEquality>]
 type Module =
     { Magic: Magic
       FormatVersion: VersionNumbers
-      Header: ModuleHeader
+      Header: LengthEncoded<ModuleHeader>
       /// An array containing the names of the types, fields, and methods in this module.
-      Identifiers: Section<IdentifierSection>
+      Identifiers: LengthEncoded<IdentifierSection>
       /// An array of structures describes the modules containing the types used by this module.
-      Imports: Section<vector<ModuleImport>>
+      Imports: LengthEncoded<vector<ModuleImport>>
       /// An array of byte arrays containing miscellaneous data such as the contents of string literals.
-      Data: Section<vector<vector<byte>>>
+      Data: LengthEncoded<vector<vector<byte>>>
       /// An array of the namespaces defined in the module, which contain the module's types.
-      Namespaces: Section<vector<Namespace>>
-      Code: Section<vector<MethodBodyCode>>
-      DebugNames: Section<DebugNames> }
+      Namespaces: LengthEncoded<vector<Namespace>>
+      Code: LengthEncoded<vector<MethodBodyCode>>
+      Debug: LengthEncoded<Debug> }
 
 [<RequireQualifiedAccess>]
 module UString =

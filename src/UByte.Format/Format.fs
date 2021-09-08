@@ -99,14 +99,14 @@ type Name =
 
     override this.ToString() = let (Name name) = this in name.ToString()
 
-type Section<'Contents> = 'Contents
+type LengthEncoded<'Contents> = 'Contents
 
 type Module =
     { Magic: Magic
       FormatVersion: VersionNumbers
       Name: Name
       Version: VersionNumbers
-      Data: Section<ImmutableArray<ImmutableArray<byte>>> }
+      Data: LengthEncoded<ImmutableArray<ImmutableArray<byte>>> }
 
 
 
