@@ -62,42 +62,13 @@ type VersionNumbers =
 
 let currentFormatVersion = ImmutableArray.Create(0u, 0u) |> VersionNumbers
 
-let inline (|MatchesRune|) (c: char) (value: Rune) = Rune c = value
-
-let escaped =
-    let format = sprintf "\\u%04X"
-    fun (sb: StringBuilder) ->
-        function
-        | MatchesRune '\n' true -> sb.Append "\\n"
-        | MatchesRune '\r' true -> sb.Append "\\r"
-        | MatchesRune '\\' true -> sb.Append "\\\\"
-        | c -> format(uint32 c.Value) |> sb.Append
-
-let inline (|RuneInRange|) (min: char) (max: char) (value: Rune) = Rune min <= value && Rune max >= value
-
-[<Struct; NoComparison; StructuralEquality>]
-type UString =
-    | UString of vector<Rune>
-
-    override this.ToString() =
-        let (UString cpoints) = this
-        let sb = StringBuilder cpoints.Length
-        for c in cpoints do
-            match c with
-            | RuneInRange 'a' 'z' true
-            | RuneInRange 'A' 'Z' true
-            | RuneInRange '-' '9' true
-            | MatchesRune '_' true
-            | RuneInRange '\u00C0' '\u00F6' true -> sb.Append c
-            | _ -> escaped sb c
-            |> ignore
-        sb.ToString()
+type ustring = string
 
 [<Struct; NoComparison; StructuralEquality>]
 type Name =
-    | Name of UString
+    | Name of ustring
 
-    override this.ToString() = let (Name name) = this in name.ToString()
+    override this.ToString() = let (Name name) = this in name
 
 type LengthEncoded<'Contents> = 'Contents
 
@@ -343,17 +314,10 @@ type Module =
       Code: LengthEncoded<vector<Code>>
       Debug: LengthEncoded<Debug> }
 
-module UString =
-    let ofStr (s: string) =
-        let chars = ImmutableArray.CreateBuilder s.Length
-        let mutable enumerator = s.EnumerateRunes()
-        while enumerator.MoveNext() do chars.Add enumerator.Current
-        UString(chars.ToImmutable())
-
 let (|Name|) (Name name) = name
 
 module Name =
-    let tryOfStr (UString str as name) =
-        if str.IsDefaultOrEmpty
+    let tryOfStr name =
+        if String.IsNullOrEmpty name
         then ValueNone
         else ValueSome(Name name)

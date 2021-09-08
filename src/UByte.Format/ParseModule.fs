@@ -10,6 +10,12 @@ open UByte.Format.Model
 [<Interface>]
 type IByteSequence = abstract Read: buffer: Span<byte> -> int32
 
+let u1 (stream: #IByteSequence) =
+    let buffer = Span.stackalloc<byte> 1
+    if stream.Read buffer = 1
+    then buffer.[0]
+    else failwith "TODO: EOF unexpectedly reached"
+
 [<Interface>]
 type IParser<'Result> = abstract Parse: source: #IByteSequence -> 'Result
 
@@ -28,7 +34,7 @@ module LEB128 =
     let inline private unsigned size convert (stream: #IByteSequence) =
         let mutable cont, n, shifted = true, LanguagePrimitives.GenericZero, 0
         while cont do
-            let b = readByte stream
+            let b = u1 stream
             cont <- b &&& ContinueMask = ContinueMask
             n <- n ||| (convert (b &&& (~~~ContinueMask)) <<< shifted)
 
@@ -78,30 +84,56 @@ let vector<'Parser, 'Result, 'Source
 
     Unsafe.As<_, ImmutableArray<'Result>> &items
 
-let versions source = VersionNumbers(vector<LEB128.UInt, _, _> source)
+let inline versions (source: #_) = VersionNumbers(vector<LEB128.UInt, _, _> source)
+
+let inline index (source: #_) = Index(parse<LEB128.UInt, _, _> source)
 
 let lengthEncodedData (source: #IByteSequence) =
-    let data =
+    let mutable data =
         parse<LEB128.UInt, _, _> source
         |> Checked.int32
         |> Array.zeroCreate<byte>
     let read = source.Read(Span(data, 0, data.Length))
     if read <> data.Length then failwithf "TODO: Unexpected end of data of length %i" data.Length
-    StreamWrapper(new MemoryStream(data))
+    struct(Unsafe.As<_, ImmutableArray<byte>> &data, StreamWrapper(new MemoryStream(data)))
 
-let header source =
-    let header' = lengthEncodedData source
-    let fcount = parse<LEB128.UInt, _, _> source
+let ustring (source: #_) =
+    let struct(bytes, _) = lengthEncodedData source
+    System.Text.Encoding.UTF8.GetString(bytes.AsSpan())
+
+let name (source: #_) =
+    match Name.tryOfStr(ustring source) with
+    | ValueSome n -> n
+    | ValueNone -> failwithf "TODO: Error for name cannot be empty"
+
+let moduleID (source: #_) =
+    { ModuleIdentifier.ModuleName = name source
+      Version = versions source }
+
+let header (source: #_) =
+    let struct(_, header') = lengthEncodedData source
+    let fcount = parse<LEB128.UInt, _, _> header'
     if fcount <> 3u then failwithf "TODO: Invalid field count %i" fcount
-    
-    {  }
+
+    { Module = moduleID header'
+      Flags = LanguagePrimitives.EnumOfValue(u1 header')
+      PointerSize =
+        let psize = LanguagePrimitives.EnumOfValue(u1 header')
+        if psize > PointerSize.Is64Bit then failwithf "TODO: Invalid pointer size 0x%02X (%A)" (uint8 psize) psize
+        psize }
+
+
 
 let fromBytes (source: #IByteSequence) =
     let magic' = magic source
     let fversion = versions source
     if fversion <> Model.currentFormatVersion then failwithf "TODO: Error for unsupported version %O" fversion
+    let header' = header source
     
-    ()
+
+    { Module.Magic = magic'
+      FormatVersion = fversion
+      Header = header' }
 
 let fromStream (source: Stream) =
     if isNull source then nullArg(nameof source)

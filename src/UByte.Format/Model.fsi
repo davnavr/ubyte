@@ -37,25 +37,19 @@ type VersionNumbers =
 val currentFormatVersion : VersionNumbers
 
 /// Represents a length-encoded UTF-8 string.
-[<IsReadOnly; Struct; NoComparison; StructuralEquality>]
-type UString =
-    | UString of vector<Rune> // TODO: use byte instead as it will have smaller memory footprint
-
-    override ToString : unit -> string
-
-    interface IEquatable<UString>
+type ustring = string
 
 /// Represents a length-encoded UTF-8 string that cannot be empty.
 [<IsReadOnly; Struct; NoComparison; StructuralEquality>]
 type Name =
     internal
-    | Name of UString
+    | Name of ustring
 
     override ToString: unit -> string
 
     interface IEquatable<Name>
 
-val (|Name|) : name: Name -> UString
+val (|Name|) : name: Name -> ustring
 
 /// Represents data that is preceded by a LEB128 unsigned integer indicating the byte length of the following data.
 type LengthEncoded<'Data> = 'Data
@@ -385,13 +379,18 @@ type ModuleHeaderFlags =
     | NoGarbageCollector = 0b0000_0010uy
     | ValidMask = 0b0000_0001uy
 
+type PointerSize =
+    | Unspecified = 0uy
+    | Is32Bit = 1uy
+    | Is64Bit = 2uy
+
 [<NoComparison; NoEquality>]
 type ModuleHeader =
     { /// Specifies the name and version of this module.
       Module: ModuleIdentifier
       Flags: ModuleHeaderFlags
-      /// The size, in bytes, of an unsafe pointer or object reference.
-      PointerSize: uvarint }
+      /// The size of an unsafe pointer or object reference.
+      PointerSize: PointerSize }
 
     /// A LEB128 unsigned integer preceding the header indicating the number of fields in the header.
     member FieldCount: uvarint
@@ -417,9 +416,5 @@ type Module =
       Debug: LengthEncoded<Debug> }
 
 [<RequireQualifiedAccess>]
-module UString =
-    val ofStr : string -> UString
-
-[<RequireQualifiedAccess>]
 module Name =
-    val tryOfStr : name: UString -> Name voption
+    val tryOfStr : name: ustring -> Name voption
