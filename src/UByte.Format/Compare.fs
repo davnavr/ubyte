@@ -17,6 +17,13 @@ module Equality =
 
     let lists (x: #IList<'X>) (y: #IList<'Y>) = x.Count = y.Count && compareListItems x y
 
+    let spans (x: ReadOnlySpan<'X>) (y: ReadOnlySpan<'Y>) =
+        let mutable eq, i = x.Length = y.Length, x.Length
+        while eq && i < x.Length do
+            eq <- equals x.[i] y.[i]
+            i <- i + 1
+        eq
+
 let inline (===) (x: 'X) (y: 'Y) = Equality.equals x y
 
 [<RequireQualifiedAccess>]

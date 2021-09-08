@@ -11,7 +11,10 @@
     <Compile Include="Format.fsi" />
     <Compile Include="Format.fs" />
     <Compile Include="WriteModule.fsi" />
+    <Compile Include="Span.fs" />
     <Compile Include="ParseModule.fsi" />
+    <Compile Include="ParseModule.fs" />
+    <Compile Include="ValidateModule.fsi" />
   </ItemGroup>
 
 </Project>
