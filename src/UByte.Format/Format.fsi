@@ -66,7 +66,8 @@ module IndexKinds =
     type [<Sealed; Class>] Identifier = inherit Kind
     type [<Sealed; Class>] Data = inherit Kind
     type [<Sealed; Class>] Type = inherit Kind
-    type [<Sealed; Class>] MethodBody = inherit Kind
+    type [<Sealed; Class>] Method = inherit Kind
+    type [<Sealed; Class>] Code = inherit Kind
     type [<Sealed; Class>] Register = inherit Kind
 
 [<IsReadOnly; Struct; StructuralComparison; StructuralEquality>]
@@ -78,14 +79,21 @@ type Index<'Kind when 'Kind :> IndexKinds.Kind> =
 /// <summary>Represents an index into the module's identifiers. The index of the first identifier is <c>0</c>.</summary>
 type IdentifierIndex = Index<IndexKinds.Identifier>
 
-/// <summary>Represents an index into the module's method bodies. The index of the first method body is <c>0</c>.</summary>
-type MethodBodyIndex = Index<IndexKinds.MethodBody>
-
 /// <summary>
 /// Represents an index into the module's imported types or defined types. The index of the first imported type or type alias, if
 /// any, is <c>0</c>. The index of the first type or type alias defined in this module is equal to the number of type aliases.
 /// </summary>
 type TypeIndex = Index<IndexKinds.Type>
+
+/// <summary>
+/// Represents an index into the module's imported methods or defined methods. An index of <c>0</c> refers to the index of the
+/// first imported method of the first imported type, if any are imported. The index of the first method defined in this module
+/// is equal to the number of imported methods.
+/// </summary>
+type MethodIndex = Index<IndexKinds.Method>
+
+/// <summary>Represents an index into the module's method bodies. The index of the first method body is <c>0</c>.</summary>
+type CodeIndex = Index<IndexKinds.Code>
 
 /// <summary>
 /// Represents an index to an index. The index of the first register not representing a method parameter is equal to the number
@@ -101,11 +109,22 @@ module InstructionSet =
 
         | call = 0x10u
 
+
+
+
+        // Register
+        | ``reg.load`` = 0x15u
+        | ``reg.store`` = 0x16u
+        | ``reg.move`` = 0x17u
+
         // Arithmetic
         | add = 0x20u
         | sub = 0x21u
         | mul = 0x22u
         | div = 0x23u
+        | ``add.ovf`` = 0x24u
+        | ``sub.ovf`` = 0x25u
+        | ``mul.ovf`` = 0x26u
 
         | ``const.s32`` = 0x30u
         | ``const.s64`` = 0x31u
@@ -124,9 +143,21 @@ module InstructionSet =
         | Nop
         | Ret of vector<RegisterIndex>
 
+        /// <summary>
+        /// Calls the specified <paramref name="method"/> supplying the specified <paramref name="arguments"/> and storing the
+        /// return values into the <paramref name="results"/> registers. For non-static methods, the <c>this</c> pointer is
+        /// register <c>0</c>.
+        /// </summary>
+        /// <remarks>
+        /// The number of argument registers is not included in the instruction, and is instead determined by examining the
+        /// signature of the method to be called.
+        /// </remarks>
+        | Call of method: MethodIndex * arguments: ImmutableArray<RegisterIndex> * results: vector<RegisterIndex>
+
         // Arithmetic
         /// <summary>
-        /// Computes the sum of the values in registers <c>x</c> and <c>y</c>, and stores the sum in the <c>result</c> register.
+        /// Computes the sum of the values in registers <paramref name="x"/> and <paramref name="y"/>, and stores the sum in the
+        /// <paramref name="result"/> register.
         /// </summary>
         | Add of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
 
@@ -172,7 +203,7 @@ type AnyType =
 /// Describes the return types and parameter types of a method.
 [<NoComparison; StructuralEquality>]
 type MethodSignature =
-    { /// The types of the values returned by the method. Currently, only one type is allowed.
+    { /// The types of the values returned by the method.
       ReturnType: vector<TypeIndex>
       ParameterTypes: vector<TypeIndex> }
 
@@ -236,7 +267,7 @@ type MethodFlags =
 
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
 type MethodBody =
-    | Defined of MethodBodyIndex
+    | Defined of CodeIndex
     | Abstract
     ///| External
 
@@ -350,9 +381,22 @@ type ModuleHeader =
     /// A LEB128 unsigned integer preceding the header indicating the number of fields in the header.
     member FieldCount: uvarint
 
+[<Flags>]
+type RegisterFlags =
+    /// Indicates that the pointer stored in the register points to an object that is tracked by the garbage collector.
+    | Pinned = 0b0000_0010uy
+    | ValidMask = 0b0000_0000uy
+
+[<IsReadOnly; Struct; NoComparison; NoEquality>]
+type RegisterType =
+    { RegisterType: TypeIndex
+      RegisterFlags: RegisterFlags }
+
 [<NoComparison; NoEquality>]
-type MethodBodyCode =
-    { RegisterTypes: vector<TypeIndex>
+type Code =
+    { /// The types and special flags for the registers of the method. A length precedes each register type and flag byte to
+      /// allow easy duplication
+      RegisterTypes: vector<struct(uvarint * RegisterType)>
       /// The instructions that make up the method body. Both the byte length and the actual number of instructions are included
       /// to simplify parsing.
       Instructions: LengthEncoded<vector<InstructionSet.Instruction>> }
@@ -374,7 +418,10 @@ type Module =
       Data: LengthEncoded<vector<vector<byte>>>
       /// An array of the namespaces defined in the module, which contain the module's types.
       Namespaces: LengthEncoded<vector<Namespace>>
-      Code: LengthEncoded<vector<MethodBodyCode>>
+      /// An optional index specifying the entry point method of the application.
+      /// The entry point method must not 
+      EntryPoint: LengthEncoded<MethodIndex voption>
+      Code: LengthEncoded<vector<Code>>
       Debug: LengthEncoded<Debug> }
 
 [<RequireQualifiedAccess>]
