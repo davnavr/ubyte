@@ -199,19 +199,19 @@ type AnyType =
 [<NoComparison; StructuralEquality>]
 type MethodSignature =
     { /// The types of the values returned by the method.
-      ReturnType: vector<TypeIndex>
+      ReturnTypes: vector<TypeIndex> // TODO: Have index types for method signatures not be able to point to a Class or Interface definition, use ObjectReference instead.
       ParameterTypes: vector<TypeIndex> }
 
     interface IEquatable<MethodSignature>
 
 [<NoComparison; NoEquality>]
 type FieldImport =
-    { FieldName: Name
+    { FieldName: IdentifierIndex
       FieldType: TypeIndex }
 
 [<NoComparison; NoEquality>]
 type MethodImport =
-    { MethodName: Name
+    { MethodName: IdentifierIndex
       TypeParameters: uvarint
       Signature: MethodSignature }
 
@@ -222,7 +222,7 @@ type TypeDefinitionKindTag =
 
 [<NoComparison; NoEquality>]
 type TypeDefinitionImport =
-    { TypeName: Name
+    { TypeName: IdentifierIndex
       TypeKind: TypeDefinitionKindTag
       TypeParameters: uvarint
       Fields: vector<FieldImport>
@@ -246,7 +246,7 @@ type FieldFlags =
 
 [<NoComparison; NoEquality>]
 type Field =
-    { FieldName: Name
+    { FieldName: IdentifierIndex
       FieldFlags: FieldFlags
       FieldVisibility: VisibilityFlags
       FieldType: TypeIndex
@@ -268,7 +268,7 @@ type MethodBody =
 
 [<NoComparison; NoEquality>]
 type Method =
-    { MethodName: Name
+    { MethodName: IdentifierIndex
       MethodFlags: MethodFlags
       TypeParameters: vector<unit>
       MethodVisibility: VisibilityFlags
@@ -280,7 +280,7 @@ type Method =
 /// Allows renaming of types in the metadata, similar to F#'s type abbreviations.
 [<NoComparison; NoEquality>]
 type TypeAlias =
-    { AliasName: Name
+    { AliasName: IdentifierIndex
       AliasVisibility: VisibilityFlags
       AliasOf: AnyType }
 
@@ -307,7 +307,7 @@ type TypeDefinitionLayout =
 
 [<NoComparison; NoEquality>]
 type TypeDefinition =
-    { TypeName: Name
+    { TypeName: IdentifierIndex
       TypeKind: TypeDefinitionKind
       TypeVisibility: VisibilityFlags
       TypeLayout: TypeDefinitionLayout
@@ -324,7 +324,7 @@ type NamespaceImport =
       /// An array of the user-defined types imported from this namespace.
       TypeImports: LengthEncoded<vector<TypeDefinitionImport>>
       /// An array of the imported type aliases from this namespace.
-      TypeAliases: LengthEncoded<vector<Name>> }
+      TypeAliases: LengthEncoded<vector<IdentifierIndex>> }
 
 [<NoComparison; NoEquality>]
 type Namespace =

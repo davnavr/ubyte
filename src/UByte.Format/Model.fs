@@ -157,11 +157,11 @@ type AnyType =
     | Vector of AnyType
 
 [<NoComparison; StructuralEquality>]
-type MethodSignature = { ReturnType: vector<TypeIndex>; ParameterTypes: vector<TypeIndex> }
+type MethodSignature = { ReturnTypes: vector<TypeIndex>; ParameterTypes: vector<TypeIndex> }
 
-type FieldImport = { FieldName: Name; FieldType: TypeIndex }
+type FieldImport = { FieldName: IdentifierIndex; FieldType: TypeIndex }
 
-type MethodImport = { MethodName: Name; TypeParameters: uvarint; Signature: MethodSignature }
+type MethodImport = { MethodName: IdentifierIndex; TypeParameters: uvarint; Signature: MethodSignature }
 
 type TypeDefinitionKindTag =
     | Class = 0uy
@@ -169,7 +169,7 @@ type TypeDefinitionKindTag =
     | Struct = 2uy
 
 type TypeDefinitionImport =
-    { TypeName: Name
+    { TypeName: IdentifierIndex
       TypeKind: TypeDefinitionKindTag
       TypeParameters: uvarint
       Fields: vector<FieldImport>
@@ -188,7 +188,7 @@ type FieldFlags =
     | ValidMask = 0b0000_0011uy
 
 type Field =
-    { FieldName: Name
+    { FieldName: IdentifierIndex
       FieldFlags: FieldFlags
       FieldVisibility: VisibilityFlags
       FieldType: TypeIndex
@@ -207,7 +207,7 @@ type MethodBody =
     | Abstract
 
 type Method =
-    { MethodName: Name
+    { MethodName: IdentifierIndex
       MethodFlags: MethodFlags
       TypeParameters: vector<unit>
       MethodVisibility: VisibilityFlags
@@ -216,7 +216,7 @@ type Method =
       Body: MethodBody }
 
 type TypeAlias =
-    { AliasName: Name
+    { AliasName: IdentifierIndex
       AliasVisibility: VisibilityFlags
       AliasOf: AnyType }
 
@@ -243,7 +243,7 @@ type TypeDefinitionLayout =
     | Sequential
 
 type TypeDefinition =
-    { TypeName: Name
+    { TypeName: IdentifierIndex
       TypeKind: TypeDefinitionKind
       TypeVisibility: VisibilityFlags
       TypeLayout: TypeDefinitionLayout
@@ -256,7 +256,7 @@ type TypeDefinition =
 type NamespaceImport =
     { NamespaceName: vector<IdentifierIndex>
       TypeImports: LengthEncoded<vector<TypeDefinitionImport>>
-      TypeAliases: LengthEncoded<vector<Name>> }
+      TypeAliases: LengthEncoded<vector<IdentifierIndex>> }
 
 type Namespace =
     { NamespaceName: vector<IdentifierIndex>
@@ -295,10 +295,15 @@ type ModuleHeaderFlags =
     | NoGarbageCollector = 0b0000_0010uy
     | ValidMask = 0b0000_0001uy
 
+type PointerSize =
+    | Unspecified = 0uy
+    | Is32Bit = 1uy
+    | Is64Bit = 2uy
+
 type ModuleHeader =
     { Module: ModuleIdentifier
       Flags: ModuleHeaderFlags
-      PointerSize: uvarint }
+      PointerSize: PointerSize }
 
     member _.FieldCount = 3u
 

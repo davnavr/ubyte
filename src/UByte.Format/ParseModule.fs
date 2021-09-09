@@ -16,6 +16,9 @@ let u1 (stream: #IByteSequence) =
     then buffer.[0]
     else failwith "TODO: EOF unexpectedly reached"
 
+let inline bits1<'Enum, 'Source when 'Enum : enum<uint8> and 'Source :> IByteSequence> (stream: 'Source) =
+    LanguagePrimitives.EnumOfValue<_, 'Enum>(u1 stream)
+
 [<Interface>]
 type IParser<'Result> = abstract Parse: source: #IByteSequence -> 'Result
 
@@ -54,11 +57,14 @@ module LEB128 =
 
     [<Struct; NoComparison; NoEquality>]
     type UInt =
-        interface IParser<uvarint> with member _.Parse source = unsigned 32 uint32 source
+        interface IParser<uvarint> with
+            [<MethodImpl(MethodImplOptions.AggressiveInlining)>]
+            member _.Parse source = unsigned 32 uint32 source
 
 [<IsReadOnly; Struct>]
 type StreamWrapper (stream: Stream) =
     interface IByteSequence with
+        [<MethodImpl(MethodImplOptions.AggressiveInlining)>]
         member _.Read buffer = stream.Read buffer
 
 // TODO: Have base class for exceptions.
@@ -88,6 +94,12 @@ let inline versions (source: #_) = VersionNumbers(vector<LEB128.UInt, _, _> sour
 
 let inline index (source: #_) = Index(parse<LEB128.UInt, _, _> source)
 
+[<Struct>]
+type Index'<'Kind when 'Kind :> IndexKinds.Kind> =
+    interface IParser<Index<'Kind>> with
+        [<MethodImpl(MethodImplOptions.AggressiveInlining)>]
+        member _.Parse source = index source
+
 let lengthEncodedData (source: #IByteSequence) =
     let mutable data =
         parse<LEB128.UInt, _, _> source
@@ -116,24 +128,87 @@ let header (source: #_) =
     if fcount <> 3u then failwithf "TODO: Invalid field count %i" fcount
 
     { Module = moduleID header'
-      Flags = LanguagePrimitives.EnumOfValue(u1 header')
+      Flags = bits1 header'
       PointerSize =
-        let psize = LanguagePrimitives.EnumOfValue(u1 header')
+        let psize = bits1 header'
         if psize > PointerSize.Is64Bit then failwithf "TODO: Invalid pointer size 0x%02X (%A)" (uint8 psize) psize
         psize }
 
+let methodSig (source: #_) =
+    { MethodSignature.ParameterTypes = vector<Index'<_>, _, _> source
+      ReturnTypes = vector<Index'<_>, _, _> source }
 
+[<Struct>]
+type Name' =
+    interface IParser<Name> with
+        [<MethodImpl(MethodImplOptions.AggressiveInlining)>]
+        member _.Parse source = name source
+
+[<Struct>]
+type FieldImport' =
+    interface IParser<FieldImport> with
+        member _.Parse source =
+            { FieldImport.FieldName = index source
+              FieldType = index source }
+
+[<Struct>]
+type MethodImport' =
+    interface IParser<MethodImport> with
+        member _.Parse source =
+            { MethodImport.MethodName = index source
+              TypeParameters = parse<LEB128.UInt, _, _> source
+              Signature = methodSig source }
+
+[<Struct>]
+type TypeDefinitionImport' =
+    interface IParser<TypeDefinitionImport> with
+        member _.Parse source =
+            { TypeDefinitionImport.TypeName = index source
+              TypeKind =
+                let kind = bits1 source
+                if kind > TypeDefinitionKindTag.Struct then failwithf "TODO: Invalid type kind 0x%02X (%A)" (uint8 kind) kind
+                kind
+              TypeParameters = parse<LEB128.UInt, _, _> source
+              Fields = vector<FieldImport', _, _> source
+              Methods = vector<MethodImport', _, _> source }
+
+[<Struct>]
+type NamespaceImport' =
+    interface IParser<NamespaceImport> with
+        member _.Parse source =
+            { NamespaceImport.NamespaceName = vector<Index'<_>, _, _> source
+              TypeImports = vector<TypeDefinitionImport', _, _> source
+              TypeAliases = vector<Index'<_>, _, _> source }
+
+[<Struct>]
+type ModuleImport' =
+    interface IParser<ModuleImport> with
+        member _.Parse source =
+            { ModuleImport.ImportedModule = moduleID source
+              ImportedNamespaces = vector<NamespaceImport', _, _> source }
+
+[<Struct>]
+type DataVector =
+    interface IParser<vector<byte>> with
+        [<MethodImpl(MethodImplOptions.AggressiveInlining)>]
+        member _.Parse source =
+            let struct(data, _) = lengthEncodedData source // NOTE: Data is duplicated twice.
+            data
 
 let fromBytes (source: #IByteSequence) =
     let magic' = magic source
     let fversion = versions source
     if fversion <> Model.currentFormatVersion then failwithf "TODO: Error for unsupported version %O" fversion
     let header' = header source
-    
+    let struct(_, identifiers) = lengthEncodedData source
+    let struct(_, imports) = lengthEncodedData source
 
     { Module.Magic = magic'
       FormatVersion = fversion
-      Header = header' }
+      Header = header'
+      Identifiers = { IdentifierSection.Identifiers = vector<Name', _, _> identifiers }
+      Imports = vector<ModuleImport', _, _> imports
+      Data = vector<DataVector, _, _> imports }
 
 let fromStream (source: Stream) =
     if isNull source then nullArg(nameof source)
