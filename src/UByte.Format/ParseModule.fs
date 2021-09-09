@@ -139,6 +139,12 @@ let methodSig (source: #_) =
       ReturnTypes = vector<Index'<_>, _, _> source }
 
 [<Struct>]
+type Placeholder'<'T> =
+    interface IParser<'T> with
+        [<MethodImpl(MethodImplOptions.AggressiveInlining)>]
+        member _.Parse _ = raise(NotImplementedException())
+
+[<Struct>]
 type Name' =
     interface IParser<Name> with
         [<MethodImpl(MethodImplOptions.AggressiveInlining)>]
@@ -195,6 +201,75 @@ type DataVector =
             let struct(data, _) = lengthEncodedData source // NOTE: Data is duplicated twice.
             data
 
+[<Struct>]
+type Field' =
+    interface IParser<Field> with
+        member _.Parse source =
+            { Field.FieldName = index source
+              FieldVisibility = bits1 source
+              FieldFlags = bits1 source
+              FieldType = index source
+              FieldAnnotations = vector<Placeholder'<_>, _, _> source }
+
+[<Struct>]
+type Method' =
+    interface IParser<Method> with
+        member _.Parse source =
+            { Method.MethodName = index source
+              MethodVisibility = bits1 source
+              MethodFlags = bits1 source
+              TypeParameters = vector<Placeholder'<_>, _, _> source
+              Signature = methodSig source
+              MethodAnnotations = vector<Placeholder'<_>, _, _> source
+              Body =
+                match bits1 source with
+                | MethodBodyTag.Defined -> MethodBody.Defined(index source)
+                | MethodBodyTag.Abstract -> MethodBody.Abstract
+                | bad -> failwithf "TODO: Bad method body kind 0x%02X" (uint8 bad) }
+
+[<Struct>]
+type TypeDefinition' =
+    interface IParser<TypeDefinition> with
+        member _.Parse source =
+            { TypeDefinition.TypeName = index source
+              TypeVisibility = bits1 source
+              TypeKind =
+                match bits1 source with
+                | TypeDefinitionKindTag.Class -> Class(index source, bits1 source)
+                | TypeDefinitionKindTag.Interface -> Interface
+                | TypeDefinitionKindTag.Struct -> Struct
+                | bad -> failwithf "TODO: Bad type definition kind 0x%02X" (uint8 bad)
+              TypeLayout =
+                match bits1 source with
+                | TypeDefinitionLayoutTag.Unspecified -> TypeDefinitionLayout.Unspecified
+                | TypeDefinitionLayoutTag.Sequential -> TypeDefinitionLayout.Sequential
+                | bad -> failwithf "TODO: Bad type definition layout kind 0x%02X" (uint8 bad)
+              ImplementedInterfaces = vector<Placeholder'<_>, _, _> source
+              TypeParameters = vector<Placeholder'<_>, _, _> source
+              TypeAnnotations = vector<Placeholder'<_>, _, _> source
+              Fields = vector<Field', _, _> source
+              Methods = vector<Method', _, _> source }
+
+[<Struct>]
+type TypeAlias' =
+    interface IParser<TypeAlias> with
+        member _.Parse source =
+            { TypeAlias.AliasName = index source
+              AliasVisibility = bits1 source
+              AliasOf = failwith "TODO: Implement parsing of types" }
+
+[<Struct>]
+type Namespace' =
+    interface IParser<Namespace> with
+        member _.Parse source =
+            { Namespace.NamespaceName = vector<Index'<_>, _, _> source
+              TypeDefinitions =
+                let struct(_, tdefs) = lengthEncodedData source
+                vector<TypeDefinition', _, _> tdefs
+              TypeAliases =
+                let struct(_, taliases) = lengthEncodedData source
+                vector<TypeAlias', _, _> taliases }
+
 let fromBytes (source: #IByteSequence) =
     let magic' = magic source
     let fversion = versions source
@@ -202,13 +277,16 @@ let fromBytes (source: #IByteSequence) =
     let header' = header source
     let struct(_, identifiers) = lengthEncodedData source
     let struct(_, imports) = lengthEncodedData source
+    let struct(_, namespaces) = lengthEncodedData source
 
+    // TODO: Check that length encoded data has no remaining bytes left
     { Module.Magic = magic'
       FormatVersion = fversion
       Header = header'
       Identifiers = { IdentifierSection.Identifiers = vector<Name', _, _> identifiers }
       Imports = vector<ModuleImport', _, _> imports
-      Data = vector<DataVector, _, _> imports }
+      Data = vector<DataVector, _, _> imports
+      Namespaces = vector<Namespace', _, _> namespaces }
 
 let fromStream (source: Stream) =
     if isNull source then nullArg(nameof source)

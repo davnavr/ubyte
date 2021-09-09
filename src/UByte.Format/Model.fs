@@ -189,8 +189,8 @@ type FieldFlags =
 
 type Field =
     { FieldName: IdentifierIndex
-      FieldFlags: FieldFlags
       FieldVisibility: VisibilityFlags
+      FieldFlags: FieldFlags
       FieldType: TypeIndex
       FieldAnnotations: vector<unit> }
 
@@ -201,6 +201,10 @@ type MethodFlags =
     | Static = 0b0000_0010uy
     | ValidMask = 0b0000_0001uy
 
+type MethodBodyTag =
+    | Defined = 0uy
+    | Abstract = 1uy
+
 [<RequireQualifiedAccess>]
 type MethodBody =
     | Defined of CodeIndex
@@ -208,9 +212,9 @@ type MethodBody =
 
 type Method =
     { MethodName: IdentifierIndex
+      MethodVisibility: VisibilityFlags
       MethodFlags: MethodFlags
       TypeParameters: vector<unit>
-      MethodVisibility: VisibilityFlags
       Signature: MethodSignature
       MethodAnnotations: vector<unit>
       Body: MethodBody }
@@ -238,20 +242,24 @@ type TypeDefinitionKind =
         | Interface -> TypeDefinitionKindTag.Interface
         | Struct -> TypeDefinitionKindTag.Struct
 
+type TypeDefinitionLayoutTag =
+    | Unspecified = 0uy
+    | Sequential = 1uy
+
 type TypeDefinitionLayout =
     | Unspecified
     | Sequential
 
 type TypeDefinition =
     { TypeName: IdentifierIndex
-      TypeKind: TypeDefinitionKind
       TypeVisibility: VisibilityFlags
+      TypeKind: TypeDefinitionKind
       TypeLayout: TypeDefinitionLayout
       ImplementedInterfaces: vector<unit>
       TypeParameters: vector<unit>
       TypeAnnotations: vector<unit>
       Fields: vector<Field>
-      Methods: vector<unit> }
+      Methods: vector<Method> }
 
 type NamespaceImport =
     { NamespaceName: vector<IdentifierIndex>

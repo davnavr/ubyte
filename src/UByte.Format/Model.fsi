@@ -213,7 +213,7 @@ type FieldImport =
 type MethodImport =
     { MethodName: IdentifierIndex
       TypeParameters: uvarint
-      Signature: MethodSignature }
+      Signature: MethodSignature } // TODO: Use indices to signatures instead, to avoid signature duplication
 
 type TypeDefinitionKindTag =
     | Class = 0uy
@@ -247,8 +247,8 @@ type FieldFlags =
 [<NoComparison; NoEquality>]
 type Field =
     { FieldName: IdentifierIndex
-      FieldFlags: FieldFlags
       FieldVisibility: VisibilityFlags
+      FieldFlags: FieldFlags
       FieldType: TypeIndex
       /// An array of annotations applied to the field.
       FieldAnnotations: vector<unit> }
@@ -260,19 +260,24 @@ type MethodFlags =
     | Static = 0b0000_0010uy
     | ValidMask = 0b0000_0001uy
 
+type MethodBodyTag =
+    | Defined = 0uy
+    | Abstract = 1uy
+    //| External = 2uy
+
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
 type MethodBody =
     | Defined of CodeIndex
     | Abstract
-    ///| External
+    //| External of
 
 [<NoComparison; NoEquality>]
 type Method =
     { MethodName: IdentifierIndex
+      MethodVisibility: VisibilityFlags
       MethodFlags: MethodFlags
       TypeParameters: vector<unit>
-      MethodVisibility: VisibilityFlags
-      Signature: MethodSignature
+      Signature: MethodSignature // TODO: Use indices to signatures instead, to avoid signature duplication
       /// An array of annotations applied to the method.
       MethodAnnotations: vector<unit>
       Body: MethodBody }
@@ -295,28 +300,35 @@ type ClassDefinitionFlags =
 type TypeDefinitionKind =
     | Class of extends: TypeIndex * flags: ClassDefinitionFlags
     | Interface
-    /// A type whose instances can only be allocated on the stack.
+    /// A type whose instances can be allocated on the stack.
     | Struct
 
     member Kind : TypeDefinitionKindTag
 
+// TODO: Have better naming for corresponding enum types for union types.
+type TypeDefinitionLayoutTag =
+    | Unspecified = 0uy
+    | Sequential = 1uy
+    //| Explicit = 2uy
+
+[<RequireQualifiedAccess>]
 type TypeDefinitionLayout =
     | Unspecified
     | Sequential
-    ///| Explicit of
+    //| Explicit of
 
 [<NoComparison; NoEquality>]
 type TypeDefinition =
     { TypeName: IdentifierIndex
-      TypeKind: TypeDefinitionKind
       TypeVisibility: VisibilityFlags
+      TypeKind: TypeDefinitionKind
       TypeLayout: TypeDefinitionLayout
       ImplementedInterfaces: vector<unit>
       TypeParameters: vector<unit>
       /// An array of annotations applied to the type.
       TypeAnnotations: vector<unit>
       Fields: vector<Field>
-      Methods: vector<unit> }
+      Methods: vector<Method> }
 
 [<NoComparison; NoEquality>]
 type NamespaceImport =
@@ -406,6 +418,11 @@ type Module =
       Imports: LengthEncoded<vector<ModuleImport>>
       /// An array of byte arrays containing miscellaneous data such as the contents of string literals.
       Data: LengthEncoded<vector<vector<byte>>>
+      //Maybe do this? Avoids TypeIndices from erroneously being used to refer to classes when an index pointing to an alias for ObjectReference should be used instead.
+      //TypeSignatures: LengthEncoded<vector<AnyType>>
+
+      // TODO: Use indices to signatures instead, to avoid signature duplication
+      //MethodSignatures: LengthEncoded<vector<MethodSignature>>
       /// An array of the namespaces defined in the module, which contain the module's types.
       Namespaces: LengthEncoded<vector<Namespace>>
       /// An optional index specifying the entry point method of the application.
