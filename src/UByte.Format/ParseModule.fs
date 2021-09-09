@@ -278,6 +278,7 @@ let fromBytes (source: #IByteSequence) =
     let struct(_, identifiers) = lengthEncodedData source
     let struct(_, imports) = lengthEncodedData source
     let struct(_, namespaces) = lengthEncodedData source
+    let struct(epoint, epoint') = lengthEncodedData source
 
     // TODO: Check that length encoded data has no remaining bytes left
     { Module.Magic = magic'
@@ -286,7 +287,12 @@ let fromBytes (source: #IByteSequence) =
       Identifiers = { IdentifierSection.Identifiers = vector<Name', _, _> identifiers }
       Imports = vector<ModuleImport', _, _> imports
       Data = vector<DataVector, _, _> imports
-      Namespaces = vector<Namespace', _, _> namespaces }
+      Namespaces = vector<Namespace', _, _> namespaces
+      EntryPoint =
+        if epoint.IsDefaultOrEmpty
+        then ValueNone
+        else ValueSome(index epoint')
+      }
 
 let fromStream (source: Stream) =
     if isNull source then nullArg(nameof source)
