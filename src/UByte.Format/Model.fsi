@@ -18,9 +18,6 @@ type vector<'T> = ImmutableArray<'T>
 /// Represents a LEB128 encoded unsigned integer.
 type uvarint = uint32
 
-/// Represents a LEB128 encoded signed integer.
-type varint = uint32
-
 /// A length-encoded array of LEB128 encoded unsigned integers used to indicate a version.
 [<IsReadOnly; Struct; CustomComparison; CustomEquality>]
 type VersionNumbers =
@@ -107,7 +104,7 @@ module InstructionSet =
 
 
         // Register
-        | ``reg.move`` = 0x17u
+        | ``reg.copy`` = 0x17u
 
         // Arithmetic
         | add = 0x20u
@@ -130,6 +127,10 @@ module InstructionSet =
         | br = 0x40u
         | ``br.eq`` = 0x41u
 
+    /// <remarks>
+    /// Instructions that store integer constants into a register <c>const.</c> are followed by the integer constants in the
+    /// endianness specified in the module header.
+    /// </remarks>
     [<NoComparison; NoEquality>]
     type Instruction =
         | Nop
@@ -146,15 +147,20 @@ module InstructionSet =
         /// </remarks>
         | Call of method: MethodIndex * arguments: ImmutableArray<RegisterIndex> * results: vector<RegisterIndex>
 
-        // TODO: After move, will source register still contain same value?
-        //| Reg_move of source: RegisterIndex * destination: RegisterIndex
+        | Reg_copy of source: RegisterIndex * destination: RegisterIndex
 
         // Arithmetic
         /// <summary>
-        /// Computes the sum of the values in registers <paramref name="x"/> and <paramref name="y"/>, and stores the sum in the
-        /// <paramref name="result"/> register.
+        /// Computes the sum of the values in registers <paramref name="x"/> and <paramref name="y"/> without an overflow check,
+        /// and stores the sum in the <paramref name="result"/> register.
         /// </summary>
         | Add of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
+
+        /// <summary>
+        /// Subtracts the value in register <paramref name="y"/> from register <paramref name="x"/> without an overflow check,
+        /// and stores the difference in the <paramref name="result"/> register.
+        /// </summary>
+        | Sub of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
 
         /// Stores a signed 32-bit integer into the specified register.
         | Const_s32 of value: int32 * destination: RegisterIndex
@@ -407,6 +413,11 @@ type ModuleHeader =
     /// A LEB128 unsigned integer preceding the header indicating the number of fields in the header.
     member FieldCount: uvarint
 
+[<IsReadOnly; Struct; StructuralComparison; StructuralEquality>]
+type Endianness =
+    | LittleEndian
+    | BigEndian
+
 [<NoComparison; NoEquality>]
 type Module =
     { Magic: Magic
@@ -431,6 +442,8 @@ type Module =
       EntryPoint: LengthEncoded<MethodIndex voption>
       Code: LengthEncoded<vector<Code>>
       Debug: LengthEncoded<Debug> }
+
+    member Endianness : Endianness
 
 [<RequireQualifiedAccess>]
 module Name =

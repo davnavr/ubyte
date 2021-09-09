@@ -6,6 +6,7 @@ open System.IO
 open System.Runtime.CompilerServices
 
 open UByte.Format.Model
+open UByte.Format.Model.InstructionSet
 
 [<Interface>]
 type IByteSequence = abstract Read: buffer: Span<byte> -> int32
@@ -189,6 +190,7 @@ type NamespaceImport' =
 [<Struct>]
 type ModuleImport' =
     interface IParser<ModuleImport> with
+        [<MethodImpl(MethodImplOptions.AggressiveInlining)>]
         member _.Parse source =
             { ModuleImport.ImportedModule = moduleID source
               ImportedNamespaces = vector<NamespaceImport', _, _> source }
@@ -253,6 +255,7 @@ type TypeDefinition' =
 [<Struct>]
 type TypeAlias' =
     interface IParser<TypeAlias> with
+        [<MethodImpl(MethodImplOptions.AggressiveInlining)>]
         member _.Parse source =
             { TypeAlias.AliasName = index source
               AliasVisibility = bits1 source
@@ -270,6 +273,50 @@ type Namespace' =
                 let struct(_, taliases) = lengthEncodedData source
                 vector<TypeAlias', _, _> taliases }
 
+[<Struct>]
+type CountedRegisterTypes =
+    interface IParser<struct(uvarint * RegisterType)> with
+        [<MethodImpl(MethodImplOptions.AggressiveInlining)>]
+        member _.Parse source =
+            let count = parse<LEB128.UInt, _, _> source
+            let rtype =
+                { RegisterType = index source
+                  RegisterFlags = bits1 source }
+            struct(count, rtype)
+
+[<Struct>]
+type InstructionDecoder =
+    interface IParser<Instruction> with
+        member _.Parse source =
+            match LanguagePrimitives.EnumOfValue(parse<LEB128.UInt, _, _> source) with
+            | Opcode.nop -> Nop
+
+            // TODO: Maybe store number of return values in struction?
+            //| Opcode.ret -> Ret(vector<Index'<_>, _, _> source)
+
+            // TODO: Maybe store number of arguments in instruction?
+            //| Opcode.call -> Call(index source, )
+
+            // Register
+            | Opcode.``reg.copy`` -> Reg_copy(index source, index source)
+
+            // Arithmetic
+            | Opcode.add -> Add(index source, index source, index source)
+            | Opcode.sub -> Sub(index source, index source, index source)
+
+            //| Opcode.``const.s32`` -> Const_s32 // TODO: Either store as LEB128, or somehow have access to module endianness
+
+            | bad -> failwithf "TODO: Unrecognized opcode 0x08%X" (uint32 bad)
+
+[<Struct>]
+type Code' =
+    interface IParser<Code> with
+        member _.Parse source =
+            { Code.RegisterTypes = vector<CountedRegisterTypes, _, _> source
+              Instructions =
+                let struct(_, instructions) = lengthEncodedData source
+                vector<InstructionDecoder, _, _> source }
+
 let fromBytes (source: #IByteSequence) =
     let magic' = magic source
     let fversion = versions source
@@ -279,6 +326,8 @@ let fromBytes (source: #IByteSequence) =
     let struct(_, imports) = lengthEncodedData source
     let struct(_, namespaces) = lengthEncodedData source
     let struct(epoint, epoint') = lengthEncodedData source
+    let struct(_, code) = lengthEncodedData source
+    let struct(debug, _) = lengthEncodedData source
 
     // TODO: Check that length encoded data has no remaining bytes left
     { Module.Magic = magic'
@@ -292,7 +341,10 @@ let fromBytes (source: #IByteSequence) =
         if epoint.IsDefaultOrEmpty
         then ValueNone
         else ValueSome(index epoint')
-      }
+      Code = vector<Code', _, _> code
+      Debug =
+        if debug.Length > 0 then failwith "TODO: Debugging information not yet supported"
+        () }
 
 let fromStream (source: Stream) =
     if isNull source then nullArg(nameof source)
@@ -300,3 +352,9 @@ let fromStream (source: Stream) =
         fromBytes(StreamWrapper source)
     finally
         source.Close()
+
+let fromFile (source: FileInfo) =
+    if isNull source then nullArg(nameof source)
+    source.OpenWrite() |> fromStream
+
+let fromPath source = fromFile(FileInfo source)

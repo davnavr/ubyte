@@ -18,8 +18,6 @@ type vector<'T> = ImmutableArray<'T>
 
 type uvarint = uint32
 
-type varint = uint32
-
 [<Struct; CustomComparison; CustomEquality>]
 type VersionNumbers =
     | VersionNumbers of vector<uint32>
@@ -96,9 +94,7 @@ module InstructionSet =
         | nop = 0u
         | ret = 1u
         | call = 0x10u
-        | ``reg.load`` = 0x15u
-        | ``reg.store`` = 0x16u
-        | ``reg.move`` = 0x17u
+        | ``reg.copy`` = 0x17u
         | add = 0x20u
         | sub = 0x21u
         | mul = 0x22u
@@ -120,7 +116,9 @@ module InstructionSet =
         | Nop
         | Ret of vector<RegisterIndex>
         | Call of method: MethodIndex * arguments: ImmutableArray<RegisterIndex> * results: vector<RegisterIndex>
+        | Reg_copy of source: RegisterIndex * destination: RegisterIndex
         | Add of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
+        | Sub of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
         | Const_s32 of value: int32 * destination: RegisterIndex
 
 [<RequireQualifiedAccess>]
@@ -315,6 +313,9 @@ type ModuleHeader =
 
     member _.FieldCount = 3u
 
+[<Struct>]
+type Endianness = | LittleEndian | BigEndian
+
 type Module =
     { Magic: Magic
       FormatVersion: VersionNumbers
@@ -326,6 +327,11 @@ type Module =
       EntryPoint: LengthEncoded<MethodIndex voption>
       Code: LengthEncoded<vector<Code>>
       Debug: LengthEncoded<Debug> }
+
+    member this.Endianness =
+        if this.Header.Flags &&& ModuleHeaderFlags.BigEndian <> ModuleHeaderFlags.LittleEndian
+        then BigEndian
+        else LittleEndian
 
 let (|Name|) (Name name) = name
 
