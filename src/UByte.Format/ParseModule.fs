@@ -249,8 +249,8 @@ type Method' =
               MethodAnnotations = vector<Placeholder'<_>, _, _> source
               Body =
                 match bits1 source with
-                | MethodBodyTag.Defined -> MethodBody.Defined(index source)
-                | MethodBodyTag.Abstract -> MethodBody.Abstract
+                | Tag.MethodBody.Defined -> MethodBody.Defined(index source)
+                | Tag.MethodBody.Abstract -> MethodBody.Abstract
                 | bad -> failwithf "TODO: Bad method body kind 0x%02X" (uint8 bad) }
 
 [<Struct>]
@@ -261,9 +261,10 @@ type TypeDefinition' =
               TypeVisibility = bits1 source
               TypeKind =
                 match bits1 source with
-                | Tag.TypeDefinitionKind.Class -> Class(index source, bits1 source)
+                | Tag.TypeDefinitionKind.Class -> Class(ValueSome(index source), bits1 source)
                 | Tag.TypeDefinitionKind.Interface -> Interface
                 | Tag.TypeDefinitionKind.Struct -> Struct
+                | Tag.TypeDefinitionKind.BaseClass -> Class(ValueNone, bits1 source)
                 | bad -> failwithf "TODO: Bad type definition kind 0x%02X" (uint8 bad)
               TypeLayout =
                 match bits1 source with

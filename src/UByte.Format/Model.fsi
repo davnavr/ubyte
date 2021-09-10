@@ -175,7 +175,7 @@ module InstructionSet =
         | Const_s32 of value: int32 * destination: RegisterIndex
 
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
-type IdentifierSection =
+type IdentifierSection = // TODO: Rename to something else
     { Identifiers: vector<Name> }
 
     member Item : index: IdentifierIndex -> Name with get
@@ -188,9 +188,10 @@ module Tag =
         //| External = 2uy
 
     type TypeDefinitionKind =
-        | Class = 0uy
-        | Interface = 1uy
-        | Struct = 2uy
+        | BaseClass = 0uy
+        | Class = 1uy
+        | Interface = 2uy
+        | Struct = 3uy
 
     type TypeDefinitionLayout =
         | Unspecified = 0uy
@@ -334,7 +335,7 @@ type Method =
       Signature: MethodSignatureIndex
       /// An array of annotations applied to the method.
       MethodAnnotations: vector<unit>
-      Body: CodeIndex }
+      Body: MethodBody }
 
 /// Allows renaming of types in the metadata, similar to F#'s type abbreviations.
 [<NoComparison; NoEquality>]
@@ -345,7 +346,7 @@ type TypeAlias =
 
 [<Flags>]
 type ClassDefinitionFlags =
-    | Final = 0uy
+    | Final = 0uy // TODO: Make final by default so "static" classes have to be marked abstract and final?
     /// The class can be inherited from.
     | NotFinal = 0b0000_0001uy
     /// Instances of this class cannot be created.
@@ -354,7 +355,7 @@ type ClassDefinitionFlags =
 
 [<NoComparison; NoEquality>]
 type TypeDefinitionKind =
-    | Class of extends: TypeDefinitionIndex * flags: ClassDefinitionFlags
+    | Class of extends: TypeDefinitionIndex voption * flags: ClassDefinitionFlags // TODO: Use TypeSignatureIndex to allow inheriting from generic types
     | Interface
     /// A type whose instances can be allocated on the stack.
     | Struct
@@ -396,13 +397,15 @@ type Namespace =
 
 [<Flags>]
 type RegisterFlags =
+    | None = 0uy
     /// Indicates that the pointer stored in the register points to an object that is tracked by the garbage collector.
     | Pinned = 0b0000_0010uy
+    // TODO: Have flag to allow using of registers before they are assigned to?
     | ValidMask = 0b0000_0000uy
 
 [<IsReadOnly; Struct; NoComparison; NoEquality>]
 type RegisterType =
-    { RegisterType: TypeDefinitionIndex
+    { RegisterType: TypeSignatureIndex
       RegisterFlags: RegisterFlags }
 
 [<NoComparison; NoEquality>]
@@ -487,5 +490,14 @@ type Module =
     member Endianness : Endianness
 
 [<RequireQualifiedAccess>]
+module VersionNumbers =
+    val semver : major: uvarint -> minor: uvarint -> patch: uvarint -> VersionNumbers
+
+[<RequireQualifiedAccess>]
 module Name =
     val tryOfStr : name: ustring -> Name voption
+
+    /// <exception cref="T:System.ArgumentException">Thrown when the <paramref name="name"/> is empty.</exception>
+    val ofStr : name: ustring -> Name
+
+

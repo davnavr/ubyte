@@ -68,7 +68,12 @@ let methodDef m dest =
     if not m.TypeParameters.IsDefaultOrEmpty then failwith "TODO: Generic methods not yet supported"
     index m.Signature dest
     if not m.MethodAnnotations.IsDefaultOrEmpty then failwith "TODO: Annotated methods not yet supported"
-    index m.Body dest
+
+    match m.Body with
+    | MethodBody.Defined codei ->
+        bits1 Tag.MethodBody.Defined dest
+        index codei dest
+    | MethodBody.Abstract -> bits1 Tag.MethodBody.Abstract dest
 
 let typeDef t dest =
     index t.TypeName dest
@@ -76,8 +81,12 @@ let typeDef t dest =
 
     match t.TypeKind with
     | Class(extends, flags) ->
-        bits1 Tag.TypeDefinitionKind.Class dest
-        index extends dest
+        match extends with
+        | ValueSome basei ->
+            bits1 Tag.TypeDefinitionKind.Class dest
+            index basei dest
+        | ValueNone -> bits1 Tag.TypeDefinitionKind.BaseClass dest
+
         bits1 flags dest
     | Interface ->
         bits1 Tag.TypeDefinitionKind.Interface dest

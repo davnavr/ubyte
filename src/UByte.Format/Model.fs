@@ -138,9 +138,11 @@ module Tag =
         | Abstract = 1uy
 
     type TypeDefinitionKind =
-        | Class = 0uy
-        | Interface = 1uy
-        | Struct = 2uy
+        /// Indicates that the class does not derive from another class.
+        | BaseClass = 0uy
+        | Class = 1uy
+        | Interface = 2uy
+        | Struct = 3uy
 
     type TypeDefinitionLayout =
         | Unspecified = 0uy
@@ -263,7 +265,7 @@ type ClassDefinitionFlags =
     | ValidMask = 0b0000_0011uy
 
 type TypeDefinitionKind =
-    | Class of extends: TypeDefinitionIndex * flags: ClassDefinitionFlags
+    | Class of extends: TypeDefinitionIndex voption * flags: ClassDefinitionFlags
     | Interface
     | Struct
 
@@ -294,11 +296,12 @@ type Namespace =
 
 [<Flags>]
 type RegisterFlags =
+    | None = 0uy
     | Pinned = 0b0000_0010uy
     | ValidMask = 0b0000_0000uy
 
 [<Struct>]
-type RegisterType = { RegisterType: TypeDefinitionIndex; RegisterFlags: RegisterFlags }
+type RegisterType = { RegisterType: TypeSignatureIndex; RegisterFlags: RegisterFlags }
 
 type Code =
     { RegisterTypes: vector<struct(uvarint * RegisterType)>
@@ -365,3 +368,11 @@ module Name =
         if String.IsNullOrEmpty name
         then ValueNone
         else ValueSome(Name name)
+
+    let ofStr name =
+        match tryOfStr name with
+        | ValueSome name' -> name'
+        | ValueNone -> invalidArg (nameof name) "The name must not be empty"
+
+module VersionNumbers =
+    let semver major minor patch = VersionNumbers(ImmutableArray.Create(major, minor, item3 = patch))
