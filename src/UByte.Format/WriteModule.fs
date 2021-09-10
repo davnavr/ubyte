@@ -101,7 +101,9 @@ let toStream (stream: Stream) (md: Module) =
                 bits1 tag dest
             | _ -> failwithf "TODO: Unsupported type %A" signature
 
-        failwith "Method Sig"
+        lengthEncodedVector buffer stream md.MethodSignatures <| fun signature dest ->
+            vector index signature.ReturnTypes dest
+            vector index signature.ParameterTypes dest
 
         lengthEncodedVector buffer stream md.Data <| fun data dest ->
             failwith "TODO: Data not supported yet"
