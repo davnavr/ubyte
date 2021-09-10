@@ -34,7 +34,8 @@ let vector writer (items: vector<'T>) dest =
 
 let versions (VersionNumbers numbers) dest = vector LEB128.uint numbers dest
 
-let name (Name name) (dest: Stream) =
+let name (Name name) dest =
+    LEB128.uint (uint32 name.Length) dest
     // NOTE: Can write strings more efficeintly by using StreamWriter or Encoder
     dest.Write(ReadOnlySpan(System.Text.Encoding.UTF8.GetBytes name))
 
