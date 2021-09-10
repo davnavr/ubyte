@@ -78,7 +78,7 @@ module IndexKinds =
     type [<Sealed; Class>] Code = inherit Kind
     type [<Sealed; Class>] Register = inherit Kind
     type [<Sealed; Class>] Data = inherit Kind
-    type [<Sealed; Class>] Type = inherit Kind
+    type [<Sealed; Class>] TypeDefinition = inherit Kind
     type [<Sealed; Class>] Method = inherit Kind
 
 [<Struct; StructuralComparison; StructuralEquality>]
@@ -91,7 +91,7 @@ type MethodSignatureIndex = Index<IndexKinds.MethodSignature>
 type CodeIndex = Index<IndexKinds.Code>
 type RegisterIndex = Index<IndexKinds.Register>
 type DataIndex = Index<IndexKinds.Data>
-type TypeIndex = Index<IndexKinds.Type>
+type TypeDefinitionIndex = Index<IndexKinds.TypeDefinition>
 type MethodIndex = Index<IndexKinds.Method>
 
 module InstructionSet =
@@ -133,6 +133,10 @@ type IdentifierSection =
     member this.Item with get (Index i: IdentifierIndex) = this.Identifiers.[Checked.int32 i]
 
 module Tag =
+    type MethodBody =
+        | Defined = 0uy
+        | Abstract = 1uy
+
     type TypeDefinitionKind =
         | Class = 0uy
         | Interface = 1uy
@@ -182,7 +186,7 @@ type PrimitiveType =
 
 [<RequireQualifiedAccess>]
 type ReferenceType =
-    | Defined of TypeIndex
+    | Defined of TypeDefinitionIndex
     | Any of AnyType
     | Vector of AnyType
 
@@ -190,15 +194,14 @@ and [<NoComparison; StructuralEquality>]  AnyType =
     | Primitive of PrimitiveType
     | ObjectReference of ReferenceType
     | UnsafePointer of AnyType
-    | ValueType of TypeIndex
+    | ValueType of TypeDefinitionIndex
 
 [<NoComparison; StructuralEquality>]
 type MethodSignature = { ReturnTypes: vector<TypeSignatureIndex>; ParameterTypes: vector<TypeSignatureIndex> }
 
-type FieldImport = { FieldName: IdentifierIndex; FieldType: TypeIndex }
+type FieldImport = { FieldName: IdentifierIndex; FieldType: TypeDefinitionIndex }
 
 type MethodImport = { MethodName: IdentifierIndex; TypeParameters: uvarint; Signature: MethodSignatureIndex }
-
 
 type TypeDefinitionImport =
     { TypeName: IdentifierIndex
@@ -233,10 +236,6 @@ type MethodFlags =
     | Static = 0b0000_0010uy
     | ValidMask = 0b0000_0001uy
 
-type MethodBodyTag =
-    | Defined = 0uy
-    | Abstract = 1uy
-
 [<RequireQualifiedAccess>]
 type MethodBody =
     | Defined of CodeIndex
@@ -264,7 +263,7 @@ type ClassDefinitionFlags =
     | ValidMask = 0b0000_0011uy
 
 type TypeDefinitionKind =
-    | Class of extends: TypeIndex * flags: ClassDefinitionFlags
+    | Class of extends: TypeDefinitionIndex * flags: ClassDefinitionFlags
     | Interface
     | Struct
 
@@ -283,17 +282,6 @@ type TypeDefinition =
       Fields: vector<Field>
       Methods: vector<Method> }
 
-    member this.KindTag =
-        match this.TypeKind with
-        | Class(_, _) -> Tag.TypeDefinitionKind.Class
-        | Interface -> Tag.TypeDefinitionKind.Interface
-        | Struct -> Tag.TypeDefinitionKind.Struct
-
-    member this.LayoutTag =
-        match this.TypeLayout with
-        | Unspecified -> Tag.TypeDefinitionLayout.Unspecified
-        | Sequential -> Tag.TypeDefinitionLayout.Sequential
-
 type NamespaceImport =
     { NamespaceName: vector<IdentifierIndex>
       TypeImports: LengthEncoded<vector<TypeDefinitionImport>>
@@ -310,7 +298,7 @@ type RegisterFlags =
     | ValidMask = 0b0000_0000uy
 
 [<Struct>]
-type RegisterType = { RegisterType: TypeIndex; RegisterFlags: RegisterFlags }
+type RegisterType = { RegisterType: TypeDefinitionIndex; RegisterFlags: RegisterFlags }
 
 type Code =
     { RegisterTypes: vector<struct(uvarint * RegisterType)>

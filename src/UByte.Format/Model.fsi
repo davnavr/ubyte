@@ -59,7 +59,7 @@ module IndexKinds =
     type [<Sealed; Class>] Data = inherit Kind
     type [<Sealed; Class>] Code = inherit Kind
     type [<Sealed; Class>] Register = inherit Kind
-    type [<Sealed; Class>] Type = inherit Kind
+    type [<Sealed; Class>] TypeDefinition = inherit Kind
     type [<Sealed; Class>] Method = inherit Kind
 
 [<IsReadOnly; Struct; StructuralComparison; StructuralEquality>]
@@ -90,7 +90,7 @@ type RegisterIndex = Index<IndexKinds.Register>
 /// An index into the module's imported types or defined types. The index of the first imported type or type alias, if
 /// any, is <c>0</c>. The index of the first type or type alias defined in this module is equal to the number of type aliases.
 /// </summary>
-type TypeIndex = Index<IndexKinds.Type>
+type TypeDefinitionIndex = Index<IndexKinds.TypeDefinition>
 
 /// <summary>
 /// An index into the module's imported methods or defined methods. An index of <c>0</c> refers to the index of the
@@ -182,6 +182,11 @@ type IdentifierSection =
 
 [<RequireQualifiedAccess>]
 module Tag =
+    type MethodBody =
+        | Defined = 0uy
+        | Abstract = 1uy
+        //| External = 2uy
+
     type TypeDefinitionKind =
         | Class = 0uy
         | Interface = 1uy
@@ -238,7 +243,7 @@ type PrimitiveType =
 
 [<RequireQualifiedAccess; NoComparison; StructuralEquality>]
 type ReferenceType =
-    | Defined of TypeIndex
+    | Defined of TypeDefinitionIndex
     | Any of AnyType
     /// One-dimensional array whose first element is at index zero.
     | Vector of AnyType
@@ -250,7 +255,7 @@ and [<NoComparison; StructuralEquality>] AnyType =
     | ObjectReference of ReferenceType
     | UnsafePointer of AnyType
     /// User-defined struct that is passed by value. The index must point to a struct.
-    | ValueType of TypeIndex
+    | ValueType of TypeDefinitionIndex
 
     interface IEquatable<AnyType>
 
@@ -266,7 +271,7 @@ type MethodSignature =
 [<NoComparison; NoEquality>]
 type FieldImport =
     { FieldName: IdentifierIndex
-      FieldType: TypeIndex }
+      FieldType: TypeDefinitionIndex }
 
 [<NoComparison; NoEquality>]
 type MethodImport =
@@ -314,11 +319,6 @@ type MethodFlags =
     | Static = 0b0000_0010uy
     | ValidMask = 0b0000_0001uy
 
-type MethodBodyTag =
-    | Defined = 0uy
-    | Abstract = 1uy
-    //| External = 2uy
-
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
 type MethodBody =
     | Defined of CodeIndex
@@ -334,7 +334,7 @@ type Method =
       Signature: MethodSignatureIndex
       /// An array of annotations applied to the method.
       MethodAnnotations: vector<unit>
-      Body: MethodBody }
+      Body: CodeIndex }
 
 /// Allows renaming of types in the metadata, similar to F#'s type abbreviations.
 [<NoComparison; NoEquality>]
@@ -354,7 +354,7 @@ type ClassDefinitionFlags =
 
 [<NoComparison; NoEquality>]
 type TypeDefinitionKind =
-    | Class of extends: TypeIndex * flags: ClassDefinitionFlags
+    | Class of extends: TypeDefinitionIndex * flags: ClassDefinitionFlags
     | Interface
     /// A type whose instances can be allocated on the stack.
     | Struct
@@ -373,17 +373,12 @@ type TypeDefinition =
       TypeVisibility: VisibilityFlags
       TypeKind: TypeDefinitionKind
       TypeLayout: TypeDefinitionLayout
-      ImplementedInterfaces: vector<unit>
+      ImplementedInterfaces: vector<unit> //vector<TypeIndex>
       TypeParameters: vector<unit>
       /// An array of annotations applied to the type.
       TypeAnnotations: vector<unit>
       Fields: vector<Field>
       Methods: vector<Method> }
-
-    [<Obsolete>]
-    member KindTag : Tag.TypeDefinitionKind
-    [<Obsolete>]
-    member LayoutTag : Tag.TypeDefinitionLayout
 
 [<NoComparison; NoEquality>]
 type NamespaceImport =
@@ -407,7 +402,7 @@ type RegisterFlags =
 
 [<IsReadOnly; Struct; NoComparison; NoEquality>]
 type RegisterType =
-    { RegisterType: TypeIndex
+    { RegisterType: TypeDefinitionIndex
       RegisterFlags: RegisterFlags }
 
 [<NoComparison; NoEquality>]

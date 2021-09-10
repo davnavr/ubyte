@@ -54,10 +54,48 @@ let moduleID id dest =
     name id.ModuleName dest
     versions id.Version dest
 
-let typeDef (t: TypeDefinition) dest =
+let fieldDef f dest =
+    index f.FieldName dest
+    bits1 f.FieldVisibility dest
+    bits1 f.FieldFlags dest
+    index f.FieldType dest
+    if not f.FieldAnnotations.IsDefaultOrEmpty then failwith "TODO: Annotated fields not yet supported"
+
+let methodDef m dest =
+    index m.MethodName dest
+    bits1 m.MethodVisibility dest
+    bits1 m.MethodFlags dest
+    if not m.TypeParameters.IsDefaultOrEmpty then failwith "TODO: Generic methods not yet supported"
+    index m.Signature dest
+    if not m.MethodAnnotations.IsDefaultOrEmpty then failwith "TODO: Annotated methods not yet supported"
+    index m.Body dest
+
+let typeDef t dest =
     index t.TypeName dest
     bits1 t.TypeVisibility dest
-    failwith "TODO: Write other type info"
+
+    match t.TypeKind with
+    | Class(extends, flags) ->
+        bits1 Tag.TypeDefinitionKind.Class dest
+        index extends dest
+        bits1 flags dest
+    | Interface ->
+        bits1 Tag.TypeDefinitionKind.Interface dest
+    | Struct ->
+        bits1 Tag.TypeDefinitionKind.Struct dest
+
+    match t.TypeLayout with
+    | TypeDefinitionLayout.Unspecified ->
+        bits1 Tag.TypeDefinitionLayout.Unspecified dest
+    | TypeDefinitionLayout.Sequential ->
+        bits1 Tag.TypeDefinitionLayout.Sequential dest
+
+    if not t.ImplementedInterfaces.IsDefaultOrEmpty then failwith "TODO: Writing of implemented interfaces not yet supported"
+    if not t.TypeParameters.IsDefaultOrEmpty then failwith "TODO: Generic types not yet supported"
+    if not t.TypeAnnotations.IsDefaultOrEmpty then failwith "TODO: Annotated types not yet supported"
+
+    vector fieldDef t.Fields dest
+    vector methodDef t.Methods dest
 
 let registerType (struct(count: uvarint, t: RegisterType)) dest =
     LEB128.uint count dest
@@ -150,7 +188,7 @@ let toStream (stream: Stream) (md: Module) =
         lengthEncodedVector buffer stream md.Namespaces <| fun ns dest ->
             vector index ns.NamespaceName dest
             vector typeDef ns.TypeDefinitions dest
-            failwith "TODO: write type aliases"
+            if not ns.TypeAliases.IsDefaultOrEmpty then failwith "TODO: Type aliases not yet supported"
 
         match md.EntryPoint with
         | ValueNone -> LEB128.uint 0u stream
