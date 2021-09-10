@@ -196,12 +196,22 @@ module Tag =
         | S16 = 2uy
         | S32 = 4uy
         | S64 = 8uy
-        | Vector = 0xAuy
+        | RefVector = 0xAuy
         | U8 = 0x10uy
         | U16 = 0x20uy
         | U32 = 0x40uy
         | U64 = 0x80uy
+        /// Precedes a type index, represents a user-defined struct.
+        | ValueType = 0xA1uy
+        | RefAny = 0xAAuy
         | Bool = 0xB0uy
+        /// Represents a UTF-16 code unit.
+        | Char16 = 0xC2uy
+        | Char32 = 0xC4uy
+        /// Indicates that the following type instead represents a pointer to an instance of that type.
+        | UnsafePointer = 0xCCuy
+        /// Precedes a type index, represents an object reference to a user-defined type.
+        | RefDefinedType = 0xDEuy
         | F32 = 0xF4uy
         | F64 = 0xF8uy
 
@@ -327,7 +337,7 @@ type Method =
 type TypeAlias =
     { AliasName: IdentifierIndex
       AliasVisibility: VisibilityFlags
-      AliasOf: AnyType }
+      AliasOf: TypeSignatureIndex }
 
 [<Flags>]
 type ClassDefinitionFlags =
@@ -366,7 +376,9 @@ type TypeDefinition =
       Fields: vector<Field>
       Methods: vector<Method> }
 
+    [<Obsolete>]
     member KindTag : Tag.TypeDefinitionKind
+    [<Obsolete>]
     member LayoutTag : Tag.TypeDefinitionLayout
 
 [<NoComparison; NoEquality>]

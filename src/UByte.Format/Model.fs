@@ -148,12 +148,18 @@ module Tag =
         | S16 = 2uy
         | S32 = 4uy
         | S64 = 8uy
-        | Vector = 0xAuy
+        | RefVector = 0xAuy
         | U8 = 0x10uy
         | U16 = 0x20uy
         | U32 = 0x40uy
         | U64 = 0x80uy
+        | ValueType = 0xA1uy
+        | RefAny = 0xAAuy
         | Bool = 0xB0uy
+        | Char16 = 0xC2uy
+        | Char32 = 0xC4uy
+        | UnsafePointer = 0xCCuy
+        | RefDefinedType = 0xDEuy
         | F32 = 0xF4uy
         | F64 = 0xF8uy
 
@@ -172,17 +178,17 @@ type PrimitiveType =
     | F64
     | Unit
 
-[<RequireQualifiedAccess; NoComparison; StructuralEquality>]
-type NonPrimitiveType =
-    | FromModule of unit
-    | Imported of unit
-
-[<NoComparison; StructuralEquality>]
-type AnyType =
-    | PrimitiveType of PrimitiveType
-    | ObjectReference of AnyType
-    | UnsafePointer of AnyType
+[<RequireQualifiedAccess>]
+type ReferenceType =
+    | Defined of TypeIndex
+    | Any of AnyType
     | Vector of AnyType
+
+and [<NoComparison; StructuralEquality>]  AnyType =
+    | PrimitiveType of PrimitiveType
+    | ObjectReference of ReferenceType
+    | UnsafePointer of AnyType
+    | ValueType of TypeIndex
 
 [<NoComparison; StructuralEquality>]
 type MethodSignature = { ReturnTypes: vector<TypeSignatureIndex>; ParameterTypes: vector<TypeSignatureIndex> }
@@ -246,7 +252,7 @@ type Method =
 type TypeAlias =
     { AliasName: IdentifierIndex
       AliasVisibility: VisibilityFlags
-      AliasOf: AnyType }
+      AliasOf: TypeSignatureIndex }
 
 [<Flags>]
 type ClassDefinitionFlags =
