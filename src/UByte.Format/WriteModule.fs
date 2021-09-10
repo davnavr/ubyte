@@ -61,14 +61,17 @@ let fieldDef f dest =
     bits1 f.FieldFlags dest
     index f.FieldType dest
     if not f.FieldAnnotations.IsDefaultOrEmpty then failwith "TODO: Annotated fields not yet supported"
+    dest.WriteByte 0uy // length of vector
 
 let methodDef m dest =
     index m.MethodName dest
     bits1 m.MethodVisibility dest
     bits1 m.MethodFlags dest
     if not m.TypeParameters.IsDefaultOrEmpty then failwith "TODO: Generic methods not yet supported"
+    dest.WriteByte 0uy // length of vector
     index m.Signature dest
     if not m.MethodAnnotations.IsDefaultOrEmpty then failwith "TODO: Annotated methods not yet supported"
+    dest.WriteByte 0uy // length of vector
 
     match m.Body with
     | MethodBody.Defined codei ->
@@ -101,8 +104,11 @@ let typeDef t dest =
         bits1 Tag.TypeDefinitionLayout.Sequential dest
 
     if not t.ImplementedInterfaces.IsDefaultOrEmpty then failwith "TODO: Writing of implemented interfaces not yet supported"
+    dest.WriteByte 0uy // length of vector
     if not t.TypeParameters.IsDefaultOrEmpty then failwith "TODO: Generic types not yet supported"
+    dest.WriteByte 0uy // length of vector
     if not t.TypeAnnotations.IsDefaultOrEmpty then failwith "TODO: Annotated types not yet supported"
+    dest.WriteByte 0uy // length of vector
 
     vector fieldDef t.Fields dest
     vector methodDef t.Methods dest
@@ -200,13 +206,14 @@ let toStream (stream: Stream) (md: Module) =
         lengthEncodedVector buffer stream md.Namespaces <| fun ns dest ->
             vector index ns.NamespaceName dest
             lengthEncodedVector auxbuf dest ns.TypeDefinitions typeDef
-            if not ns.TypeAliases.IsDefaultOrEmpty then failwith "TODO: Type aliases not yet supported" //lengthEncodedVector
+            lengthEncodedVector auxbuf dest ns.TypeAliases (fun _ _ -> failwith "TODO: Type aliases not yet supported")
 
         match md.EntryPoint with
         | ValueNone -> LEB128.uint 0u stream
         | ValueSome main -> lengthEncodedData buffer stream (index main)
 
-        // Debug information not yet supported
+        // Debug info not yet supported.
+        stream.WriteByte 0uy // length of data
     finally
         stream.Close()
 
