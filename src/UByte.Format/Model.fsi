@@ -178,6 +178,23 @@ type IdentifierSection =
 
     member Item : index: IdentifierIndex -> Name with get
 
+[<RequireQualifiedAccess>]
+module Tag =
+    type Type =
+        | Unit = 0uy
+        | S8 = 1uy
+        | S16 = 2uy
+        | S32 = 4uy
+        | S64 = 8uy
+        | Vector = 0xAuy
+        | U8 = 0x10uy
+        | U16 = 0x20uy
+        | U32 = 0x40uy
+        | U64 = 0x80uy
+        | Bool = 0xB0uy
+        | F32 = 0xF4uy
+        | F64 = 0xF8uy
+
 [<RequireQualifiedAccess; NoComparison; StructuralEquality>]
 type PrimitiveType =
     | Bool
@@ -201,10 +218,12 @@ type NonPrimitiveType =
 [<NoComparison; StructuralEquality>]
 type AnyType =
     | PrimitiveType of PrimitiveType
-    | ObjectReference of AnyType // TODO: Allow read only pointers?
+    | ObjectReference of AnyType (*Choice<TypeIndex, AnyType>*) // TODO: Allow read only pointers?
     | UnsafePointer of AnyType
     /// Represents a one-dimensional array whose first element is at index zero.
     | Vector of AnyType
+
+    //member Kind : Tag.Type
 
     interface IEquatable<AnyType>
 
@@ -212,8 +231,8 @@ type AnyType =
 [<NoComparison; StructuralEquality>]
 type MethodSignature =
     { /// The types of the values returned by the method.
-      ReturnTypes: vector<TypeIndex> // TODO: Have index types for method signatures not be able to point to a Class or Interface definition, use ObjectReference instead.
-      ParameterTypes: vector<TypeIndex> }
+      ReturnTypes: vector<TypeSignatureIndex>
+      ParameterTypes: vector<TypeSignatureIndex> }
 
     interface IEquatable<MethodSignature>
 
@@ -226,7 +245,7 @@ type FieldImport =
 type MethodImport =
     { MethodName: IdentifierIndex
       TypeParameters: uvarint
-      Signature: MethodSignature } // TODO: Use indices to signatures instead, to avoid signature duplication
+      Signature: MethodSignatureIndex }
 
 type TypeDefinitionKindTag =
     | Class = 0uy
@@ -262,7 +281,7 @@ type Field =
     { FieldName: IdentifierIndex
       FieldVisibility: VisibilityFlags
       FieldFlags: FieldFlags
-      FieldType: TypeIndex
+      FieldType: TypeSignatureIndex
       /// An array of annotations applied to the field.
       FieldAnnotations: vector<unit> }
 
@@ -290,7 +309,7 @@ type Method =
       MethodVisibility: VisibilityFlags
       MethodFlags: MethodFlags
       TypeParameters: vector<unit>
-      Signature: MethodSignature // TODO: Use indices to signatures instead, to avoid signature duplication
+      Signature: MethodSignatureIndex
       /// An array of annotations applied to the method.
       MethodAnnotations: vector<unit>
       Body: MethodBody }

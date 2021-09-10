@@ -135,10 +135,6 @@ let header (source: #_) =
         if psize > PointerSize.Is64Bit then failwithf "TODO: Invalid pointer size 0x%02X (%A)" (uint8 psize) psize
         psize }
 
-let methodSig (source: #_) =
-    { MethodSignature.ParameterTypes = vector<Index'<_>, _, _> source
-      ReturnTypes = vector<Index'<_>, _, _> source }
-
 [<Struct>]
 type Placeholder'<'T> =
     interface IParser<'T> with
@@ -164,7 +160,7 @@ type MethodImport' =
         member _.Parse source =
             { MethodImport.MethodName = index source
               TypeParameters = parse<LEB128.UInt, _, _> source
-              Signature = methodSig source }
+              Signature = index source }
 
 [<Struct>]
 type TypeDefinitionImport' =
@@ -196,6 +192,20 @@ type ModuleImport' =
               ImportedNamespaces = vector<NamespaceImport', _, _> source }
 
 [<Struct>]
+type TypeSignature =
+    interface IParser<AnyType> with
+        member _.Parse source =
+            
+            failwith "TODO: Check tag"
+
+[<Struct>]
+type MethodSignature' =
+    interface IParser<MethodSignature> with
+        member _.Parse source =
+            { MethodSignature.ParameterTypes = vector<Index'<_>, _, _> source
+              ReturnTypes = vector<Index'<_>, _, _> source }
+
+[<Struct>]
 type DataVector =
     interface IParser<vector<byte>> with
         [<MethodImpl(MethodImplOptions.AggressiveInlining)>]
@@ -221,7 +231,7 @@ type Method' =
               MethodVisibility = bits1 source
               MethodFlags = bits1 source
               TypeParameters = vector<Placeholder'<_>, _, _> source
-              Signature = methodSig source
+              Signature = index source
               MethodAnnotations = vector<Placeholder'<_>, _, _> source
               Body =
                 match bits1 source with
