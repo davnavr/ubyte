@@ -195,8 +195,22 @@ type ModuleImport' =
 type TypeSignature =
     interface IParser<AnyType> with
         member _.Parse source =
-            
-            failwith "TODO: Check tag"
+            match bits1 source with
+            | Tag.Type.Unit -> Primitive PrimitiveType.Unit
+            | Tag.Type.S8 -> Primitive PrimitiveType.S8
+            | Tag.Type.S16 -> Primitive PrimitiveType.S16
+            | Tag.Type.S32 -> Primitive PrimitiveType.S32
+            | Tag.Type.S64 -> Primitive PrimitiveType.S64
+            | Tag.Type.U8 -> Primitive PrimitiveType.U8
+            | Tag.Type.U16 -> Primitive PrimitiveType.U16
+            | Tag.Type.U32 -> Primitive PrimitiveType.U32
+            | Tag.Type.U64 -> Primitive PrimitiveType.U64
+            | Tag.Type.F32 -> Primitive PrimitiveType.F32
+            | Tag.Type.F64 -> Primitive PrimitiveType.F64
+            | Tag.Type.Bool -> Primitive PrimitiveType.Bool
+            | Tag.Type.Char16 -> Primitive PrimitiveType.Char16
+            | Tag.Type.Char32 -> Primitive PrimitiveType.Char32
+            | bad -> failwithf "TODO: Invalid type (0x%02X) %A" (uint8 bad) bad
 
 [<Struct>]
 type MethodSignature' =

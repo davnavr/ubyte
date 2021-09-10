@@ -174,6 +174,8 @@ type PrimitiveType =
     | S32
     | U64
     | S64
+    | Char16
+    | Char32
     | F32
     | F64
     | Unit
@@ -185,7 +187,7 @@ type ReferenceType =
     | Vector of AnyType
 
 and [<NoComparison; StructuralEquality>]  AnyType =
-    | PrimitiveType of PrimitiveType
+    | Primitive of PrimitiveType
     | ObjectReference of ReferenceType
     | UnsafePointer of AnyType
     | ValueType of TypeIndex
