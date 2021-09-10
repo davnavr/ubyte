@@ -41,8 +41,20 @@ type MethodInvocationResult = ImmutableArray<RuntimeRegister>
 module Interpreter =
     open UByte.Format.Model.InstructionSet
 
-    let interpret (current: RuntimeStackFrame) (instructions: ImmutableArray<Instruction>) =
-        failwith "imnterpret": MethodInvocationResult
+    let rec loop (current: RuntimeStackFrame) (instructions: ImmutableArray<Instruction>) i =
+        if i < instructions.Length then
+            match instructions.[i] with
+            | Instruction.Ret rregisters ->
+                let mutable returns = Array.zeroCreate rregisters.Length
+                for i = 0 to rregisters.Length - 1 do returns.[i] <- current.RegisterAt rregisters.[0]
+                Unsafe.As<RuntimeRegister[], ImmutableArray<RuntimeRegister>> &returns
+        else
+            failwith "TODO: error for method did not return"
+
+    let interpret current instructions: MethodInvocationResult =
+        //let current = ref current
+        // NOTE: Can do an explicit stack of Stack<struct(RuntimeStackFrame * ImmutableArray<Instruction> * int32)>
+        loop current instructions 0
 
 [<Sealed>]
 type RuntimeMethod (rmodule: RuntimeModule, method: Method) =
@@ -189,7 +201,9 @@ let executionEntryPoint (program: Module) (moduleImportLoader: ModuleImport -> M
 
         match result.Length with
         | 0 -> 1
-        | 1 -> failwith "TODO: Get exit code from register"
+        | 1 -> // TODO: Check signature of method to determine if a 32bit integer exit code is returned
+            match result.[0] with
+            | RuntimeRegister.R4 { contents = ecode } -> int32 ecode
         | _ -> failwith "TODO: Multiple exit codes on entry point not supported"
     | ValueNone -> failwithf "TODO: Error for missing entry point method"
 
