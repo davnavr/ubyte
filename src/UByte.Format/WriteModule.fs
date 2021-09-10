@@ -191,14 +191,16 @@ let toStream (stream: Stream) (md: Module) =
         lengthEncodedVector buffer stream md.Data <| fun data dest ->
             failwith "TODO: Data not supported yet"
 
+        let auxbuf = new MemoryStream()
+
         lengthEncodedVector buffer stream md.Code <| fun code dest ->
             vector registerType code.RegisterTypes dest
-            vector instruction code.Instructions dest
+            lengthEncodedVector auxbuf dest code.Instructions instruction
 
         lengthEncodedVector buffer stream md.Namespaces <| fun ns dest ->
             vector index ns.NamespaceName dest
-            vector typeDef ns.TypeDefinitions dest
-            if not ns.TypeAliases.IsDefaultOrEmpty then failwith "TODO: Type aliases not yet supported"
+            lengthEncodedVector auxbuf dest ns.TypeDefinitions typeDef
+            if not ns.TypeAliases.IsDefaultOrEmpty then failwith "TODO: Type aliases not yet supported" //lengthEncodedVector
 
         match md.EntryPoint with
         | ValueNone -> LEB128.uint 0u stream

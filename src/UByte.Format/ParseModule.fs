@@ -337,7 +337,7 @@ type Code' =
             { Code.RegisterTypes = vector<CountedRegisterTypes, _, _> source
               Instructions =
                 let struct(_, instructions) = lengthEncodedData source
-                vector<InstructionDecoder, _, _> source }
+                vector<InstructionDecoder, _, _> instructions }
 
 let fromBytes (source: #IByteSequence) =
     let magic' = magic source
