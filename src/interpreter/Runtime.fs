@@ -1,85 +1,93 @@
 ﻿module rec UByte.Interpreter.Runtime
 
 open System.Collections.Generic
+open System.Collections.Immutable
 open System.IO
 
 open UByte.Format
 open UByte.Format.Model
 
 [<Sealed>]
-type RuntimeMethod (rmodule: RuntimeModule, method: Method) = class end
+type RuntimeRegister = class end
 
 [<Sealed>]
-type RuntimeTypeDefinition (rmodule: RuntimeModule, t: TypeDefinition, mstart: MethodIndex) = class end
+type RuntimeStackFrame (prev: RuntimeStackFrame voption, args: ImmutableArray<RuntimeRegister>, method: RuntimeMethod voption) =
+    member _.MethodArguments = args
+    member val Registers = failwith "bad": ImmutableArray<_>
+    member _.CurrentMethod = method
+    member _.Previous = prev
+
+    member this.RegisterAt (Index i: RegisterIndex) =
+        let i' = Checked.int32 i
+        if i' >= args.Length then this.Registers.[i' - args.Length] else args.[i']
+
+type MethodInvocationResult = ImmutableArray<RuntimeRegister>
 
 [<Sealed>]
-type RuntimeModule (m: Module, moduleImportResolver: ModuleImport -> RuntimeModule) =
-    let typeDefLookup = Dictionary<TypeDefinitionIndex, RuntimeTypeDefinition>()
-    let methodDefLookup = Dictionary<MethodIndex, TypeDefinitionIndex>()
+type RuntimeMethod (rmodule: RuntimeModule, method: Method) =
+    member _.Module = rmodule
 
-    let countTypeImports, findTypeDef =
-        let countTypeImports =
-            let mutable starti = ValueNone
-            fun() ->
-                match starti with
-                | ValueNone ->
-                    let mutable sum = 0
-                    for mimport in m.Imports do
-                        for ns in mimport.ImportedNamespaces do sum <- sum + ns.TypeImports.Length + ns.TypeAliases.Length
-                    starti <- ValueSome sum
-                    sum
-                | ValueSome i -> i
+    member _.Invoke(current: RuntimeStackFrame) =
+        failwith "bad"
 
-        let findTypeDef =
-            let lookup = Dictionary<TypeDefinitionIndex, struct(int32 * int32 * MethodIndex)>()
-            let mutable start, methodi, namespacei, typei = Index 0u, 0u, 0, 0
-            let current() = m.Namespaces.[namespacei].TypeDefinitions.[typei]
-            fun i ->
-                match lookup.TryGetValue i with
-                | true, (ni, ti, mi) -> struct(m.Namespaces.[ni].TypeDefinitions.[ti], mi)
-                | false, _ ->
-                    if i <= start then
-                        start <- countTypeImports() |> uint32 |> Index
-                        methodi <- 0u //countTypeImportsAndGetMethodStart
-                        namespacei <- 0
-                        typei <- 0
+[<Sealed>]
+type RuntimeTypeDefinition (rmodule: RuntimeModule, t: TypeDefinition, mstart: MethodIndex) =
+    let (Index mstart) = mstart
+    let methods = Dictionary<MethodIndex, RuntimeMethod> t.Methods.Length
 
-                    while start <> i && namespacei < m.Namespaces.Length do
-                        // TODO: Account for type aliasas
-                        while start <> i && typei < m.Namespaces.[namespacei].TypeDefinitions.Length do
-                            let (Index starti) = start
-                            start <- Index(Checked.(+) starti 1u)
-                            if start <> i then
-                                for mi = 0 to current().Methods.Length - 1 do
-                                    methodDefLookup.[Index methodi] <- Index starti
-                                    methodi <- methodi + 1u
-                                typei <- typei + 1
+    member val Name = rmodule.IdentifierAt t.TypeName
 
-                        if start <> i then namespacei <- namespacei + 1
-
-                    let found = current()
-                    let methodi' = Index methodi
-                    lookup.Add(i, struct(namespacei, typei, methodi'))
-                    struct(found, methodi')
-
-        countTypeImports, findTypeDef
-
-    member this.InitializeType i =
-        match typeDefLookup.TryGetValue i with
+    member _.InitializeMethod(Index i as mi) =
+        match methods.TryGetValue mi with
         | true, existing -> existing
         | false, _ ->
-            let struct(t, mstart) = findTypeDef i
-            let rt = RuntimeTypeDefinition(this, t, mstart)
-            typeDefLookup.Add(i, rt)
-            //rt.InvokeInitializer
-            rt
+            let method = RuntimeMethod(rmodule, t.Methods.[Checked.int32 mstart + Checked.int32 i])
+            methods.Add(mi, method)
+            method
+
+[<Sealed>]
+type RuntimeModule (m: Module, moduleImportResolver: ModuleImport -> RuntimeModule) as rm =
+    let typeDefLookup, methodDefLookup =
+        let mutable typei =
+            let mutable i = 0u
+            for mimport in m.Imports do
+                for ns in mimport.ImportedNamespaces do i <- i + uint32 ns.TypeImports.Length + uint32 ns.TypeAliases.Length
+            i
+
+        let mutable methodi = 0u
+
+        let types = Dictionary<TypeDefinitionIndex, RuntimeTypeDefinition>()
+        let methods = Dictionary<MethodIndex, TypeDefinitionIndex>()
+
+        for ni = 0 to m.Namespaces.Length - 1 do
+            let ntypes = m.Namespaces.[ni].TypeDefinitions
+            for i = 0 to ntypes.Length - 1 do
+                let ti = Index(typei + uint32 i)
+                types.[ti] <- RuntimeTypeDefinition(rm, ntypes.[i], Index methodi)
+                let ms = ntypes.[i].Methods
+                for mi = 0 to ms.Length - 1 do methods.[Index(methodi + uint32 mi)] <- ti
+                methodi <- methodi + uint32 ms.Length
+            typei <- typei + uint32 ntypes.Length
+
+        types, methods
+
+    member _.IdentifierAt(Index i: IdentifierIndex) = m.Identifiers.Identifiers.[Checked.int32 i]
+
+    member _.CodeAt(Index i: CodeIndex) = m.Code.[Checked.int32 i]
+
+    member _.InitializeType i =
+        match typeDefLookup.TryGetValue i with
+        | true, existing -> existing
+        | false, _ -> // Assume it is a type import.
+            failwith "TODO: Type imports not yet implemented."
 
     member this.InitializeMethod i =
         match methodDefLookup.TryGetValue i with
-        | true, method -> method
-        | false, _ ->
-            let rt = 
-            ()
+        | true, rt -> this.InitializeType(rt).InitializeMethod i
+        | false, _ -> // Assume it is a method import.
+            failwith "TODO: Method imports not yet implemented."
+
+
 
 let executionEntryPoint (program: Module) (moduleImportLoader: ModuleImport -> Module) =
     let moduleImportResolver =
@@ -96,7 +104,8 @@ let executionEntryPoint (program: Module) (moduleImportLoader: ModuleImport -> M
     match program.EntryPoint with
     | ValueSome main ->
         let application = RuntimeModule(program, moduleImportResolver)
-        application.InitializeMethod main
+        let main' = application.InitializeMethod main
+
         -1
     | ValueNone -> failwithf "TODO: Error for missing entry point method"
 

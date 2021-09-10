@@ -9,22 +9,43 @@ open System.IO
 open UByte.Format
 
 [<Sealed>]
-type RuntimeMethod = class end
+type RuntimeRegister = class end
+
+[<Sealed>]
+type RuntimeStackFrame =
+    member MethodArguments : ImmutableArray<RuntimeRegister>
+    member Registers : ImmutableArray<RuntimeRegister>
+    member Previous : RuntimeStackFrame voption
+
+    member RegisterAt : Model.RegisterIndex -> RuntimeRegister
+
+type MethodInvocationResult = ImmutableArray<RuntimeRegister>
+
+[<Sealed>]
+type RuntimeMethod =
+    member Invoke : current: RuntimeStackFrame -> MethodInvocationResult
+
+type RuntimeStackFrame with member CurrentMethod : RuntimeMethod voption
 
 [<Sealed>]
 type RuntimeTypeDefinition =
-    member Namespace: ImmutableArray<string>
+    //member Namespace : ImmutableArray<string>
+
+    member Name : Model.Name
 
     //member InvokeInitializer: unit -> 
 
+    member InitializeMethod : Model.MethodIndex -> RuntimeMethod
+
 [<Sealed>]
 type RuntimeModule =
-    member InitializeType: Model.TypeDefinitionIndex -> RuntimeTypeDefinition
-    member InitializeMethod: Model.MethodIndex -> RuntimeMethod
+    member InitializeType : Model.TypeDefinitionIndex -> RuntimeTypeDefinition
+
+    member InitializeMethod : Model.MethodIndex -> RuntimeMethod
 
     interface IEquatable<RuntimeModule>
 
-type RuntimeMethod with member Module: RuntimeModule
-type RuntimeTypeDefinition with member Module: RuntimeModule
+type RuntimeMethod with member Module : RuntimeModule
+type RuntimeTypeDefinition with member Module : RuntimeModule
 
-val run: program: FileInfo -> importDirs: IReadOnlyCollection<DirectoryInfo> -> int32
+val run : program: FileInfo -> importDirs: IReadOnlyCollection<DirectoryInfo> -> int32
