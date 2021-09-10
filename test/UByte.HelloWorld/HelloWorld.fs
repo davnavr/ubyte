@@ -5,6 +5,8 @@ open System.IO
 
 open Expecto
 
+open Swensen.Unquote
+
 open UByte.Format
 open UByte.Format.Model
 open UByte.Format.Model.InstructionSet
@@ -85,7 +87,8 @@ let tests = testList "hello world" [
         let wbuffer = new MemoryStream()
         WriteModule.toStream wbuffer program
         let rbuffer = new MemoryStream(wbuffer.ToArray())
-        ParseModule.fromStream rbuffer |> ignore // TODO: Maybe compare contents?
+        let parsed = ParseModule.fromStream rbuffer
+        parsed.Header.Module =! program.Header.Module
 ]
 
 [<EntryPoint>]

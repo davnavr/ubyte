@@ -499,5 +499,3 @@ module Name =
 
     /// <exception cref="T:System.ArgumentException">Thrown when the <paramref name="name"/> is empty.</exception>
     val ofStr : name: ustring -> Name
-
-

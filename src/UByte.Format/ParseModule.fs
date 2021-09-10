@@ -390,6 +390,6 @@ let fromStream (source: Stream) =
 
 let fromFile (source: FileInfo) =
     if isNull source then nullArg(nameof source)
-    source.OpenWrite() |> fromStream
+    source.OpenRead() |> fromStream
 
 let fromPath source = fromFile(FileInfo source)

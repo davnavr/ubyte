@@ -6,7 +6,7 @@ open Argu
 
 type Argument =
     | [<ExactlyOnce>] Program of ``program.mdle``: string
-    //| OptionForAdditionalProbingPaths
+    //| Additional_Import_Dirs
 
     interface IArgParserTemplate with
         member this.Usage =
@@ -27,6 +27,4 @@ let main argv =
 
     let iargs' = interpreterArgumentParser.Parse(inputs = iargs)
 
-    let runtime = Runtime.State(FileInfo(iargs'.GetResult <@ Program @>))
-
-    0 // return an integer exit code
+    Runtime.run (FileInfo(iargs'.GetResult <@ Program @>)) Array.empty
