@@ -72,7 +72,7 @@ type StreamWrapper (stream: Stream) =
 let magic (source: #IByteSequence) =
     let magic' = Model.magic.Magic
     let buffer = Span.stackalloc magic'.Length
-    if source.Read buffer = 4 && Equality.spans (Span.asReadOnly buffer) (magic'.AsSpan()) then
+    if source.Read buffer = magic'.Length && Equality.spans (Span.asReadOnly buffer) (magic'.AsSpan()) then
         Model.magic
     else failwithf "TODO: Error for invalid magic"
 
@@ -382,6 +382,7 @@ let fromBytes (source: #IByteSequence) =
 
 let fromStream (source: Stream) =
     if isNull source then nullArg(nameof source)
+    if not source.CanRead then invalidArg (nameof source) "The stream must support reading"
     try
         fromBytes(StreamWrapper source)
     finally

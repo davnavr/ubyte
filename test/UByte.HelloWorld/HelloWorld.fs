@@ -82,9 +82,10 @@ let tests = testList "hello world" [
         WriteModule.toPath "hello_world.mdle" program
 
     testCase "written to stream can be parsed" <| fun () ->
-        let buffer = new MemoryStream()
-        WriteModule.toStream buffer program
-        ParseModule.fromStream buffer |> ignore // TODO: Maybe compare contents?
+        let wbuffer = new MemoryStream()
+        WriteModule.toStream wbuffer program
+        let rbuffer = new MemoryStream(wbuffer.ToArray())
+        ParseModule.fromStream rbuffer |> ignore // TODO: Maybe compare contents?
 ]
 
 [<EntryPoint>]

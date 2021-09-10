@@ -9,6 +9,9 @@ open System.IO
 /// <exception cref="T:System.ArgumentNullException">
 /// Thrown when the <paramref name="source"/> is <see langword="null"/>.
 /// </exception>
+/// <exception cref="T:System.ArgumentException">
+/// Thrown when the <paramref name="source"/> does not support reading.
+/// </exception>
 val fromStream : source: Stream -> Model.Module
 
 /// <exception cref="T:System.ArgumentNullException">
