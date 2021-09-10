@@ -7,11 +7,13 @@ open Argu
 type Argument =
     | [<ExactlyOnce>] Program of ``program.mdle``: string
     //| Additional_Import_Dirs
+    | Launch_Interpreter_Debugger
 
     interface IArgParserTemplate with
         member this.Usage =
             match this with
             | Program _ -> "path to the program to run"
+            | Launch_Interpreter_Debugger -> "used to debug the interpreter"
 
 let interpreterArgumentParser = ArgumentParser.Create<Argument>()
 
@@ -26,5 +28,7 @@ let main argv =
             argv, Array.empty
 
     let iargs' = interpreterArgumentParser.Parse(inputs = iargs)
+
+    if iargs'.Contains <@ Launch_Interpreter_Debugger @> then System.Diagnostics.Debugger.Launch() |> ignore
 
     Runtime.run (FileInfo(iargs'.GetResult <@ Program @>)) Array.empty
