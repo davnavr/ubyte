@@ -73,21 +73,26 @@ type LengthEncoded<'Contents> = 'Contents
 module IndexKinds =
     type [<AbstractClass>] Kind = class end
     type [<Sealed; Class>] Identifier = inherit Kind
+    type [<Sealed; Class>] TypeSignature = inherit Kind
+    type [<Sealed; Class>] MethodSignature = inherit Kind
+    type [<Sealed; Class>] Code = inherit Kind
+    type [<Sealed; Class>] Register = inherit Kind
     type [<Sealed; Class>] Data = inherit Kind
     type [<Sealed; Class>] Type = inherit Kind
     type [<Sealed; Class>] Method = inherit Kind
-    type [<Sealed; Class>] Code = inherit Kind
-    type [<Sealed; Class>] Register = inherit Kind
 
 [<Struct; StructuralComparison; StructuralEquality>]
 type Index<'Kind when 'Kind :> IndexKinds.Kind> =
     | Index of uvarint
 
 type IdentifierIndex = Index<IndexKinds.Identifier>
-type TypeIndex = Index<IndexKinds.Type>
-type MethodIndex = Index<IndexKinds.Method>
+type TypeSignatureIndex = Index<IndexKinds.TypeSignature>
+type MethodSignatureIndex = Index<IndexKinds.MethodSignature>
 type CodeIndex = Index<IndexKinds.Code>
 type RegisterIndex = Index<IndexKinds.Register>
+type DataIndex = Index<IndexKinds.Data>
+type TypeIndex = Index<IndexKinds.Type>
+type MethodIndex = Index<IndexKinds.Method>
 
 module InstructionSet =
     type Opcode =
@@ -322,10 +327,12 @@ type Module =
       Header: LengthEncoded<ModuleHeader>
       Identifiers: LengthEncoded<IdentifierSection>
       Imports: LengthEncoded<vector<ModuleImport>>
+      TypeSignatures: LengthEncoded<vector<AnyType>>
+      MethodSignatures: LengthEncoded<vector<MethodSignature>>
       Data: LengthEncoded<vector<vector<byte>>>
+      Code: LengthEncoded<vector<Code>>
       Namespaces: LengthEncoded<vector<Namespace>>
       EntryPoint: LengthEncoded<MethodIndex voption>
-      Code: LengthEncoded<vector<Code>>
       Debug: LengthEncoded<Debug> }
 
     member this.Endianness =

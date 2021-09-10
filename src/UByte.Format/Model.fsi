@@ -3,7 +3,6 @@
 open System
 open System.Collections.Immutable
 open System.Runtime.CompilerServices
-open System.Text
 
 [<RequireQualifiedAccess; IsReadOnly; Struct>]
 type Magic = internal { Magic: ImmutableArray<byte> }
@@ -55,11 +54,13 @@ type LengthEncoded<'Data> = 'Data
 module IndexKinds =
     type [<AbstractClass>] Kind = class end
     type [<Sealed; Class>] Identifier = inherit Kind
+    type [<Sealed; Class>] TypeSignature = inherit Kind
+    type [<Sealed; Class>] MethodSignature = inherit Kind
     type [<Sealed; Class>] Data = inherit Kind
-    type [<Sealed; Class>] Type = inherit Kind
-    type [<Sealed; Class>] Method = inherit Kind
     type [<Sealed; Class>] Code = inherit Kind
     type [<Sealed; Class>] Register = inherit Kind
+    type [<Sealed; Class>] Type = inherit Kind
+    type [<Sealed; Class>] Method = inherit Kind
 
 [<IsReadOnly; Struct; StructuralComparison; StructuralEquality>]
 type Index<'Kind when 'Kind :> IndexKinds.Kind> =
@@ -69,6 +70,21 @@ type Index<'Kind when 'Kind :> IndexKinds.Kind> =
 
 /// <summary>Represents an index into the module's identifiers. The index of the first identifier is <c>0</c>.</summary>
 type IdentifierIndex = Index<IndexKinds.Identifier>
+
+type TypeSignatureIndex = Index<IndexKinds.TypeSignature>
+
+type MethodSignatureIndex = Index<IndexKinds.MethodSignature>
+
+type DataIndex = Index<IndexKinds.Data>
+
+/// <summary>Represents an index into the module's method bodies. The index of the first method body is <c>0</c>.</summary>
+type CodeIndex = Index<IndexKinds.Code>
+
+/// <summary>
+/// Represents an index to an index. The index of the first register not representing a method parameter is equal to the number
+/// of method parameters. The index of the first method parameter, if any are defined, is <c>0</c>.
+/// </summary>
+type RegisterIndex = Index<IndexKinds.Register>
 
 /// <summary>
 /// Represents an index into the module's imported types or defined types. The index of the first imported type or type alias, if
@@ -82,15 +98,6 @@ type TypeIndex = Index<IndexKinds.Type>
 /// is equal to the number of imported methods.
 /// </summary>
 type MethodIndex = Index<IndexKinds.Method>
-
-/// <summary>Represents an index into the module's method bodies. The index of the first method body is <c>0</c>.</summary>
-type CodeIndex = Index<IndexKinds.Code>
-
-/// <summary>
-/// Represents an index to an index. The index of the first register not representing a method parameter is equal to the number
-/// of method parameters. The index of the first method parameter, if any are defined, is <c>0</c>.
-/// </summary>
-type RegisterIndex = Index<IndexKinds.Register>
 
 module InstructionSet =
     /// Opcodes are represented as LEB128 encoded unsigned integers.
@@ -336,6 +343,8 @@ type TypeDefinition =
       Fields: vector<Field>
       Methods: vector<Method> }
 
+    //member KindTag : TypeDefinitionKindTag
+
 [<NoComparison; NoEquality>]
 type NamespaceImport =
     { NamespaceName: vector<IdentifierIndex>
@@ -427,20 +436,17 @@ type Module =
       Identifiers: LengthEncoded<IdentifierSection>
       /// An array of structures describes the modules containing the types used by this module.
       Imports: LengthEncoded<vector<ModuleImport>>
+      TypeSignatures: LengthEncoded<vector<AnyType>>
+      MethodSignatures: LengthEncoded<vector<MethodSignature>>
       /// An array of byte arrays containing miscellaneous data such as the contents of string literals.
       Data: LengthEncoded<vector<vector<byte>>>
-      //Maybe do this? Avoids TypeIndices from erroneously being used to refer to classes when an index pointing to an alias for ObjectReference should be used instead.
-      //TypeSignatures: LengthEncoded<vector<AnyType>>
-
-      // TODO: Use indices to signatures instead, to avoid signature duplication
-      //MethodSignatures: LengthEncoded<vector<MethodSignature>>
+      Code: LengthEncoded<vector<Code>>
       /// An array of the namespaces defined in the module, which contain the module's types.
       Namespaces: LengthEncoded<vector<Namespace>>
       /// An optional index specifying the entry point method of the application.
       /// The entry point method must not have any type parameters. It is up to the compiler or runtime to determine if the
       /// signature of the entry point method is valid.
       EntryPoint: LengthEncoded<MethodIndex voption>
-      Code: LengthEncoded<vector<Code>> // TODO: Move code further up before namespaces
       Debug: LengthEncoded<Debug> }
 
     member Endianness : Endianness

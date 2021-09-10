@@ -322,27 +322,39 @@ let fromBytes (source: #IByteSequence) =
     let fversion = versions source
     if fversion <> Model.currentFormatVersion then failwithf "TODO: Error for unsupported version %O" fversion
     let header' = header source
-    let struct(_, identifiers) = lengthEncodedData source
-    let struct(_, imports) = lengthEncodedData source
-    let struct(_, namespaces) = lengthEncodedData source
-    let struct(epoint, epoint') = lengthEncodedData source
-    let struct(_, code) = lengthEncodedData source
-    let struct(debug, _) = lengthEncodedData source
 
     // TODO: Check that length encoded data has no remaining bytes left
     { Module.Magic = magic'
       FormatVersion = fversion
       Header = header'
-      Identifiers = { IdentifierSection.Identifiers = vector<Name', _, _> identifiers }
-      Imports = vector<ModuleImport', _, _> imports
-      Data = vector<DataVector, _, _> imports
-      Namespaces = vector<Namespace', _, _> namespaces
+      Identifiers =
+        let struct(_, identifiers) = lengthEncodedData source
+        { IdentifierSection.Identifiers = vector<Name', _, _> identifiers }
+      Imports =
+        let struct(_, imports) = lengthEncodedData source
+        vector<ModuleImport', _, _> imports
+      TypeSignatures =
+        let struct(_, tsigs) = lengthEncodedData source
+        vector<TypeSignature, _, _> tsigs
+      MethodSignatures =
+        let struct(_, msigs) = lengthEncodedData source
+        vector<MethodSignature', _, _> msigs
+      Data =
+        let struct(_, data) = lengthEncodedData source
+        vector<DataVector, _, _> data
+      Code =
+        let struct(_, code) = lengthEncodedData source
+        vector<Code', _, _> code
+      Namespaces =
+        let struct(_, namespaces) = lengthEncodedData source
+        vector<Namespace', _, _> namespaces
       EntryPoint =
+        let struct(epoint, epoint') = lengthEncodedData source
         if epoint.IsDefaultOrEmpty
         then ValueNone
         else ValueSome(index epoint')
-      Code = vector<Code', _, _> code
       Debug =
+        let struct(debug, _) = lengthEncodedData source
         if debug.Length > 0 then failwith "TODO: Debugging information not yet supported"
         () }
 

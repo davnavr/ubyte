@@ -79,11 +79,14 @@ let toStream (stream: Stream) (md: Module) =
         lengthEncodedVector buffer stream md.Imports <| fun import dest ->
             failwith "TODO: Imports not supported yet"
 
+        failwith "Type Sig"
+
+        failwith "Method Sig"
+
         lengthEncodedVector buffer stream md.Data <| fun data dest ->
             failwith "TODO: Data not supported yet"
 
-
-
+        failwith "CODE"
 
         lengthEncodedVector buffer stream md.Namespaces <| fun ns dest ->
             vector index ns.NamespaceName dest
@@ -95,7 +98,6 @@ let toStream (stream: Stream) (md: Module) =
         | ValueSome main -> lengthEncodedData buffer stream (index main)
 
         // Debug information not yet supported
-
     finally
         stream.Close()
 
