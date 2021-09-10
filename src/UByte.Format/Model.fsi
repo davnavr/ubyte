@@ -440,7 +440,7 @@ type Module =
       /// The entry point method must not have any type parameters. It is up to the compiler or runtime to determine if the
       /// signature of the entry point method is valid.
       EntryPoint: LengthEncoded<MethodIndex voption>
-      Code: LengthEncoded<vector<Code>>
+      Code: LengthEncoded<vector<Code>> // TODO: Move code further up before namespaces
       Debug: LengthEncoded<Debug> }
 
     member Endianness : Endianness

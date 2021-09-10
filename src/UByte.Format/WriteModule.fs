@@ -1,5 +1,6 @@
 ﻿module UByte.Format.WriteModule
 
+open System
 open System.IO
 
 open UByte.Format.Model
@@ -23,6 +24,8 @@ module LEB128 =
 
     let uint value dest = unsigned value dest
 
+let inline index (Index i) dest = LEB128.uint i dest
+
 let vector writer (items: vector<'T>) dest =
     LEB128.uint (uint32 items.Length) dest
     for i = 0 to items.Length - 1 do
@@ -30,8 +33,9 @@ let vector writer (items: vector<'T>) dest =
 
 let versions (VersionNumbers numbers) dest = vector LEB128.uint numbers dest
 
-let name (Name name) dest =
-    failwith "TODO: Write name"
+let name (Name name) (dest: Stream) =
+    // NOTE: Can write strings more efficeintly by using StreamWriter or Encoder
+    dest.Write(ReadOnlySpan(System.Text.Encoding.UTF8.GetBytes name))
 
 let lengthEncodedData (buffer: MemoryStream) dest writer =
     let inline reset() = buffer.Seek(0L, SeekOrigin.Begin) |> ignore
@@ -43,9 +47,16 @@ let lengthEncodedData (buffer: MemoryStream) dest writer =
     LEB128.uint (uint32 buffer.Length) dest
     buffer.WriteTo dest
 
+let lengthEncodedVector buffer dest items writer = lengthEncodedData buffer dest (vector writer items)
+
 let moduleID id dest =
     name id.ModuleName dest
     versions id.Version dest
+
+let typeDef (t: TypeDefinition) dest =
+    index t.TypeName dest
+    bits1 t.TypeVisibility dest
+    failwith "TODO: Write other type info"
 
 let toStream (stream: Stream) (md: Module) =
     if isNull stream then nullArg(nameof stream)
@@ -63,6 +74,27 @@ let toStream (stream: Stream) (md: Module) =
             bits1 header.Flags dest
             bits1 header.PointerSize dest
 
+        lengthEncodedVector buffer stream md.Identifiers.Identifiers name
+
+        lengthEncodedVector buffer stream md.Imports <| fun import dest ->
+            failwith "TODO: Imports not supported yet"
+
+        lengthEncodedVector buffer stream md.Data <| fun data dest ->
+            failwith "TODO: Data not supported yet"
+
+
+
+
+        lengthEncodedVector buffer stream md.Namespaces <| fun ns dest ->
+            vector index ns.NamespaceName dest
+            vector typeDef ns.TypeDefinitions dest
+            failwith "TODO: write type aliases"
+
+        match md.EntryPoint with
+        | ValueNone -> LEB128.uint 0u stream
+        | ValueSome main -> lengthEncodedData buffer stream (index main)
+
+        // Debug information not yet supported
 
     finally
         stream.Close()
