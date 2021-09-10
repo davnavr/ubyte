@@ -4,6 +4,7 @@ open System
 open System.IO
 
 open UByte.Format.Model
+open UByte.Format.Model.InstructionSet
 
 let inline bits1 (value: 'Enum when 'Enum : enum<uint8>) (dest: Stream) = dest.WriteByte(uint8 value)
 
@@ -58,6 +59,40 @@ let typeDef (t: TypeDefinition) dest =
     bits1 t.TypeVisibility dest
     failwith "TODO: Write other type info"
 
+let registerType (struct(count: uvarint, t: RegisterType)) dest =
+    LEB128.uint count dest
+    index t.RegisterType dest
+    bits1 t.RegisterFlags dest
+
+let inline opcode (code: Opcode) dest = LEB128.uint (uint32 code) dest
+
+let instruction i dest =
+    match i with
+    | Instruction.Nop -> opcode Opcode.nop dest
+    | Instruction.Ret registers ->
+        opcode Opcode.ret dest
+        vector index registers dest
+    | Instruction.Call(method, aregs, rregs) ->
+        opcode Opcode.call dest
+        index method dest
+        vector index aregs dest
+        vector index rregs dest
+    | Instruction.Reg_copy(sreg, dreg) ->
+        opcode Opcode.``reg.copy`` dest
+        index sreg dest
+        index dreg dest
+    | Instruction.Add(xreg, yreg, rreg) ->
+        opcode Opcode.add dest
+        index xreg dest
+        index yreg dest
+        index rreg dest
+    | Instruction.Sub(xreg, yreg, rreg) ->
+        opcode Opcode.sub dest
+        index xreg dest
+        index yreg dest
+        index rreg dest
+    | bad -> failwithf "TODO: Bad instr %A" bad
+
 let toStream (stream: Stream) (md: Module) =
     if isNull stream then nullArg(nameof stream)
     if not stream.CanWrite then invalidArg (nameof stream) "The stream must support writing"
@@ -108,7 +143,9 @@ let toStream (stream: Stream) (md: Module) =
         lengthEncodedVector buffer stream md.Data <| fun data dest ->
             failwith "TODO: Data not supported yet"
 
-        failwith "CODE"
+        lengthEncodedVector buffer stream md.Code <| fun code dest ->
+            vector registerType code.RegisterTypes dest
+            vector instruction code.Instructions dest
 
         lengthEncodedVector buffer stream md.Namespaces <| fun ns dest ->
             vector index ns.NamespaceName dest

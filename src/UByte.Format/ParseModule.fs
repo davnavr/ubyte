@@ -314,12 +314,9 @@ type InstructionDecoder =
         member _.Parse source =
             match LanguagePrimitives.EnumOfValue(parse<LEB128.UInt, _, _> source) with
             | Opcode.nop -> Nop
+            | Opcode.ret -> Ret(vector<Index'<_>, _, _> source)
 
-            // TODO: Maybe store number of return values in struction?
-            //| Opcode.ret -> Ret(vector<Index'<_>, _, _> source)
-
-            // TODO: Maybe store number of arguments in instruction?
-            //| Opcode.call -> Call(index source, )
+            | Opcode.call -> Call(index source, vector<Index'<_>, _, _> source, vector<Index'<_>, _, _> source)
 
             // Register
             | Opcode.``reg.copy`` -> Reg_copy(index source, index source)

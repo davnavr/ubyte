@@ -139,8 +139,11 @@ module InstructionSet =
     /// endianness specified in the module header.
     /// </remarks>
     [<NoComparison; NoEquality>]
-    type Instruction =
+    type Instruction = // TODO: If efficiency is needed, can omit length integers from Ret and Call instructions
         | Nop
+        /// <remarks>
+        /// To simplify parsing, the number of registers containing the values to return is included as part of the instruction.
+        /// </remarks>
         | Ret of vector<RegisterIndex>
 
         /// <summary>
@@ -149,10 +152,9 @@ module InstructionSet =
         /// register <c>0</c>.
         /// </summary>
         /// <remarks>
-        /// The number of argument registers is not included in the instruction, and is instead determined by examining the
-        /// signature of the method to be called.
+        /// To simplify parsing, the number of argument registers is included as part of the instruction.
         /// </remarks>
-        | Call of method: MethodIndex * arguments: ImmutableArray<RegisterIndex> * results: vector<RegisterIndex>
+        | Call of method: MethodIndex * arguments: vector<RegisterIndex> * results: vector<RegisterIndex> // TODO: How to ignore some return values? Maybe treat index 0 as ignore?
 
         | Reg_copy of source: RegisterIndex * destination: RegisterIndex
 
