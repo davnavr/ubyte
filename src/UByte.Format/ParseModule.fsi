@@ -1,4 +1,5 @@
-﻿[<RequireQualifiedAccess>]
+﻿/// Contains functions for parsing modules, without validating the parsed contents.
+[<RequireQualifiedAccess>]
 module UByte.Format.ParseModule
 
 open System.IO
