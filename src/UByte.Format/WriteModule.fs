@@ -79,7 +79,27 @@ let toStream (stream: Stream) (md: Module) =
         lengthEncodedVector buffer stream md.Imports <| fun import dest ->
             failwith "TODO: Imports not supported yet"
 
-        failwith "Type Sig"
+        lengthEncodedVector buffer stream md.TypeSignatures <| fun signature dest ->
+            match signature with
+            | Primitive prim ->
+                let tag =
+                    match prim with
+                    | PrimitiveType.S8 -> Tag.Type.S8
+                    | PrimitiveType.S16 -> Tag.Type.S16
+                    | PrimitiveType.S32 -> Tag.Type.S32
+                    | PrimitiveType.S64 -> Tag.Type.S64
+                    | PrimitiveType.U8 -> Tag.Type.U8
+                    | PrimitiveType.U16 -> Tag.Type.U16
+                    | PrimitiveType.U32 -> Tag.Type.U32
+                    | PrimitiveType.U64 -> Tag.Type.U64
+                    | PrimitiveType.F32 -> Tag.Type.F32
+                    | PrimitiveType.F64 -> Tag.Type.F64
+                    | PrimitiveType.Char16 -> Tag.Type.Char16
+                    | PrimitiveType.Char32 -> Tag.Type.Char32
+                    | PrimitiveType.Bool -> Tag.Type.Bool
+                    | PrimitiveType.Unit -> Tag.Type.Unit
+                bits1 tag dest
+            | _ -> failwithf "TODO: Unsupported type %A" signature
 
         failwith "Method Sig"
 
