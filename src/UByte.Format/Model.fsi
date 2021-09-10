@@ -68,7 +68,7 @@ type Index<'Kind when 'Kind :> IndexKinds.Kind> =
 
     interface IEquatable<Index<'Kind>>
 
-/// <summary>Represents an index into the module's identifiers. The index of the first identifier is <c>0</c>.</summary>
+/// <summary>An index into the module's identifiers. The index of the first identifier is <c>0</c>.</summary>
 type IdentifierIndex = Index<IndexKinds.Identifier>
 
 type TypeSignatureIndex = Index<IndexKinds.TypeSignature>
@@ -77,23 +77,23 @@ type MethodSignatureIndex = Index<IndexKinds.MethodSignature>
 
 type DataIndex = Index<IndexKinds.Data>
 
-/// <summary>Represents an index into the module's method bodies. The index of the first method body is <c>0</c>.</summary>
+/// <summary>An index into the module's method bodies. The index of the first method body is <c>0</c>.</summary>
 type CodeIndex = Index<IndexKinds.Code>
 
 /// <summary>
-/// Represents an index to an index. The index of the first register not representing a method parameter is equal to the number
+/// An index to a register. The index of the first register not representing a method parameter is equal to the number
 /// of method parameters. The index of the first method parameter, if any are defined, is <c>0</c>.
 /// </summary>
 type RegisterIndex = Index<IndexKinds.Register>
 
 /// <summary>
-/// Represents an index into the module's imported types or defined types. The index of the first imported type or type alias, if
+/// An index into the module's imported types or defined types. The index of the first imported type or type alias, if
 /// any, is <c>0</c>. The index of the first type or type alias defined in this module is equal to the number of type aliases.
 /// </summary>
 type TypeIndex = Index<IndexKinds.Type>
 
 /// <summary>
-/// Represents an index into the module's imported methods or defined methods. An index of <c>0</c> refers to the index of the
+/// An index into the module's imported methods or defined methods. An index of <c>0</c> refers to the index of the
 /// first imported method of the first imported type, if any are imported. The index of the first method defined in this module
 /// is equal to the number of imported methods.
 /// </summary>
@@ -220,20 +220,23 @@ type PrimitiveType =
     | F64
     | Unit
 
-[<RequireQualifiedAccess; NoComparison; StructuralEquality>]
-type NonPrimitiveType =
-    | FromModule of unit
-    | Imported of unit
+    interface IEquatable<PrimitiveType>
 
-[<NoComparison; StructuralEquality>]
-type AnyType =
-    | PrimitiveType of PrimitiveType
-    | ObjectReference of AnyType (*Choice<TypeIndex, AnyType>*) // TODO: Allow read only pointers?
-    | UnsafePointer of AnyType
-    /// Represents a one-dimensional array whose first element is at index zero.
+[<RequireQualifiedAccess; NoComparison; StructuralEquality>]
+type ReferenceType =
+    | Defined of TypeIndex
+    | Any of AnyType
+    /// One-dimensional array whose first element is at index zero.
     | Vector of AnyType
 
-    //member Kind : Tag.Type
+    interface IEquatable<ReferenceType>
+
+and [<NoComparison; StructuralEquality>] AnyType =
+    | PrimitiveType of PrimitiveType
+    | ObjectReference of ReferenceType
+    | UnsafePointer of AnyType
+    /// User-defined struct that is passed by value. The index must point to a struct.
+    | ValueType of TypeIndex
 
     interface IEquatable<AnyType>
 
