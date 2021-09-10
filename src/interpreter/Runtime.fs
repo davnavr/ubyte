@@ -1,19 +1,33 @@
 ﻿module rec UByte.Interpreter.Runtime
 
+open System
 open System.Collections.Generic
 open System.Collections.Immutable
 open System.IO
+open System.Runtime.CompilerServices
 
 open UByte.Format
 open UByte.Format.Model
 
-[<Sealed>]
-type RuntimeRegister = class end
+[<RequireQualifiedAccess>]
+type RuntimeRegister =
+    | R1 of uint8 ref
+    | R2 of uint16 ref
+    | R4 of uint32 ref
+    | R8 of uint64 ref
+    | RPtr of obj ref
 
 [<Sealed>]
-type RuntimeStackFrame (prev: RuntimeStackFrame voption, args: ImmutableArray<RuntimeRegister>, method: RuntimeMethod voption) =
+type RuntimeStackFrame
+    (
+        prev: RuntimeStackFrame voption,
+        args: ImmutableArray<RuntimeRegister>,
+        registers: ImmutableArray<RuntimeRegister>,
+        method: RuntimeMethod voption
+    )
+    =
     member _.MethodArguments = args
-    member val Registers = failwith "bad": ImmutableArray<_>
+    member _.Registers = registers
     member _.CurrentMethod = method
     member _.Previous = prev
 
@@ -23,19 +37,77 @@ type RuntimeStackFrame (prev: RuntimeStackFrame voption, args: ImmutableArray<Ru
 
 type MethodInvocationResult = ImmutableArray<RuntimeRegister>
 
+[<RequireQualifiedAccess>]
+module Interpreter =
+    open UByte.Format.Model.InstructionSet
+
+    let interpret (current: RuntimeStackFrame) (instructions: ImmutableArray<Instruction>) =
+        failwith "imnterpret": MethodInvocationResult
+
 [<Sealed>]
 type RuntimeMethod (rmodule: RuntimeModule, method: Method) =
+
     member _.Module = rmodule
 
-    member _.Invoke(current: RuntimeStackFrame) =
-        failwith "bad"
+    member _.Name = rmodule.IdentifierAt method.MethodName
+
+    member private _.CreateRegister rtype =
+        match rmodule.TypeSignatureAt rtype with
+        | AnyType.Primitive prim ->
+            match prim with
+            | PrimitiveType.Bool
+            | PrimitiveType.S8
+            | PrimitiveType.U8 -> fun() -> RuntimeRegister.R1(ref 0uy)
+            | PrimitiveType.S16
+            | PrimitiveType.U16
+            | PrimitiveType.Char16 -> fun() -> RuntimeRegister.R2(ref 0us)
+            | PrimitiveType.S32
+            | PrimitiveType.U32
+            | PrimitiveType.F32
+            | PrimitiveType.Char32 -> fun() -> RuntimeRegister.R4(ref 0u)
+            | PrimitiveType.S64
+            | PrimitiveType.U64
+            | PrimitiveType.F64 -> fun() -> RuntimeRegister.R4(ref 0u)
+            | PrimitiveType.Unit -> fun() -> failwith "TODO: Prevent usage of Unit in register types."
+        | _ -> failwith "TODO: Unsupported type for register"
+
+    member this.CreateArgumentRegisters() =
+        let args = rmodule.MethodSignatureAt method.Signature
+        let mutable registers = Array.zeroCreate args.ParameterTypes.Length
+        for i = 0 to registers.Length - 1 do
+            registers.[0] <- this.CreateRegister args.ParameterTypes.[i] ()
+        Unsafe.As<RuntimeRegister[], ImmutableArray<RuntimeRegister>> &registers
+
+    member this.Invoke(previous: RuntimeStackFrame, arguments: _ -> unit) = 
+        match method.Body with
+        | MethodBody.Defined codei ->
+            let code = rmodule.CodeAt codei
+
+            let args = this.CreateArgumentRegisters()
+
+            let registers =
+                let registers = ImmutableArray.CreateBuilder()
+                for struct(count, rtype) in code.RegisterTypes do
+                    let create = this.CreateRegister rtype.RegisterType
+                    for _ = 1 to Checked.int32 count do create() |> registers.Add
+                registers.ToImmutable()
+
+            let current = RuntimeStackFrame(ValueSome previous, args, registers, ValueSome this)
+
+            arguments args
+
+            Interpreter.interpret current code.Instructions
+        | MethodBody.Abstract -> failwith "TODO: Handle virtual calls"
 
 [<Sealed>]
 type RuntimeTypeDefinition (rmodule: RuntimeModule, t: TypeDefinition, mstart: MethodIndex) =
     let (Index mstart) = mstart
     let methods = Dictionary<MethodIndex, RuntimeMethod> t.Methods.Length
+    let name = lazy rmodule.IdentifierAt t.TypeName
 
-    member val Name = rmodule.IdentifierAt t.TypeName
+    member _.Module = rmodule
+
+    member _.Name = name.Value
 
     member _.InitializeMethod(Index i as mi) =
         match methods.TryGetValue mi with
@@ -71,9 +143,12 @@ type RuntimeModule (m: Module, moduleImportResolver: ModuleImport -> RuntimeModu
 
         types, methods
 
-    member _.IdentifierAt(Index i: IdentifierIndex) = m.Identifiers.Identifiers.[Checked.int32 i]
+    member _.Identifier = m.Header.Module
 
+    member _.IdentifierAt(Index i: IdentifierIndex) = m.Identifiers.Identifiers.[Checked.int32 i]
     member _.CodeAt(Index i: CodeIndex) = m.Code.[Checked.int32 i]
+    member _.TypeSignatureAt(Index i: TypeSignatureIndex) = m.TypeSignatures.[Checked.int32 i]
+    member _.MethodSignatureAt(Index i: MethodSignatureIndex) = m.MethodSignatures.[Checked.int32 i]
 
     member _.InitializeType i =
         match typeDefLookup.TryGetValue i with
@@ -87,7 +162,7 @@ type RuntimeModule (m: Module, moduleImportResolver: ModuleImport -> RuntimeModu
         | false, _ -> // Assume it is a method import.
             failwith "TODO: Method imports not yet implemented."
 
-
+    interface IEquatable<RuntimeModule> with member this.Equals other = this.Identifier = other.Identifier
 
 let executionEntryPoint (program: Module) (moduleImportLoader: ModuleImport -> Module) =
     let moduleImportResolver =
@@ -106,9 +181,18 @@ let executionEntryPoint (program: Module) (moduleImportLoader: ModuleImport -> M
         let application = RuntimeModule(program, moduleImportResolver)
         let main' = application.InitializeMethod main
 
-        -1
+        // TODO: Check signature of method to determine if argv should be passed.
+        let arguments (args: ImmutableArray<_>) = if not args.IsDefaultOrEmpty then invalidOp "TODO: Passing of arguments for main not supported"
+
+        let start = RuntimeStackFrame(ValueNone, ImmutableArray.Empty, ImmutableArray.Empty, ValueNone)
+        let result = main'.Invoke(start, arguments)
+
+        match result.Length with
+        | 0 -> 1
+        | 1 -> failwith "TODO: Get exit code from register"
+        | _ -> failwith "TODO: Multiple exit codes on entry point not supported"
     | ValueNone -> failwithf "TODO: Error for missing entry point method"
 
-let run program importDirs =
+let run program (importDirs: IReadOnlyCollection<DirectoryInfo>) =
     executionEntryPoint (ParseModule.fromFile program) <| fun _ ->
         failwith "TODO: Implement resolution of references"

@@ -216,8 +216,8 @@ type TypeSignature =
 type MethodSignature' =
     interface IParser<MethodSignature> with
         member _.Parse source =
-            { MethodSignature.ParameterTypes = vector<Index'<_>, _, _> source
-              ReturnTypes = vector<Index'<_>, _, _> source }
+            { ReturnTypes = vector<Index'<_>, _, _> source
+              MethodSignature.ParameterTypes = vector<Index'<_>, _, _> source }
 
 [<Struct>]
 type DataVector =

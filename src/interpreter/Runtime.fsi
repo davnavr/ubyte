@@ -8,8 +8,8 @@ open System.IO
 
 open UByte.Format
 
-[<Sealed>]
-type RuntimeRegister = class end
+[<NoComparison; NoEquality>]
+type RuntimeRegister
 
 [<Sealed>]
 type RuntimeStackFrame =
@@ -21,9 +21,18 @@ type RuntimeStackFrame =
 
 type MethodInvocationResult = ImmutableArray<RuntimeRegister>
 
+[<RequireQualifiedAccess>]
+module Interpreter =
+    val interpret :
+        current: RuntimeStackFrame ->
+        instructions: ImmutableArray<Model.InstructionSet.Instruction> ->
+        MethodInvocationResult
+
 [<Sealed>]
 type RuntimeMethod =
-    member Invoke : current: RuntimeStackFrame -> MethodInvocationResult
+    member Name : Model.Name
+
+    member Invoke : previous: RuntimeStackFrame * arguments: (ImmutableArray<RuntimeRegister> -> unit) -> MethodInvocationResult
 
 type RuntimeStackFrame with member CurrentMethod : RuntimeMethod voption
 
