@@ -132,6 +132,31 @@ type IdentifierSection =
 
     member this.Item with get (Index i: IdentifierIndex) = this.Identifiers.[Checked.int32 i]
 
+module Tag =
+    type TypeDefinitionKind =
+        | Class = 0uy
+        | Interface = 1uy
+        | Struct = 2uy
+
+    type TypeDefinitionLayout =
+        | Unspecified = 0uy
+        | Sequential = 1uy
+
+    type Type =
+        | Unit = 0uy
+        | S8 = 1uy
+        | S16 = 2uy
+        | S32 = 4uy
+        | S64 = 8uy
+        | Vector = 0xAuy
+        | U8 = 0x10uy
+        | U16 = 0x20uy
+        | U32 = 0x40uy
+        | U64 = 0x80uy
+        | Bool = 0xB0uy
+        | F32 = 0xF4uy
+        | F64 = 0xF8uy
+
 [<RequireQualifiedAccess; NoComparison; StructuralEquality>]
 type PrimitiveType =
     | Bool
@@ -160,20 +185,16 @@ type AnyType =
     | Vector of AnyType
 
 [<NoComparison; StructuralEquality>]
-type MethodSignature = { ReturnTypes: vector<TypeIndex>; ParameterTypes: vector<TypeIndex> }
+type MethodSignature = { ReturnTypes: vector<TypeSignatureIndex>; ParameterTypes: vector<TypeSignatureIndex> }
 
 type FieldImport = { FieldName: IdentifierIndex; FieldType: TypeIndex }
 
-type MethodImport = { MethodName: IdentifierIndex; TypeParameters: uvarint; Signature: MethodSignature }
+type MethodImport = { MethodName: IdentifierIndex; TypeParameters: uvarint; Signature: MethodSignatureIndex }
 
-type TypeDefinitionKindTag =
-    | Class = 0uy
-    | Interface = 1uy
-    | Struct = 2uy
 
 type TypeDefinitionImport =
     { TypeName: IdentifierIndex
-      TypeKind: TypeDefinitionKindTag
+      TypeKind: Tag.TypeDefinitionKind
       TypeParameters: uvarint
       Fields: vector<FieldImport>
       Methods: vector<MethodImport> }
@@ -194,7 +215,7 @@ type Field =
     { FieldName: IdentifierIndex
       FieldVisibility: VisibilityFlags
       FieldFlags: FieldFlags
-      FieldType: TypeIndex
+      FieldType: TypeSignatureIndex
       FieldAnnotations: vector<unit> }
 
 [<Flags>]
@@ -218,7 +239,7 @@ type Method =
       MethodVisibility: VisibilityFlags
       MethodFlags: MethodFlags
       TypeParameters: vector<unit>
-      Signature: MethodSignature
+      Signature: MethodSignatureIndex
       MethodAnnotations: vector<unit>
       Body: MethodBody }
 
@@ -239,16 +260,6 @@ type TypeDefinitionKind =
     | Interface
     | Struct
 
-    member this.Kind =
-        match this with
-        | Class(_, _) -> TypeDefinitionKindTag.Class
-        | Interface -> TypeDefinitionKindTag.Interface
-        | Struct -> TypeDefinitionKindTag.Struct
-
-type TypeDefinitionLayoutTag =
-    | Unspecified = 0uy
-    | Sequential = 1uy
-
 type TypeDefinitionLayout =
     | Unspecified
     | Sequential
@@ -263,6 +274,17 @@ type TypeDefinition =
       TypeAnnotations: vector<unit>
       Fields: vector<Field>
       Methods: vector<Method> }
+
+    member this.KindTag =
+        match this.TypeKind with
+        | Class(_, _) -> Tag.TypeDefinitionKind.Class
+        | Interface -> Tag.TypeDefinitionKind.Interface
+        | Struct -> Tag.TypeDefinitionKind.Struct
+
+    member this.LayoutTag =
+        match this.TypeLayout with
+        | Unspecified -> Tag.TypeDefinitionLayout.Unspecified
+        | Sequential -> Tag.TypeDefinitionLayout.Sequential
 
 type NamespaceImport =
     { NamespaceName: vector<IdentifierIndex>

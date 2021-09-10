@@ -169,7 +169,7 @@ type TypeDefinitionImport' =
             { TypeDefinitionImport.TypeName = index source
               TypeKind =
                 let kind = bits1 source
-                if kind > TypeDefinitionKindTag.Struct then failwithf "TODO: Invalid type kind 0x%02X (%A)" (uint8 kind) kind
+                if kind > Tag.TypeDefinitionKind.Struct then failwithf "TODO: Invalid type kind 0x%02X (%A)" (uint8 kind) kind
                 kind
               TypeParameters = parse<LEB128.UInt, _, _> source
               Fields = vector<FieldImport', _, _> source
@@ -247,14 +247,14 @@ type TypeDefinition' =
               TypeVisibility = bits1 source
               TypeKind =
                 match bits1 source with
-                | TypeDefinitionKindTag.Class -> Class(index source, bits1 source)
-                | TypeDefinitionKindTag.Interface -> Interface
-                | TypeDefinitionKindTag.Struct -> Struct
+                | Tag.TypeDefinitionKind.Class -> Class(index source, bits1 source)
+                | Tag.TypeDefinitionKind.Interface -> Interface
+                | Tag.TypeDefinitionKind.Struct -> Struct
                 | bad -> failwithf "TODO: Bad type definition kind 0x%02X" (uint8 bad)
               TypeLayout =
                 match bits1 source with
-                | TypeDefinitionLayoutTag.Unspecified -> TypeDefinitionLayout.Unspecified
-                | TypeDefinitionLayoutTag.Sequential -> TypeDefinitionLayout.Sequential
+                | Tag.TypeDefinitionLayout.Unspecified -> TypeDefinitionLayout.Unspecified
+                | Tag.TypeDefinitionLayout.Sequential -> TypeDefinitionLayout.Sequential
                 | bad -> failwithf "TODO: Bad type definition layout kind 0x%02X" (uint8 bad)
               ImplementedInterfaces = vector<Placeholder'<_>, _, _> source
               TypeParameters = vector<Placeholder'<_>, _, _> source

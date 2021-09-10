@@ -180,6 +180,16 @@ type IdentifierSection =
 
 [<RequireQualifiedAccess>]
 module Tag =
+    type TypeDefinitionKind =
+        | Class = 0uy
+        | Interface = 1uy
+        | Struct = 2uy
+
+    type TypeDefinitionLayout =
+        | Unspecified = 0uy
+        | Sequential = 1uy
+        //| Explicit = 2uy
+
     type Type =
         | Unit = 0uy
         | S8 = 1uy
@@ -247,15 +257,10 @@ type MethodImport =
       TypeParameters: uvarint
       Signature: MethodSignatureIndex }
 
-type TypeDefinitionKindTag =
-    | Class = 0uy
-    | Interface = 1uy
-    | Struct = 2uy
-
 [<NoComparison; NoEquality>]
 type TypeDefinitionImport =
     { TypeName: IdentifierIndex
-      TypeKind: TypeDefinitionKindTag
+      TypeKind: Tag.TypeDefinitionKind
       TypeParameters: uvarint
       Fields: vector<FieldImport>
       Methods: vector<MethodImport> }
@@ -324,7 +329,9 @@ type TypeAlias =
 [<Flags>]
 type ClassDefinitionFlags =
     | Final = 0uy
+    /// The class can be inherited from.
     | NotFinal = 0b0000_0001uy
+    /// Instances of this class cannot be created.
     | Abstract = 0b0000_0010uy
     | ValidMask = 0b0000_0011uy
 
@@ -335,17 +342,11 @@ type TypeDefinitionKind =
     /// A type whose instances can be allocated on the stack.
     | Struct
 
-    member Kind : TypeDefinitionKindTag
-
-// TODO: Have better naming for corresponding enum types for union types.
-type TypeDefinitionLayoutTag =
-    | Unspecified = 0uy
-    | Sequential = 1uy
-    //| Explicit = 2uy
-
 [<RequireQualifiedAccess>]
 type TypeDefinitionLayout =
+    /// The runtime or compiler is free to decide how the fields of the class or struct are laid out.
     | Unspecified
+    /// The fields of the class or struct are laid out sequentially.
     | Sequential
     //| Explicit of
 
@@ -362,7 +363,8 @@ type TypeDefinition =
       Fields: vector<Field>
       Methods: vector<Method> }
 
-    //member KindTag : TypeDefinitionKindTag
+    member KindTag : Tag.TypeDefinitionKind
+    member LayoutTag : Tag.TypeDefinitionLayout
 
 [<NoComparison; NoEquality>]
 type NamespaceImport =
