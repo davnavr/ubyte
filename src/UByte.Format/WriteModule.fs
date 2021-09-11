@@ -2,6 +2,7 @@
 
 open System
 open System.IO
+open System.Runtime.InteropServices
 
 open UByte.Format.Model
 open UByte.Format.Model.InstructionSet
@@ -120,7 +121,27 @@ let registerType (struct(count: uvarint, t: RegisterType)) dest =
 
 let inline opcode (code: Opcode) dest = LEB128.uint (uint32 code) dest
 
-let instruction i dest =
+[<RequireQualifiedAccess>]
+module Constant =
+    let private integer<'T when 'T : struct and 'T : (new: unit -> 'T) and 'T :> System.ValueType>
+        (value: 'T)
+        endianness
+        (dest: Stream)
+        =
+        let buffer = Span.stackalloc<byte> 4
+        let mutable value = value
+        MemoryMarshal.Write(buffer, &value)
+
+        match endianness with
+        | LittleEndian when BitConverter.IsLittleEndian -> ()
+        | BigEndian when not BitConverter.IsLittleEndian -> ()
+        | _ -> buffer.Reverse()
+
+        dest.Write(Span.asReadOnly buffer)
+
+    let i32 value endianness dest = integer<int32> value endianness dest
+
+let instruction endianness i dest =
     match i with
     | Instruction.Nop -> opcode Opcode.nop dest
     | Instruction.Ret registers ->
@@ -144,6 +165,10 @@ let instruction i dest =
         opcode Opcode.sub dest
         index xreg dest
         index yreg dest
+        index rreg dest
+    | Instruction.Const_i32(value, rreg) ->
+        opcode Opcode.``const.i32`` dest
+        Constant.i32 value endianness dest
         index rreg dest
     | bad -> failwithf "TODO: Bad instr %A" bad
 
@@ -201,7 +226,7 @@ let toStream (stream: Stream) (md: Module) =
 
         lengthEncodedVector buffer stream md.Code <| fun code dest ->
             vector registerType code.RegisterTypes dest
-            lengthEncodedVector auxbuf dest code.Instructions instruction
+            lengthEncodedVector auxbuf dest code.Instructions (instruction md.Endianness)
 
         lengthEncodedVector buffer stream md.Namespaces <| fun ns dest ->
             vector index ns.NamespaceName dest

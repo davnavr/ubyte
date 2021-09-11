@@ -107,8 +107,8 @@ module InstructionSet =
         | ``add.ovf`` = 0x24u
         | ``sub.ovf`` = 0x25u
         | ``mul.ovf`` = 0x26u
-        | ``const.s32`` = 0x30u
-        | ``const.s64`` = 0x31u
+        | ``const.i32`` = 0x30u
+        | ``const.i64`` = 0x31u
         | ``const.f32`` = 0x32u
         | ``const.f64`` = 0x33u
         | ``const.true`` = 0x34u
@@ -124,7 +124,7 @@ module InstructionSet =
         | Reg_copy of source: RegisterIndex * destination: RegisterIndex
         | Add of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
         | Sub of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
-        | Const_s32 of value: int32 * destination: RegisterIndex
+        | Const_i32 of value: int32 * destination: RegisterIndex
 
 [<RequireQualifiedAccess>]
 type IdentifierSection =

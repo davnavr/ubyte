@@ -122,8 +122,8 @@ module InstructionSet =
         | ``sub.ovf`` = 0x25u
         | ``mul.ovf`` = 0x26u
 
-        | ``const.s32`` = 0x30u
-        | ``const.s64`` = 0x31u
+        | ``const.i32`` = 0x30u
+        | ``const.i64`` = 0x31u
         | ``const.f32`` = 0x32u
         | ``const.f64`` = 0x33u
         | ``const.true`` = 0x34u
@@ -174,8 +174,12 @@ module InstructionSet =
         /// </summary>
         | Sub of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
 
-        /// Stores a signed 32-bit integer into the specified register.
-        | Const_s32 of value: int32 * destination: RegisterIndex
+        /// <summary>
+        /// Stores a signed or unsigned 32-bit integer <paramref name="value"/> into the specified <paramref name="destination"/>
+        /// register.
+        /// </summary>
+        /// <remarks>The integer is stored in the four bytes after the opcode, stored in the endianness as specified by the module header.</remarks>
+        | Const_i32 of value: int32 * destination: RegisterIndex
 
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
 type IdentifierSection = // TODO: Rename to something else

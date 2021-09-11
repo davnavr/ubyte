@@ -91,7 +91,7 @@ module Interpreter =
             | Instruction.Reg_copy(source, dest) ->
                 (current.RegisterAt source).CopyValueTo(current.RegisterAt dest)
                 loop current instructions methodIndexResolver (i + 1)
-            | Instruction.Const_s32(value, dest) ->
+            | Instruction.Const_i32(value, dest) ->
                 match current.RegisterAt dest with
                 | RuntimeRegister.R4 dest' -> dest'.contents <- uint32 value
                 | RuntimeRegister.R8 dest' -> dest'.contents <- uint64 value

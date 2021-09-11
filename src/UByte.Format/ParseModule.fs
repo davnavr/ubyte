@@ -337,7 +337,13 @@ type Code' =
             { Code.RegisterTypes = vector<CountedRegisterTypes, _, _> source
               Instructions =
                 let struct(_, instructions) = lengthEncodedData source
-                vector<InstructionDecoder, _, _> instructions }
+                //vector<InstructionDecoder, _, _> instructions // TODO: Use F# func for parsing.
+                let mutable instructions' =
+                    let count = parse<LEB128.UInt, _, _> instructions
+                    Array.zeroCreate(Checked.int32 count)
+                for i = 0 to instructions'.Length - 1 do
+                    ()
+                Unsafe.As<Instruction[], ImmutableArray<Instruction>> &instructions' }
 
 let fromBytes (source: #IByteSequence) =
     let magic' = magic source
