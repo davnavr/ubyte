@@ -64,30 +64,46 @@ type MethodInvocationResult = ImmutableArray<RuntimeRegister>
 module Interpreter =
     open UByte.Format.Model.InstructionSet
 
-    let rec loop (current: RuntimeStackFrame) (instructions: ImmutableArray<Instruction>) i =
+    let copyRegisterValues (source: ImmutableArray<RuntimeRegister>) (dest: ImmutableArray<RuntimeRegister>) =
+        if source.Length <> dest.Length then failwith "TODO: Error, register count mismatch"
+        for i = 0 to source.Length - 1 do source.[i].CopyValueTo dest.[i]
+
+    let rec private loop
+        (current: RuntimeStackFrame)
+        (instructions: ImmutableArray<_>)
+        (methodIndexResolver: _ -> RuntimeMethod)
+        i
+        =
         if i < instructions.Length then
+            let inline getIndexedRegisters (registers: ImmutableArray<RegisterIndex>) =
+                let mutable registers' = Array.zeroCreate registers.Length
+                for i = 0 to registers.Length - 1 do registers'.[i] <- current.RegisterAt registers.[i]
+                Unsafe.As<RuntimeRegister[], ImmutableArray<RuntimeRegister>> &registers'
+
             match instructions.[i] with
-            | Instruction.Nop -> loop current instructions (i + 1)
-            | Instruction.Ret rregisters ->
-                let mutable returns = Array.zeroCreate rregisters.Length
-                for i = 0 to rregisters.Length - 1 do returns.[i] <- current.RegisterAt rregisters.[0]
-                Unsafe.As<RuntimeRegister[], ImmutableArray<RuntimeRegister>> &returns
+            | Instruction.Nop -> loop current instructions methodIndexResolver (i + 1)
+            | Instruction.Ret rregisters -> getIndexedRegisters rregisters
             | Instruction.Call(methodi, aregisters, rregisters) ->
-                failwith "TODO: Method calls not yet supported"
+                // NOTE: Can optimize by avoiding allocation of new register instances in CreateArgumentRegisters IFF no arg registers in the method are mutated
+                let returned = (methodIndexResolver methodi).Invoke(current, copyRegisterValues (getIndexedRegisters aregisters))
+                for i = 0 to returned.Length - 1 do returned.[i].CopyValueTo(current.RegisterAt rregisters.[i])
+                loop current instructions methodIndexResolver (i + 1)
             | Instruction.Reg_copy(source, dest) ->
                 (current.RegisterAt source).CopyValueTo(current.RegisterAt dest)
-                loop current instructions (i + 1)
+                loop current instructions methodIndexResolver (i + 1)
             | Instruction.Const_s32(value, dest) ->
                 match current.RegisterAt dest with
                 | RuntimeRegister.R4 dest' -> dest'.contents <- uint32 value
-                loop current instructions (i + 1)
+                | RuntimeRegister.R8 dest' -> dest'.contents <- uint64 value
+                | _ -> failwith "TODO: Error for cannot store 32 bit integer into register"
+                loop current instructions methodIndexResolver (i + 1)
         else
             failwith "TODO: error for method did not return"
 
-    let interpret current instructions (*mresolver: MethodIndex -> RuntimeMethod*) : MethodInvocationResult =
+    let interpret current instructions methodIndexResolver =
         //let current = ref current
         // NOTE: Can do an explicit stack of Stack<struct(RuntimeStackFrame * ImmutableArray<Instruction> * int32)>
-        loop current instructions 0
+        loop current instructions methodIndexResolver 0
 
 [<Sealed>]
 type RuntimeMethod (rmodule: RuntimeModule, method: Method) =
@@ -128,7 +144,7 @@ type RuntimeMethod (rmodule: RuntimeModule, method: Method) =
             registers.[0] <- this.CreateRegister args.ParameterTypes.[i] ()
         Unsafe.As<RuntimeRegister[], ImmutableArray<RuntimeRegister>> &registers
 
-    member this.Invoke(previous: RuntimeStackFrame, arguments: _ -> unit) = 
+    member this.Invoke(previous: RuntimeStackFrame, arguments: _ -> unit): MethodInvocationResult = 
         match method.Body with
         | MethodBody.Defined codei ->
             let code = rmodule.CodeAt codei
@@ -146,7 +162,7 @@ type RuntimeMethod (rmodule: RuntimeModule, method: Method) =
 
             arguments args
 
-            Interpreter.interpret current code.Instructions
+            Interpreter.interpret current code.Instructions rmodule.InitializeMethod
         | MethodBody.Abstract -> failwith "TODO: Handle virtual calls"
 
 [<Sealed>]

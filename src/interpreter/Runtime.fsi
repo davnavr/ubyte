@@ -24,18 +24,19 @@ type RuntimeStackFrame =
 
 type MethodInvocationResult = ImmutableArray<RuntimeRegister>
 
-[<RequireQualifiedAccess>]
-module Interpreter =
-    val interpret :
-        current: RuntimeStackFrame ->
-        instructions: ImmutableArray<Model.InstructionSet.Instruction> ->
-        MethodInvocationResult
-
 [<Sealed>]
 type RuntimeMethod =
     member Name : Model.Name
 
     member Invoke : previous: RuntimeStackFrame * arguments: (ImmutableArray<RuntimeRegister> -> unit) -> MethodInvocationResult
+
+[<RequireQualifiedAccess>]
+module Interpreter =
+    val interpret :
+        current: RuntimeStackFrame ->
+        instructions: ImmutableArray<Model.InstructionSet.Instruction> ->
+        methodIndexResolver: (Model.MethodIndex -> RuntimeMethod) ->
+        MethodInvocationResult
 
 type RuntimeStackFrame with member CurrentMethod : RuntimeMethod voption
 
