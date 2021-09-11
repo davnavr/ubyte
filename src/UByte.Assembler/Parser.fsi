@@ -9,7 +9,7 @@ type Atom =
     | Keyword of string
     | IntegerLiteral of int64
     //| FloatLiteral of float
-    | Nested of PositionedAtom list
+    | NestedAtom of PositionedAtom list
 
 and PositionedAtom =
     { Atom: Atom
