@@ -15,7 +15,30 @@ type RuntimeRegister =
     | R2 of uint16 ref
     | R4 of uint32 ref
     | R8 of uint64 ref
+    //| RStruct of byte[]
     | RPtr of obj ref
+
+    member source.CopyValueTo destination =
+        match source, destination with
+        | R1 { contents = value }, R1 dest -> dest.contents <- value
+        | R1 { contents = value }, R2 dest -> dest.contents <- uint16 value
+        | R1 { contents = value }, R4 dest -> dest.contents <- uint32 value
+        | R1 { contents = value }, R8 dest -> dest.contents <- uint64 value
+        | R2 { contents = value }, R2 dest -> dest.contents <- value
+        | R2 { contents = value }, R4 dest -> dest.contents <- uint32 value
+        | R2 { contents = value }, R8 dest -> dest.contents <- uint64 value
+        | R4 { contents = value }, R4 dest -> dest.contents <- value
+        | R4 { contents = value }, R8 dest -> dest.contents <- uint64 value
+        | R8 { contents = value }, R8 dest -> dest.contents <- value
+        | R2 _, R1 _
+        | R4 _, R2 _
+        | R4 _, R1 _
+        | R8 _, R4 _
+        | R8 _, R2 _
+        | R8 _, R1 _ -> failwith "TODO: Error for size mismatch"
+        | RPtr { contents = value }, RPtr dest -> dest.contents <- value
+        | RPtr _, _
+        | _, RPtr _ -> failwith "TODO: Error for cannot mix integers and reference types"
 
 [<Sealed>]
 type RuntimeStackFrame
@@ -44,24 +67,35 @@ module Interpreter =
     let rec loop (current: RuntimeStackFrame) (instructions: ImmutableArray<Instruction>) i =
         if i < instructions.Length then
             match instructions.[i] with
+            | Instruction.Nop -> loop current instructions (i + 1)
             | Instruction.Ret rregisters ->
                 let mutable returns = Array.zeroCreate rregisters.Length
                 for i = 0 to rregisters.Length - 1 do returns.[i] <- current.RegisterAt rregisters.[0]
                 Unsafe.As<RuntimeRegister[], ImmutableArray<RuntimeRegister>> &returns
+            | Instruction.Call(methodi, aregisters, rregisters) ->
+                failwith "TODO: Method calls not yet supported"
+            | Instruction.Reg_copy(source, dest) ->
+                (current.RegisterAt source).CopyValueTo(current.RegisterAt dest)
+                loop current instructions (i + 1)
+            | Instruction.Const_s32(value, dest) ->
+                match current.RegisterAt dest with
+                | RuntimeRegister.R4 dest' -> dest'.contents <- uint32 value
+                loop current instructions (i + 1)
         else
             failwith "TODO: error for method did not return"
 
-    let interpret current instructions: MethodInvocationResult =
+    let interpret current instructions (*mresolver: MethodIndex -> RuntimeMethod*) : MethodInvocationResult =
         //let current = ref current
         // NOTE: Can do an explicit stack of Stack<struct(RuntimeStackFrame * ImmutableArray<Instruction> * int32)>
         loop current instructions 0
 
 [<Sealed>]
 type RuntimeMethod (rmodule: RuntimeModule, method: Method) =
-
     member _.Module = rmodule
 
     member _.Name = rmodule.IdentifierAt method.MethodName
+
+    member _.HasThis = method.MethodFlags &&& MethodFlags.Static <> MethodFlags.Static
 
     member private _.CreateRegister rtype =
         match rmodule.TypeSignatureAt rtype with
@@ -85,8 +119,12 @@ type RuntimeMethod (rmodule: RuntimeModule, method: Method) =
 
     member this.CreateArgumentRegisters() =
         let args = rmodule.MethodSignatureAt method.Signature
-        let mutable registers = Array.zeroCreate args.ParameterTypes.Length
+        let mutable registers =
+            let mutable length = args.ParameterTypes.Length
+            if this.HasThis then length <- length + 1
+            Array.zeroCreate length
         for i = 0 to registers.Length - 1 do
+            if i = 0 && this.HasThis then failwith "TODO: Add this pointer"
             registers.[0] <- this.CreateRegister args.ParameterTypes.[i] ()
         Unsafe.As<RuntimeRegister[], ImmutableArray<RuntimeRegister>> &registers
 

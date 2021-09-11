@@ -156,6 +156,9 @@ module InstructionSet =
         /// </remarks>
         | Call of method: MethodIndex * arguments: vector<RegisterIndex> * results: vector<RegisterIndex> // TODO: How to ignore some return values? Maybe treat index 0 as ignore?
 
+        /// <summary>
+        /// Copies the value stored in the <paramref name="source"/> register to the <paramref name="destination"/> register.
+        /// </summary>
         | Reg_copy of source: RegisterIndex * destination: RegisterIndex
 
         // Arithmetic
