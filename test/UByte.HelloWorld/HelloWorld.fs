@@ -81,6 +81,13 @@ let program =
       EntryPoint = ValueSome(Index 0u)
       Debug = () }
 
+type private This = class end
+
+let getEmbeddedText =
+    let assem = typeof<This>.Assembly
+    let names = assem.GetManifestResourceNames()
+    fun (name: string) -> Array.find (fun (str: string) -> str.EndsWith name) names |> assem.GetManifestResourceStream
+
 let tests = testList "hello world" [
     testCase "writes to file" <| fun () ->
         WriteModule.toPath "hello_world.mdle" program
@@ -91,6 +98,18 @@ let tests = testList "hello world" [
         let rbuffer = new MemoryStream(wbuffer.ToArray())
         let parsed = ParseModule.fromStream rbuffer
         parsed.Header.Module =! program.Header.Module
+
+    testCase "text format can be parsed" <| fun () ->
+        let result =
+            FParsec.CharParsers.runParserOnStream
+                UByte.Assembler.Parser.sexpression
+                ()
+                "HelloWorld"
+                (getEmbeddedText "HelloWorld.tmodule")
+                System.Text.Encoding.UTF8
+        match result with
+        | FParsec.CharParsers.ParserResult.Success _ -> ()
+        | FParsec.CharParsers.ParserResult.Failure(msg, err, ()) -> failwithf "Parsing failed %A %A" msg err
 ]
 
 [<EntryPoint>]

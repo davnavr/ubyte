@@ -7,12 +7,14 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <EmbeddedResource Include="HelloWorld.tmodule" />
     <Compile Include="HelloWorld.fs" />
 
     <PackageReference Include="Expecto" Version="9.0.4" />
     <PackageReference Include="Unquote" Version="6.1.0" />
 
     <ProjectReference Include="$(RootDirectory)\src\UByte.Format\UByte.Format.fsproj" />
+    <ProjectReference Include="$(RootDirectory)\src\UByte.Assembler\UByte.Assembler.fsproj" />
   </ItemGroup>
 
 </Project>

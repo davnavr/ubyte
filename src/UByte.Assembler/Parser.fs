@@ -4,7 +4,7 @@ open FParsec
 
 let whitespace =
     spaces
-    .>> optional (skipChar ';' .>> skipRestOfLine true)
+    .>> optional (attempt (skipChar ';') .>> skipRestOfLine true <?> "single-line comment")
     .>> spaces
 
 type Atom =
