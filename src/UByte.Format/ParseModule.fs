@@ -4,6 +4,7 @@ open System
 open System.Collections.Immutable
 open System.IO
 open System.Runtime.CompilerServices
+open System.Runtime.InteropServices
 
 open UByte.Format.Model
 open UByte.Format.Model.InstructionSet
@@ -218,6 +219,27 @@ let namespace' source =
         let struct(_, taliases) = lengthEncodedData source
         vector taliases typeAlias }
 
+[<RequireQualifiedAccess>]
+module Constant =
+    let private integer<'T, 'Source
+        when 'T : struct and 'T : (new: unit -> 'T)
+        and 'T :> System.ValueType
+        and 'Source :> IByteSequence>
+        endianness
+        (source: 'Source)
+        =
+        let buffer = Span.stackalloc<byte> sizeof<'T>
+        if source.Read buffer <> buffer.Length then failwith "TODO: Error for EOF while parsing integer"
+
+        match endianness with
+        | LittleEndian when BitConverter.IsLittleEndian -> ()
+        | BigEndian when not BitConverter.IsLittleEndian -> ()
+        | _ -> buffer.Reverse()
+
+        MemoryMarshal.Read<'T>(Span.asReadOnly buffer)
+
+    let i32 endianness source = integer<int32, _> endianness source
+
 let instruction endianness source =
     match LanguagePrimitives.EnumOfValue(LEB128.uint source) with
     | Opcode.nop -> Nop
@@ -232,7 +254,7 @@ let instruction endianness source =
     | Opcode.add -> Add(index source, index source, index source)
     | Opcode.sub -> Sub(index source, index source, index source)
 
-    //| Opcode.``const.s32`` -> Const_s32 // TODO: Either store as LEB128, or somehow have access to module endianness
+    | Opcode.``const.i32`` -> Const_i32(Constant.i32 endianness source, index source)
 
     | bad -> failwithf "TODO: Unrecognized opcode 0x08%X" (uint32 bad)
 

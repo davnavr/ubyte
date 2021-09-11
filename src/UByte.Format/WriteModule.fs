@@ -128,7 +128,7 @@ module Constant =
         endianness
         (dest: Stream)
         =
-        let buffer = Span.stackalloc<byte> 4
+        let buffer = Span.stackalloc<byte> sizeof<'T>
         let mutable value = value
         MemoryMarshal.Write(buffer, &value)
 
