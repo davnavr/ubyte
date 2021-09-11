@@ -20,17 +20,6 @@ let u1 (stream: #IByteSequence) =
 let inline bits1<'Enum, 'Source when 'Enum : enum<uint8> and 'Source :> IByteSequence> (stream: 'Source) =
     LanguagePrimitives.EnumOfValue<_, 'Enum>(u1 stream)
 
-[<Interface>]
-type IParser<'Result> = abstract Parse: source: #IByteSequence -> 'Result
-
-let inline parse<'Parser, 'Result, 'Source
-    when 'Parser :> IParser<'Result>
-    and 'Parser : struct
-    and 'Source :> IByteSequence>
-    (source: 'Source)
-    =
-    Unchecked.defaultof<'Parser>.Parse source
-
 [<RequireQualifiedAccess>]
 module LEB128 =
     let [<Literal>] private ContinueMask = 0b1000_0000uy
@@ -56,11 +45,7 @@ module LEB128 =
             if shifted > size then failwith "TODO: Error for exceeded max allowed value for this kind of LEB128 integer"
         n
 
-    [<Struct; NoComparison; NoEquality>]
-    type UInt =
-        interface IParser<uvarint> with
-            [<MethodImpl(MethodImplOptions.AggressiveInlining)>]
-            member _.Parse source = unsigned 32 uint32 source
+    let uint (source: #_) = unsigned 32 uint32 source
 
 [<IsReadOnly; Struct>]
 type StreamWrapper (stream: Stream) =
@@ -76,34 +61,23 @@ let magic (source: #IByteSequence) =
         Model.magic
     else failwithf "TODO: Error for invalid magic"
 
-let vector<'Parser, 'Result, 'Source
-    when 'Parser :> IParser<'Result>
-    and 'Parser : struct
-    and 'Source :> IByteSequence>
-    (source: 'Source)
-    =
+let vector (source: #IByteSequence) parse =
     let mutable items =
-        let length = Checked.int32(parse<LEB128.UInt, _, _> source)
+        let length = Checked.int32(LEB128.uint source)
         Array.zeroCreate<'Result> length
 
     for i = 0 to items.Length - 1 do
-        items.[i] <- parse<'Parser, 'Result, _> source
+        items.[i] <- parse source
 
     Unsafe.As<_, ImmutableArray<'Result>> &items
 
-let inline versions (source: #_) = VersionNumbers(vector<LEB128.UInt, _, _> source)
+let inline versions (source: #_) = VersionNumbers(vector source LEB128.uint)
 
-let inline index (source: #_) = Index(parse<LEB128.UInt, _, _> source)
-
-[<Struct>]
-type Index'<'Kind when 'Kind :> IndexKinds.Kind> =
-    interface IParser<Index<'Kind>> with
-        [<MethodImpl(MethodImplOptions.AggressiveInlining)>]
-        member _.Parse source = index source
+let inline index (source: #_) = Index(LEB128.uint source)
 
 let lengthEncodedData (source: #IByteSequence) =
     let mutable data =
-        parse<LEB128.UInt, _, _> source
+        LEB128.uint source
         |> Checked.int32
         |> Array.zeroCreate<byte>
     let read = source.Read(Span(data, 0, data.Length))
@@ -125,7 +99,7 @@ let moduleID (source: #_) =
 
 let header (source: #_) =
     let struct(_, header') = lengthEncodedData source
-    let fcount = parse<LEB128.UInt, _, _> header'
+    let fcount = LEB128.uint header'
     if fcount <> 3u then failwithf "TODO: Invalid field count %i" fcount
 
     { Module = moduleID header'
@@ -135,215 +109,144 @@ let header (source: #_) =
         if psize > PointerSize.Is64Bit then failwithf "TODO: Invalid pointer size 0x%02X (%A)" (uint8 psize) psize
         psize }
 
-[<Struct>]
-type Placeholder'<'T> =
-    interface IParser<'T> with
-        [<MethodImpl(MethodImplOptions.AggressiveInlining)>]
-        member _.Parse _ = raise(NotImplementedException())
+let fieldImport source =
+    { FieldImport.FieldName = index source
+      FieldType = index source }
 
-[<Struct>]
-type Name' =
-    interface IParser<Name> with
-        [<MethodImpl(MethodImplOptions.AggressiveInlining)>]
-        member _.Parse source = name source
+let methodImport source =
+    { MethodImport.MethodName = index source
+      TypeParameters = LEB128.uint source
+      Signature = index source }
 
-[<Struct>]
-type FieldImport' =
-    interface IParser<FieldImport> with
-        member _.Parse source =
-            { FieldImport.FieldName = index source
-              FieldType = index source }
+let typeDefinitionImport source =
+    { TypeDefinitionImport.TypeName = index source
+      TypeKind =
+        let kind = bits1 source
+        if kind > Tag.TypeDefinitionKind.Struct then failwithf "TODO: Invalid type kind 0x%02X (%A)" (uint8 kind) kind
+        kind
+      TypeParameters = LEB128.uint source
+      Fields = vector source fieldImport
+      Methods = vector source methodImport }
 
-[<Struct>]
-type MethodImport' =
-    interface IParser<MethodImport> with
-        member _.Parse source =
-            { MethodImport.MethodName = index source
-              TypeParameters = parse<LEB128.UInt, _, _> source
-              Signature = index source }
+let namespaceImport source =
+    { NamespaceImport.NamespaceName = vector source index
+      TypeImports = vector source typeDefinitionImport
+      TypeAliases = vector source index }
 
-[<Struct>]
-type TypeDefinitionImport' =
-    interface IParser<TypeDefinitionImport> with
-        member _.Parse source =
-            { TypeDefinitionImport.TypeName = index source
-              TypeKind =
-                let kind = bits1 source
-                if kind > Tag.TypeDefinitionKind.Struct then failwithf "TODO: Invalid type kind 0x%02X (%A)" (uint8 kind) kind
-                kind
-              TypeParameters = parse<LEB128.UInt, _, _> source
-              Fields = vector<FieldImport', _, _> source
-              Methods = vector<MethodImport', _, _> source }
+let moduleImport source =
+    { ModuleImport.ImportedModule = moduleID source
+      ImportedNamespaces = vector source namespaceImport }
 
-[<Struct>]
-type NamespaceImport' =
-    interface IParser<NamespaceImport> with
-        member _.Parse source =
-            { NamespaceImport.NamespaceName = vector<Index'<_>, _, _> source
-              TypeImports = vector<TypeDefinitionImport', _, _> source
-              TypeAliases = vector<Index'<_>, _, _> source }
+let typeSignature source =
+    match bits1 source with
+    | Tag.Type.Unit -> Primitive PrimitiveType.Unit
+    | Tag.Type.S8 -> Primitive PrimitiveType.S8
+    | Tag.Type.S16 -> Primitive PrimitiveType.S16
+    | Tag.Type.S32 -> Primitive PrimitiveType.S32
+    | Tag.Type.S64 -> Primitive PrimitiveType.S64
+    | Tag.Type.U8 -> Primitive PrimitiveType.U8
+    | Tag.Type.U16 -> Primitive PrimitiveType.U16
+    | Tag.Type.U32 -> Primitive PrimitiveType.U32
+    | Tag.Type.U64 -> Primitive PrimitiveType.U64
+    | Tag.Type.F32 -> Primitive PrimitiveType.F32
+    | Tag.Type.F64 -> Primitive PrimitiveType.F64
+    | Tag.Type.Bool -> Primitive PrimitiveType.Bool
+    | Tag.Type.Char16 -> Primitive PrimitiveType.Char16
+    | Tag.Type.Char32 -> Primitive PrimitiveType.Char32
+    | bad -> failwithf "TODO: Invalid type (0x%02X) %A" (uint8 bad) bad
 
-[<Struct>]
-type ModuleImport' =
-    interface IParser<ModuleImport> with
-        [<MethodImpl(MethodImplOptions.AggressiveInlining)>]
-        member _.Parse source =
-            { ModuleImport.ImportedModule = moduleID source
-              ImportedNamespaces = vector<NamespaceImport', _, _> source }
+let methodSignature source =
+    { ReturnTypes = vector source index
+      MethodSignature.ParameterTypes = vector source index }
 
-[<Struct>]
-type TypeSignature =
-    interface IParser<AnyType> with
-        member _.Parse source =
-            match bits1 source with
-            | Tag.Type.Unit -> Primitive PrimitiveType.Unit
-            | Tag.Type.S8 -> Primitive PrimitiveType.S8
-            | Tag.Type.S16 -> Primitive PrimitiveType.S16
-            | Tag.Type.S32 -> Primitive PrimitiveType.S32
-            | Tag.Type.S64 -> Primitive PrimitiveType.S64
-            | Tag.Type.U8 -> Primitive PrimitiveType.U8
-            | Tag.Type.U16 -> Primitive PrimitiveType.U16
-            | Tag.Type.U32 -> Primitive PrimitiveType.U32
-            | Tag.Type.U64 -> Primitive PrimitiveType.U64
-            | Tag.Type.F32 -> Primitive PrimitiveType.F32
-            | Tag.Type.F64 -> Primitive PrimitiveType.F64
-            | Tag.Type.Bool -> Primitive PrimitiveType.Bool
-            | Tag.Type.Char16 -> Primitive PrimitiveType.Char16
-            | Tag.Type.Char32 -> Primitive PrimitiveType.Char32
-            | bad -> failwithf "TODO: Invalid type (0x%02X) %A" (uint8 bad) bad
+let annotation _ = failwith "TODO: Annotations not yet supported"
 
-[<Struct>]
-type MethodSignature' =
-    interface IParser<MethodSignature> with
-        member _.Parse source =
-            { ReturnTypes = vector<Index'<_>, _, _> source
-              MethodSignature.ParameterTypes = vector<Index'<_>, _, _> source }
+let field source =
+    { Field.FieldName = index source
+      FieldVisibility = bits1 source
+      FieldFlags = bits1 source
+      FieldType = index source
+      FieldAnnotations = vector source annotation }
 
-[<Struct>]
-type DataVector =
-    interface IParser<vector<byte>> with
-        [<MethodImpl(MethodImplOptions.AggressiveInlining)>]
-        member _.Parse source =
-            let struct(data, _) = lengthEncodedData source // NOTE: Data is duplicated twice.
-            data
+let genericTypeParam _ = failwith "TODO: Type parameters not yet supported"
 
-[<Struct>]
-type Field' =
-    interface IParser<Field> with
-        member _.Parse source =
-            { Field.FieldName = index source
-              FieldVisibility = bits1 source
-              FieldFlags = bits1 source
-              FieldType = index source
-              FieldAnnotations = vector<Placeholder'<_>, _, _> source }
+let method source =
+    { Method.MethodName = index source
+      MethodVisibility = bits1 source
+      MethodFlags = bits1 source
+      TypeParameters = vector source genericTypeParam
+      Signature = index source
+      MethodAnnotations = vector source annotation
+      Body =
+        match bits1 source with
+        | Tag.MethodBody.Defined -> MethodBody.Defined(index source)
+        | Tag.MethodBody.Abstract -> MethodBody.Abstract
+        | bad -> failwithf "TODO: Bad method body kind 0x%02X" (uint8 bad) }
 
-[<Struct>]
-type Method' =
-    interface IParser<Method> with
-        member _.Parse source =
-            { Method.MethodName = index source
-              MethodVisibility = bits1 source
-              MethodFlags = bits1 source
-              TypeParameters = vector<Placeholder'<_>, _, _> source
-              Signature = index source
-              MethodAnnotations = vector<Placeholder'<_>, _, _> source
-              Body =
-                match bits1 source with
-                | Tag.MethodBody.Defined -> MethodBody.Defined(index source)
-                | Tag.MethodBody.Abstract -> MethodBody.Abstract
-                | bad -> failwithf "TODO: Bad method body kind 0x%02X" (uint8 bad) }
+let typeDefinition source =
+    { TypeDefinition.TypeName = index source
+      TypeVisibility = bits1 source
+      TypeKind =
+        match bits1 source with
+        | Tag.TypeDefinitionKind.Class -> Class(ValueSome(index source), bits1 source)
+        | Tag.TypeDefinitionKind.Interface -> Interface
+        | Tag.TypeDefinitionKind.Struct -> Struct
+        | Tag.TypeDefinitionKind.BaseClass -> Class(ValueNone, bits1 source)
+        | bad -> failwithf "TODO: Bad type definition kind 0x%02X" (uint8 bad)
+      TypeLayout =
+        match bits1 source with
+        | Tag.TypeDefinitionLayout.Unspecified -> TypeDefinitionLayout.Unspecified
+        | Tag.TypeDefinitionLayout.Sequential -> TypeDefinitionLayout.Sequential
+        | bad -> failwithf "TODO: Bad type definition layout kind 0x%02X" (uint8 bad)
+      ImplementedInterfaces = vector source (fun _ -> failwith "TODO: Interfaces not yet supported")
+      TypeParameters = vector source genericTypeParam
+      TypeAnnotations = vector source annotation
+      Fields = vector source field
+      Methods = vector source method }
 
-[<Struct>]
-type TypeDefinition' =
-    interface IParser<TypeDefinition> with
-        member _.Parse source =
-            { TypeDefinition.TypeName = index source
-              TypeVisibility = bits1 source
-              TypeKind =
-                match bits1 source with
-                | Tag.TypeDefinitionKind.Class -> Class(ValueSome(index source), bits1 source)
-                | Tag.TypeDefinitionKind.Interface -> Interface
-                | Tag.TypeDefinitionKind.Struct -> Struct
-                | Tag.TypeDefinitionKind.BaseClass -> Class(ValueNone, bits1 source)
-                | bad -> failwithf "TODO: Bad type definition kind 0x%02X" (uint8 bad)
-              TypeLayout =
-                match bits1 source with
-                | Tag.TypeDefinitionLayout.Unspecified -> TypeDefinitionLayout.Unspecified
-                | Tag.TypeDefinitionLayout.Sequential -> TypeDefinitionLayout.Sequential
-                | bad -> failwithf "TODO: Bad type definition layout kind 0x%02X" (uint8 bad)
-              ImplementedInterfaces = vector<Placeholder'<_>, _, _> source
-              TypeParameters = vector<Placeholder'<_>, _, _> source
-              TypeAnnotations = vector<Placeholder'<_>, _, _> source
-              Fields = vector<Field', _, _> source
-              Methods = vector<Method', _, _> source }
+let typeAlias source =
+    { TypeAlias.AliasName = index source
+      AliasVisibility = bits1 source
+      AliasOf = failwith "TODO: Implement parsing of types" }
 
-[<Struct>]
-type TypeAlias' =
-    interface IParser<TypeAlias> with
-        [<MethodImpl(MethodImplOptions.AggressiveInlining)>]
-        member _.Parse source =
-            { TypeAlias.AliasName = index source
-              AliasVisibility = bits1 source
-              AliasOf = failwith "TODO: Implement parsing of types" }
+let namespace' source =
+    { Namespace.NamespaceName = vector source index
+      TypeDefinitions =
+        let struct(_, tdefs) = lengthEncodedData source
+        vector tdefs typeDefinition
+      TypeAliases =
+        let struct(_, taliases) = lengthEncodedData source
+        vector taliases typeAlias }
 
-[<Struct>]
-type Namespace' =
-    interface IParser<Namespace> with
-        member _.Parse source =
-            { Namespace.NamespaceName = vector<Index'<_>, _, _> source
-              TypeDefinitions =
-                let struct(_, tdefs) = lengthEncodedData source
-                vector<TypeDefinition', _, _> tdefs
-              TypeAliases =
-                let struct(_, taliases) = lengthEncodedData source
-                vector<TypeAlias', _, _> taliases }
+let instruction endianness source =
+    match LanguagePrimitives.EnumOfValue(LEB128.uint source) with
+    | Opcode.nop -> Nop
+    | Opcode.ret -> Ret(vector source index)
 
-[<Struct>]
-type CountedRegisterTypes =
-    interface IParser<struct(uvarint * RegisterType)> with
-        [<MethodImpl(MethodImplOptions.AggressiveInlining)>]
-        member _.Parse source =
-            let count = parse<LEB128.UInt, _, _> source
+    | Opcode.call -> Call(index source, vector source index, vector source index)
+
+    // Register
+    | Opcode.``reg.copy`` -> Reg_copy(index source, index source)
+
+    // Arithmetic
+    | Opcode.add -> Add(index source, index source, index source)
+    | Opcode.sub -> Sub(index source, index source, index source)
+
+    //| Opcode.``const.s32`` -> Const_s32 // TODO: Either store as LEB128, or somehow have access to module endianness
+
+    | bad -> failwithf "TODO: Unrecognized opcode 0x08%X" (uint32 bad)
+
+let code endianness source =
+    { Code.RegisterTypes =
+        vector source <| fun source ->
+            let count = LEB128.uint source
             let rtype =
                 { RegisterType = index source
                   RegisterFlags = bits1 source }
             struct(count, rtype)
-
-[<Struct>]
-type InstructionDecoder =
-    interface IParser<Instruction> with
-        member _.Parse source =
-            match LanguagePrimitives.EnumOfValue(parse<LEB128.UInt, _, _> source) with
-            | Opcode.nop -> Nop
-            | Opcode.ret -> Ret(vector<Index'<_>, _, _> source)
-
-            | Opcode.call -> Call(index source, vector<Index'<_>, _, _> source, vector<Index'<_>, _, _> source)
-
-            // Register
-            | Opcode.``reg.copy`` -> Reg_copy(index source, index source)
-
-            // Arithmetic
-            | Opcode.add -> Add(index source, index source, index source)
-            | Opcode.sub -> Sub(index source, index source, index source)
-
-            //| Opcode.``const.s32`` -> Const_s32 // TODO: Either store as LEB128, or somehow have access to module endianness
-
-            | bad -> failwithf "TODO: Unrecognized opcode 0x08%X" (uint32 bad)
-
-[<Struct>]
-type Code' =
-    interface IParser<Code> with
-        member _.Parse source =
-            { Code.RegisterTypes = vector<CountedRegisterTypes, _, _> source
-              Instructions =
-                let struct(_, instructions) = lengthEncodedData source
-                //vector<InstructionDecoder, _, _> instructions // TODO: Use F# func for parsing.
-                let mutable instructions' =
-                    let count = parse<LEB128.UInt, _, _> instructions
-                    Array.zeroCreate(Checked.int32 count)
-                for i = 0 to instructions'.Length - 1 do
-                    ()
-                Unsafe.As<Instruction[], ImmutableArray<Instruction>> &instructions' }
+      Instructions =
+        let struct(_, instructions) = lengthEncodedData source
+        vector instructions (instruction endianness) }
 
 let fromBytes (source: #IByteSequence) =
     let magic' = magic source
@@ -357,25 +260,37 @@ let fromBytes (source: #IByteSequence) =
       Header = header'
       Identifiers =
         let struct(_, identifiers) = lengthEncodedData source
-        { IdentifierSection.Identifiers = vector<Name', _, _> identifiers }
+        { IdentifierSection.Identifiers = vector identifiers name }
       Imports =
         let struct(_, imports) = lengthEncodedData source
-        vector<ModuleImport', _, _> imports
+        vector imports moduleImport
       TypeSignatures =
         let struct(_, tsigs) = lengthEncodedData source
-        vector<TypeSignature, _, _> tsigs
+        vector tsigs typeSignature
       MethodSignatures =
         let struct(_, msigs) = lengthEncodedData source
-        vector<MethodSignature', _, _> msigs
+        vector msigs methodSignature
       Data =
         let struct(_, data) = lengthEncodedData source
-        vector<DataVector, _, _> data
+        vector data <| fun source ->
+            let struct(bytes, _) = lengthEncodedData source
+            bytes
       Code =
         let struct(_, code) = lengthEncodedData source
-        vector<Code', _, _> code
+        vector code <| fun source ->
+            { Code.RegisterTypes =
+                vector source <| fun source ->
+                    let count = LEB128.uint source
+                    let rtype =
+                        { RegisterType = index source
+                          RegisterFlags = bits1 source }
+                    struct(count, rtype)
+              Instructions =
+                let struct(_, instructions) = lengthEncodedData source
+                vector instructions (instruction header'.Endianness) }
       Namespaces =
         let struct(_, namespaces) = lengthEncodedData source
-        vector<Namespace', _, _> namespaces
+        vector namespaces namespace'
       EntryPoint =
         let struct(epoint, epoint') = lengthEncodedData source
         if epoint.IsDefaultOrEmpty

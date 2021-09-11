@@ -332,6 +332,9 @@ type PointerSize =
     | Is32Bit = 1uy
     | Is64Bit = 2uy
 
+[<Struct>]
+type Endianness = | LittleEndian | BigEndian
+
 type ModuleHeader =
     { Module: ModuleIdentifier
       Flags: ModuleHeaderFlags
@@ -339,8 +342,10 @@ type ModuleHeader =
 
     member _.FieldCount = 3u
 
-[<Struct>]
-type Endianness = | LittleEndian | BigEndian
+    member this.Endianness =
+        if this.Flags &&& ModuleHeaderFlags.BigEndian <> ModuleHeaderFlags.LittleEndian
+        then BigEndian
+        else LittleEndian
 
 type Module =
     { Magic: Magic
@@ -356,10 +361,7 @@ type Module =
       EntryPoint: LengthEncoded<MethodIndex voption>
       Debug: LengthEncoded<Debug> }
 
-    member this.Endianness =
-        if this.Header.Flags &&& ModuleHeaderFlags.BigEndian <> ModuleHeaderFlags.LittleEndian
-        then BigEndian
-        else LittleEndian
+    member this.Endianness = this.Header.Endianness
 
 let (|Name|) (Name name) = name
 

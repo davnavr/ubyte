@@ -456,6 +456,11 @@ type PointerSize =
     | Is32Bit = 1uy
     | Is64Bit = 2uy
 
+[<IsReadOnly; Struct; StructuralComparison; StructuralEquality>]
+type Endianness =
+    | LittleEndian
+    | BigEndian
+
 [<NoComparison; NoEquality>]
 type ModuleHeader =
     { /// Specifies the name and version of this module.
@@ -467,10 +472,7 @@ type ModuleHeader =
     /// A LEB128 unsigned integer preceding the header indicating the number of fields in the header.
     member FieldCount: uvarint
 
-[<IsReadOnly; Struct; StructuralComparison; StructuralEquality>]
-type Endianness =
-    | LittleEndian
-    | BigEndian
+    member internal Endianness : Endianness
 
 [<NoComparison; NoEquality>]
 type Module =
