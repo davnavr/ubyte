@@ -42,11 +42,13 @@ let program =
         ImmutableArray.CreateRange [|
             { RegisterTypes =
                 ImmutableArray.CreateRange [|
-                    struct(1u, { RegisterType = Index 0u; RegisterFlags = RegisterFlags.None })
+                    struct(2u, { RegisterType = Index 0u; RegisterFlags = RegisterFlags.None })
                 |]
               Instructions =
                 ImmutableArray.CreateRange [|
-                    // TODO: Do some loading constant and adding stuff here
+                    Const_i32(9, Index 0u)
+                    Const_i32(10, Index 1u)
+                    Add(Index 0u, Index 1u, Index 0u)
                     Ret(ImmutableArray.Create(Index 0u))
                 |] }
         |]

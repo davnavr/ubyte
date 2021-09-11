@@ -11,7 +11,7 @@ open UByte.Format.Model
 
 [<RequireQualifiedAccess>]
 type RuntimeRegister =
-    | R1 of uint8 ref
+    | R1 of uint8 ref // TODO: Have signed variants?
     | R2 of uint16 ref
     | R4 of uint32 ref
     | R8 of uint64 ref
@@ -90,6 +90,13 @@ module Interpreter =
                 loop current instructions methodIndexResolver (i + 1)
             | Instruction.Reg_copy(source, dest) ->
                 (current.RegisterAt source).CopyValueTo(current.RegisterAt dest)
+                loop current instructions methodIndexResolver (i + 1)
+            | Instruction.Add(xreg, yreg, dest) ->
+                match current.RegisterAt xreg, current.RegisterAt yreg, current.RegisterAt dest with
+                | RuntimeRegister.R4 { contents = x }, RuntimeRegister.R4 { contents = y }, RuntimeRegister.R4 dest' ->
+                    dest'.contents <- x + y
+                | _ -> failwith "TODO: Allow adding of other integers"
+
                 loop current instructions methodIndexResolver (i + 1)
             | Instruction.Const_i32(value, dest) ->
                 match current.RegisterAt dest with
