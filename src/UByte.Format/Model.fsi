@@ -501,6 +501,7 @@ type Module =
 [<RequireQualifiedAccess>]
 module VersionNumbers =
     val semver : major: uvarint -> minor: uvarint -> patch: uvarint -> VersionNumbers
+    val empty : VersionNumbers
 
 [<RequireQualifiedAccess>]
 module Name =

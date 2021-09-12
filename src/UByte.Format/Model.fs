@@ -377,4 +377,5 @@ module Name =
         | ValueNone -> invalidArg (nameof name) "The name must not be empty"
 
 module VersionNumbers =
+    let empty = VersionNumbers ImmutableArray.Empty
     let semver major minor patch = VersionNumbers(ImmutableArray.Create(major, minor, item3 = patch))

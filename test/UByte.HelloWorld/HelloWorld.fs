@@ -104,7 +104,7 @@ let tests = testList "hello world" [
             FParsec.CharParsers.runParserOnStream
                 UByte.Assembler.Parser.sexpression
                 ()
-                "HelloWorld"
+                "HelloWorld.tmodule"
                 (getEmbeddedText "HelloWorld.tmodule")
                 System.Text.Encoding.UTF8
         match result with
