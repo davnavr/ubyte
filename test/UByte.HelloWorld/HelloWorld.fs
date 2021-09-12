@@ -99,7 +99,7 @@ let tests = testList "hello world" [
         let parsed = ParseModule.fromStream rbuffer
         parsed.Header.Module =! program.Header.Module
 
-    testCase "text format can be parsed" <| fun () ->
+    let parseHelloWorld() =
         let result =
             FParsec.CharParsers.runParserOnStream
                 UByte.Assembler.Parser.sexpression
@@ -108,8 +108,19 @@ let tests = testList "hello world" [
                 (getEmbeddedText "HelloWorld.tmodule")
                 System.Text.Encoding.UTF8
         match result with
-        | FParsec.CharParsers.ParserResult.Success _ -> ()
+        | FParsec.CharParsers.ParserResult.Success(atoms, _, _) -> atoms
         | FParsec.CharParsers.ParserResult.Failure(msg, err, ()) -> failwithf "Parsing failed %A %A" msg err
+
+    testCase "text format can be parsed" (parseHelloWorld >> ignore)
+
+    testCase "text format can be assembled" <| fun() ->
+        let atoms = parseHelloWorld()
+        match UByte.Assembler.Assembler.assemble atoms with
+        | Ok _ -> ()
+        | Error errs ->
+            let errors = System.Text.StringBuilder()
+            for err in errs do errors.Append("Error: ").Append(err).AppendLine() |> ignore
+            failtest(errors.ToString())
 ]
 
 [<EntryPoint>]
