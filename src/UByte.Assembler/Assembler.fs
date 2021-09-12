@@ -16,7 +16,8 @@ type AssembleError =
     | DuplicateFormatVersion of duplicate: Parser.PositionedAtom
     | InvalidVersionNumber of number: Parser.PositionedAtom
     | MissingModuleName of name: Parser.PositionedAtom
-    | DuplicateModuleName of name: Parser.PositionedAtom
+    | DuplicateModuleName of duplicate: Parser.PositionedAtom
+    | DuplicateModuleVersion of duplicate: Parser.PositionedAtom
     | UnexpectedAtom of Parser.PositionedAtom
 
     override this.ToString() =
@@ -63,10 +64,10 @@ let extraneous atoms errors =
         | extra :: next -> inner next (UnexpectedAtom extra :: errors)
     inner atoms errors
 
-let assemble (atoms: Parser.PositionedAtom list) =
+let assemble atoms =
     match keyword "module" atoms with
     | Ok(), atoms' ->
-        let mutable moduleHeaderName, formatVersionNumbers = None, None
+        let mutable moduleHeaderName, moduleHeaderVersion, formatVersionNumbers = None, None, None
 
         let rec declarations atoms errs =
             let inline setFormatVersion atom fversion =
@@ -76,29 +77,50 @@ let assemble (atoms: Parser.PositionedAtom list) =
                     formatVersionNumbers <- Some fversion
                     errs
 
+            // TODO: Avoid code duplication
+            let inline setModuleVersion atom mversion =
+                match moduleHeaderVersion with
+                | Some _ -> DuplicateModuleVersion atom :: errs
+                | None ->
+                    moduleHeaderVersion <- Some mversion
+                    errs
+
             match atoms with
+            // Module format version
             | Atom(Parser.Keyword "format") as fversion :: next ->
                 declarations next (setFormatVersion fversion ImmutableArray.Empty)
             | Atom(Parser.NestedAtom(Atom(Parser.Keyword "format") :: numbers)) as fversion :: next ->
                 match versionNumberList numbers with
                 | Ok numbers' -> declarations next (setFormatVersion fversion numbers')
                 | Error err -> declarations next (err :: errs)
-            | Atom(Parser.Keyword "name") as name :: next ->
-                declarations next (MissingModuleName name :: errs)
-            | Atom(Parser.NestedAtom(Atom(Parser.Keyword "name") as name :: contents)) :: next ->
+            // Module name
+            | Atom(Parser.Keyword "name") as mname :: next ->
+                declarations next (MissingModuleName mname :: errs)
+            | Atom(Parser.NestedAtom(Atom(Parser.Keyword "name") as mname :: contents)) :: next ->
                 match contents with
-                | Atom(Parser.StringLiteral name') :: extra ->
+                | Atom(Parser.StringLiteral name) :: extra ->
                     match extra, moduleHeaderName with
                     | [], None ->
-                        moduleHeaderName <- Some(Name.ofStr name')
+                        moduleHeaderName <- Some(Name.ofStr name)
                         declarations next errs
                     | _, Some _ ->
-                        declarations next (DuplicateModuleName name :: errs)
+                        declarations next (DuplicateModuleName mname :: errs)
                     | _ :: _, None ->
                         declarations next (extraneous extra errs)
-                | _ -> declarations next (MissingModuleName name :: errs)
+                | _ -> declarations next (MissingModuleName mname :: errs)
+            // Module version
+            // TODO: Avoid code duplication with other version like nodes
+            | Atom(Parser.Keyword "version") as mversion :: next ->
+                declarations next (setModuleVersion mversion ImmutableArray.Empty)
+            | Atom(Parser.NestedAtom(Atom(Parser.Keyword "version") :: numbers)) as mversion :: next ->
+                match versionNumberList numbers with
+                | Ok numbers' -> declarations next (setModuleVersion mversion numbers')
+                | Error err -> declarations next (err :: errs)
+
+            // ((double nested))
             | Atom(Parser.NestedAtom [ Atom(Parser.NestedAtom _) as nested ]) :: next -> // TODO: Check that this can parse ((double nested)) things.
                 declarations (nested :: next) errs
+            // Unknown
             | bad :: next ->
                 declarations next (UnexpectedAtom bad :: errs)
             | [] -> errs
