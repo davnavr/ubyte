@@ -11,8 +11,12 @@ type Atom =
     //| FloatLiteral of float
     | NestedAtom of PositionedAtom list
 
+    override ToString: unit -> string
+
 and PositionedAtom =
     { Atom: Atom
       Position: Position }
+
+    override ToString: unit -> string
 
 val sexpression : Parser<PositionedAtom list, unit>

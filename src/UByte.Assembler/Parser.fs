@@ -15,9 +15,21 @@ type Atom =
     //| FloatLiteral of float
     | NestedAtom of PositionedAtom list
 
+    override this.ToString() =
+        match this with
+        | Identifier id -> sprintf "$%s" id
+        | StringLiteral str -> sprintf "\"%s\"" str
+        | Keyword word -> word
+        | IntegerLiteral i -> string i
+        | NestedAtom [] -> "()"
+        | NestedAtom atoms ->
+            System.Text.StringBuilder().Append('(').AppendJoin(' ', atoms).Append(')').ToString()
+
 and PositionedAtom =
     { Atom: Atom
       Position: Position }
+
+    override this.ToString() = this.Atom.ToString()
 
 let keychar = choice [ asciiLetter; anyOf "_.<>" ]
 let idchar = choice [ keychar; digit; ]

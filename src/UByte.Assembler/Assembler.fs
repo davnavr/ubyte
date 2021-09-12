@@ -75,7 +75,7 @@ let assemble (atoms: Parser.PositionedAtom list) =
                 declarations next (UnexpectedAtom bad :: errs)
             | [] -> errs
 
-        match declarations atoms List.empty with
+        match declarations atoms' List.empty with
         | [] ->
             Ok(failwith "TODO: Build the module": Module)
         | errs -> Error errs
