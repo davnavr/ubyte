@@ -1,4 +1,4 @@
-﻿(module (name "HelloWorld") (format 0 0) (version 0 1 0)
+﻿(module (format 0 0) (name "HelloWorld") (version 0 1 0)
   (identifier $id_namespace "Example")
   (identifier $id_class "HelloWorld")
   (identifier $id_entry_point "main")

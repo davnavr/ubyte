@@ -14,7 +14,9 @@ let atomErrorMsg =
 type AssembleError =
     | ExpectedKeyword of expected: string * actual: Parser.PositionedAtom option
     | DuplicateFormatVersion of duplicate: Parser.PositionedAtom
-    | InvalidVersionNumber of Parser.PositionedAtom
+    | InvalidVersionNumber of number: Parser.PositionedAtom
+    | MissingModuleName of name: Parser.PositionedAtom
+    | DuplicateModuleName of name: Parser.PositionedAtom
     | UnexpectedAtom of Parser.PositionedAtom
 
     override this.ToString() =
@@ -26,7 +28,12 @@ type AssembleError =
         | DuplicateFormatVersion { Parser.Position = pos } ->
             sprintf "Duplicate format version at %O" pos
         | InvalidVersionNumber atom ->
-            atomErrorMsg atom + "is not a valid version number"
+            atomErrorMsg atom
+            + "is not a valid version number, versions are specified as a list of positive integers"
+        | MissingModuleName atom ->
+            atomErrorMsg atom + "is missing the module name, module names are of the form (name \"my.module.name\")"
+        | DuplicateModuleName { Parser.Position = pos } ->
+            sprintf "Duplicate module name at %O" pos
         | UnexpectedAtom atom -> "Unexpected " + atomErrorMsg atom
 
 let inline (|Atom|) { Parser.Atom = atom } = atom
@@ -49,17 +56,24 @@ let versionNumberList atoms =
             Error(InvalidVersionNumber bad)
     inner (ImmutableArray.CreateBuilder()) atoms
 
+let extraneous atoms errors =
+    let rec inner atoms errors =
+        match atoms with
+        | [] -> errors
+        | extra :: next -> inner next (UnexpectedAtom extra :: errors)
+    inner atoms errors
+
 let assemble (atoms: Parser.PositionedAtom list) =
     match keyword "module" atoms with
     | Ok(), atoms' ->
-        let mutable formatVersionNumbers = ValueNone
+        let mutable moduleHeaderName, formatVersionNumbers = None, None
 
         let rec declarations atoms errs =
             let inline setFormatVersion atom fversion =
                 match formatVersionNumbers with
-                | ValueSome _ -> DuplicateFormatVersion atom :: errs
-                | ValueNone ->
-                    formatVersionNumbers <- ValueSome fversion
+                | Some _ -> DuplicateFormatVersion atom :: errs
+                | None ->
+                    formatVersionNumbers <- Some fversion
                     errs
 
             match atoms with
@@ -69,6 +83,20 @@ let assemble (atoms: Parser.PositionedAtom list) =
                 match versionNumberList numbers with
                 | Ok numbers' -> declarations next (setFormatVersion fversion numbers')
                 | Error err -> declarations next (err :: errs)
+            | Atom(Parser.Keyword "name") as name :: next ->
+                declarations next (MissingModuleName name :: errs)
+            | Atom(Parser.NestedAtom(Atom(Parser.Keyword "name") as name :: contents)) :: next ->
+                match contents with
+                | Atom(Parser.StringLiteral name') :: extra ->
+                    match extra, moduleHeaderName with
+                    | [], None ->
+                        moduleHeaderName <- Some(Name.ofStr name')
+                        declarations next errs
+                    | _, Some _ ->
+                        declarations next (DuplicateModuleName name :: errs)
+                    | _ :: _, None ->
+                        declarations next (extraneous extra errs)
+                | _ -> declarations next (MissingModuleName name :: errs)
             | Atom(Parser.NestedAtom [ Atom(Parser.NestedAtom _) as nested ]) :: next -> // TODO: Check that this can parse ((double nested)) things.
                 declarations (nested :: next) errs
             | bad :: next ->
