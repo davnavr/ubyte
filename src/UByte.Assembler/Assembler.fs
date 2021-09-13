@@ -19,11 +19,13 @@ type AssemblerError =
     | MissingModuleName of name: Parser.PositionedAtom
     | DuplicateModuleName of duplicate: Parser.PositionedAtom
     | DuplicateModuleVersion of duplicate: Parser.PositionedAtom
+    | SymbolNotDefined of symbol: Name * Parser.PositionedAtom
     | EmptyIdentifierEntry of identifier: Parser.PositionedAtom
     | DuplicateIdentifierSymbol of symbol: Name * identifier: Parser.PositionedAtom
     | InvalidSignatureKind of signature: Parser.PositionedAtom
     | MissingTypeSignature of Parser.PositionedAtom
     | InvalidTypeSignature of ``type``: Parser.PositionedAtom
+    | InvalidMethodSignature of method : Parser.PositionedAtom
     | UnexpectedAtom of Parser.PositionedAtom
 
     override this.ToString() =
@@ -43,6 +45,8 @@ type AssemblerError =
             sprintf "Duplicate module name at %O" pos
         | DuplicateModuleVersion { Parser.Position = pos } ->
             sprintf "Duplicate module version at %O" pos
+        | SymbolNotDefined(symbol, atom) ->
+            sprintf "The symbol %O in %s is not defined" symbol (atomErrorMsg atom)
         | EmptyIdentifierEntry atom ->
             atomErrorMsg atom +
             "is not a valid identifier, identifiers should be of the form (identifier $my_name_symbol \"MyName\") or " +
@@ -58,10 +62,12 @@ type AssemblerError =
             + "is not a valid type, a valid type should be of the form (type ...) where ... indicates a type signature"
         | InvalidTypeSignature atom ->
             atomErrorMsg atom + " is an invalid type signature, a valid type should be a primitive (s32, bool, char16, etc.)"
+        | InvalidMethodSignature atom ->
+            atomErrorMsg atom + " is an invalid method signature, method signatures are of the form (method (returns ...) (param"
         | UnexpectedAtom atom -> "Unexpected " + atomErrorMsg atom
 
 [<Sealed>]
-type SymbolDictionary<'T> () =
+type SymbolDictionary<'IndexKind, 'T when 'IndexKind :> IndexKinds.Kind> () =
     let items = ImmutableArray.CreateBuilder<'T>()
     let symbols = Dictionary<Name, int32>()
 
@@ -82,13 +88,19 @@ type SymbolDictionary<'T> () =
         | ValueSome symbol -> this.AddNamed(symbol, item)
         | ValueNone -> this.AddAnonymous item; None
 
+    member _.FromSymbol symbol: Index<'IndexKind> voption =
+        match symbols.TryGetValue symbol with
+        | true, item -> ValueSome(Index(Checked.uint32 item))
+        | false, _ -> ValueNone
+
 [<NoComparison; NoEquality>]
 type State =
     { ModuleFormatVersion: VersionNumbers voption ref
       mutable ModuleHeaderName: Name voption
       ModuleHeaderVersion: VersionNumbers voption ref
-      ModuleIdentifiers: SymbolDictionary<Name>
-      ModuleTypeSignatures: SymbolDictionary<AnyType> }
+      ModuleIdentifiers: SymbolDictionary<IndexKinds.Identifier, Name>
+      ModuleTypeSignatures: SymbolDictionary<IndexKinds.TypeSignature, AnyType>
+      ModuleMethodSignatures: SymbolDictionary<IndexKinds.MethodSignature, MethodSignature> }
 
 let inline (|Atom|) { Parser.Atom = atom } = atom
 
@@ -99,7 +111,7 @@ let rec extraneous atoms errors =
     | [] -> List.rev errors
     | extra :: remaining -> extraneous remaining (UnexpectedAtom extra :: errors)
 
-let keyword name contents atoms errors (state: State): ExpressionParserResult option =
+let keyword name contents atoms (errors: AssemblerError list) (state: State): ExpressionParserResult option =
     let contents' watom nested atoms': struct(_ * _) option =
         match contents watom nested errors state with
         | struct([], errors') -> Some(atoms', errors')
@@ -149,23 +161,61 @@ let (|ParsedIdentifier|) (Atom atom) =
     | _ -> ValueNone
 
 let (|ParsedTypeSignature|) atoms =
-    let inline primitive t = ValueSome(AnyType.Primitive t)
+    let inline primitive remaining t: struct(_ * _) voption = ValueSome(remaining, AnyType.Primitive t)
     match atoms with
-    | Atom(Parser.Keyword "bool") :: [] -> primitive PrimitiveType.Bool
-    | Atom(Parser.Keyword "s8") :: [] -> primitive PrimitiveType.S8
-    | Atom(Parser.Keyword "u8") :: [] -> primitive PrimitiveType.U8
-    | Atom(Parser.Keyword "s16") :: [] -> primitive PrimitiveType.S16
-    | Atom(Parser.Keyword "u16") :: [] -> primitive PrimitiveType.U16
-    | Atom(Parser.Keyword "char16") :: [] -> primitive PrimitiveType.Char16
-    | Atom(Parser.Keyword "s32") :: [] -> primitive PrimitiveType.S32
-    | Atom(Parser.Keyword "u32") :: [] -> primitive PrimitiveType.U32
-    | Atom(Parser.Keyword "char32") :: [] -> primitive PrimitiveType.Char32
-    | Atom(Parser.Keyword "s64") :: [] -> primitive PrimitiveType.S64
-    | Atom(Parser.Keyword "u64") :: [] -> primitive PrimitiveType.U64
-    | Atom(Parser.Keyword "f32") :: [] -> primitive PrimitiveType.F32
-    | Atom(Parser.Keyword "f64") :: [] -> primitive PrimitiveType.F64
-    | Atom(Parser.Keyword "unit") :: [] -> primitive PrimitiveType.Unit
+    | Atom(Parser.Keyword "bool") :: atoms' -> primitive atoms' PrimitiveType.Bool
+    | Atom(Parser.Keyword "s8") :: atoms' -> primitive atoms' PrimitiveType.S8
+    | Atom(Parser.Keyword "u8") :: atoms' -> primitive atoms' PrimitiveType.U8
+    | Atom(Parser.Keyword "s16") :: atoms' -> primitive atoms' PrimitiveType.S16
+    | Atom(Parser.Keyword "u16") :: atoms' -> primitive atoms' PrimitiveType.U16
+    | Atom(Parser.Keyword "char16") :: atoms' -> primitive atoms' PrimitiveType.Char16
+    | Atom(Parser.Keyword "s32") :: atoms' -> primitive atoms' PrimitiveType.S32
+    | Atom(Parser.Keyword "u32") :: atoms' -> primitive atoms' PrimitiveType.U32
+    | Atom(Parser.Keyword "char32") :: atoms' -> primitive atoms' PrimitiveType.Char32
+    | Atom(Parser.Keyword "s64") :: atoms' -> primitive atoms' PrimitiveType.S64
+    | Atom(Parser.Keyword "u64") :: atoms' -> primitive atoms' PrimitiveType.U64
+    | Atom(Parser.Keyword "f32") :: atoms' -> primitive atoms' PrimitiveType.F32
+    | Atom(Parser.Keyword "f64") :: atoms' -> primitive atoms' PrimitiveType.F64
+    | Atom(Parser.Keyword "unit") :: atoms' -> primitive atoms' PrimitiveType.Unit
     | _ -> ValueNone
+
+let (|ParsedMethodSignature|) matom errors state atoms =
+    let (|ParsedMethodTypes|) name errors atoms: struct(_ * _) voption =
+        match atoms with
+        | Atom(Parser.NestedAtom(Atom(Parser.Keyword keyword) :: types)) as matom :: atoms' when keyword = name ->
+            let rec inner (builder: ImmutableArray<_>.Builder) types errors: struct(_ * _) voption =
+                match types with
+                | Atom(Parser.Identifier tname) as tatom :: types' ->
+                    let tname' = Name.ofStr tname
+                    match state.ModuleTypeSignatures.FromSymbol tname' with
+                    | ValueSome t ->
+                        builder.Add t
+                        inner builder types' errors
+                    | ValueNone ->
+                        ValueSome([], Error(SymbolNotDefined(tname', tatom) :: errors))
+                | [] ->
+                    ValueSome([], Ok(builder.ToImmutable()))
+                | _ ->
+                    ValueSome(atoms', Error(InvalidMethodSignature matom :: errors))
+            inner (ImmutableArray.CreateBuilder()) types errors
+        | [] as atoms'
+        | Atom(Parser.Keyword _) :: atoms'
+        | Atom(Parser.NestedAtom [ Atom(Parser.Keyword _) ]) :: atoms' ->
+            // Keyword is not checked as list of return types might be omitted.
+            ValueSome(atoms', Ok ImmutableArray.Empty)
+        | _ -> ValueNone
+
+    let invalidMethodSignature = Error(InvalidMethodSignature matom :: errors)
+
+    match atoms with
+    | ParsedMethodTypes "returns" errors (ValueSome(atoms', Ok rtypes)) ->
+        match atoms' with
+        | ParsedMethodTypes "parameters" errors (ValueSome([], Ok ptypes)) ->
+            Ok { ReturnTypes = rtypes; ParameterTypes = ptypes }
+        | ParsedMethodTypes "parameters" errors (ValueSome(_, Error errors')) ->
+            Error errors'
+        | _ -> invalidMethodSignature
+    | _ -> invalidMethodSignature
 
 let assemble atoms =
     let state =
@@ -173,7 +223,8 @@ let assemble atoms =
           ModuleHeaderName = ValueNone
           ModuleHeaderVersion = ref ValueNone
           ModuleIdentifiers = SymbolDictionary()
-          ModuleTypeSignatures = SymbolDictionary() }
+          ModuleTypeSignatures = SymbolDictionary()
+          ModuleMethodSignatures = SymbolDictionary() }
 
     match atoms with
     | Atom(Parser.Keyword "module") :: contents ->
@@ -211,12 +262,20 @@ let assemble atoms =
                         match atoms with
                         | Atom(Parser.NestedAtom(Atom(Parser.Keyword "type") :: ParsedTypeSignature t)) as tatom :: extra ->
                             match t with
-                            | ValueSome t' ->
+                            | ValueSome([], t') ->
                                 match state.ModuleTypeSignatures.Add(symbol, t') with
                                 | None -> struct([], extraneous extra errors)
                                 | Some err -> struct([], err satom :: errors)
+                            | ValueSome(_ :: _, _)
                             | ValueNone ->
                                 struct([], InvalidTypeSignature tatom :: errors)
+                        | Atom(Parser.NestedAtom(Atom(Parser.Keyword "method") :: msig)) as matom :: extra ->
+                            match msig with
+                            | ParsedMethodSignature matom errors state (Ok msig') ->
+                                match state.ModuleMethodSignatures.Add(symbol, msig') with
+                                | None -> struct([], extraneous extra errors)
+                                | Some err -> struct([], err satom :: errors)
+                            | _ -> struct([], InvalidMethodSignature matom :: errors)
                         | _ -> struct([], InvalidSignatureKind satom :: errors))
                     atoms
                     errors

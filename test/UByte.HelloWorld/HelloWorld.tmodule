@@ -6,7 +6,7 @@
   (signature $sig_int (type s32))
 
   ; Method that takes no parameters and returns a 32-bit integer
-  (signature $sig_main (method (results $sig_int)))
+  (signature $sig_main (method (returns $sig_int)))
 
   (code $code_main (register $l0 $sig_int) (register $l1 $sig_int)
     (const.i32 9 $l0)

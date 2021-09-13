@@ -504,6 +504,10 @@ module VersionNumbers =
     val empty : VersionNumbers
 
 [<RequireQualifiedAccess>]
+module MethodSignature =
+    val empty : MethodSignature
+
+[<RequireQualifiedAccess>]
 module Name =
     val tryOfStr : name: ustring -> Name voption
 
