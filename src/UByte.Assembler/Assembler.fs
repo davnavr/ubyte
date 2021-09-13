@@ -20,6 +20,8 @@ type AssembleError = // TODO: Rename to AssemblerError
     | DuplicateModuleName of duplicate: Parser.PositionedAtom
     | DuplicateModuleVersion of duplicate: Parser.PositionedAtom
     | EmptyIdentifierEntry of identifier: Parser.PositionedAtom
+    //| MissingTypeSignature of Parser.PositionedAtom
+    | InvalidTypeSignature of ``type``: Parser.PositionedAtom
     | UnexpectedAtom of Parser.PositionedAtom
 
     override this.ToString() =
@@ -42,6 +44,9 @@ type AssembleError = // TODO: Rename to AssemblerError
         | EmptyIdentifierEntry { Parser.Position = pos } ->
             sprintf "The identifier entry at %O was unexpectedly empty, " pos
             + "identifier entries should be of the form (identifier $my_name_symbol \"MyName\") or (identifier \"MyName\")"
+
+        | InvalidTypeSignature { Parser.Position = pos } ->
+            sprintf "The type at %O is invalid" pos
         | UnexpectedAtom atom -> "Unexpected " + atomErrorMsg atom
 
 [<Sealed>]
@@ -198,20 +203,38 @@ let failUnexpectedAtom: Assembler<'T> =
         | [] -> Error errors, []
 
 let moduleHeaderName =
-    directive
-        "name"
-        (MissingModuleName >> Error)
-        (fun natom atoms errors state ->
-            match atoms with
-            | Atom(Parser.StringLiteral name) :: [] ->
-                match state.ModuleHeaderName, Name.tryOfStr name with
-                | ValueNone, ValueSome name' -> Ok((state.ModuleHeaderName <- ValueSome name'), errors), []
-                | ValueNone, ValueNone -> Ok((), MissingModuleName natom :: errors), []
-                | ValueSome _, _ -> Ok((), DuplicateModuleName natom :: errors), []
-            | Atom(Parser.StringLiteral _) :: extra ->
-                Error(errorExtraAtoms extra errors), []
-            | extra ->
-                Error(errorExtraAtoms extra (MissingModuleName natom :: errors)), [])
+    directive "name" (MissingModuleName >> Error) <| fun natom atoms errors state ->
+        match atoms with
+        | Atom(Parser.StringLiteral name) :: [] ->
+            match state.ModuleHeaderName, Name.tryOfStr name with
+            | ValueNone, ValueSome name' -> Ok((state.ModuleHeaderName <- ValueSome name'), errors), []
+            | ValueNone, ValueNone -> Ok((), MissingModuleName natom :: errors), []
+            | ValueSome _, _ -> Ok((), DuplicateModuleName natom :: errors), []
+        | Atom(Parser.StringLiteral _) :: extra ->
+            Error(errorExtraAtoms extra errors), []
+        | extra ->
+            Error(errorExtraAtoms extra (MissingModuleName natom :: errors)), []
+
+let inlineTypeSignature =
+    directive "type" (InvalidTypeSignature >> Error) <| fun tatom atoms errors state ->
+        let inline success t: AssemblerResult<_> = Ok(t, errors), []
+
+        match atoms with
+        | Atom(Parser.Keyword "bool") :: [] -> success(AnyType.Primitive PrimitiveType.Bool)
+        | Atom(Parser.Keyword "s8") :: [] -> success(AnyType.Primitive PrimitiveType.S8)
+        | Atom(Parser.Keyword "u8") :: [] -> success(AnyType.Primitive PrimitiveType.U8)
+        | Atom(Parser.Keyword "s16") :: [] -> success(AnyType.Primitive PrimitiveType.S16)
+        | Atom(Parser.Keyword "u16") :: [] -> success(AnyType.Primitive PrimitiveType.U16)
+        | Atom(Parser.Keyword "char16") :: [] -> success(AnyType.Primitive PrimitiveType.Char16)
+        | Atom(Parser.Keyword "s32") :: [] -> success(AnyType.Primitive PrimitiveType.S32)
+        | Atom(Parser.Keyword "u32") :: [] -> success(AnyType.Primitive PrimitiveType.U32)
+        | Atom(Parser.Keyword "char32") :: [] -> success(AnyType.Primitive PrimitiveType.Char32)
+        | Atom(Parser.Keyword "s64") :: [] -> success(AnyType.Primitive PrimitiveType.S64)
+        | Atom(Parser.Keyword "u64") :: [] -> success(AnyType.Primitive PrimitiveType.U64)
+        | Atom(Parser.Keyword "f32") :: [] -> success(AnyType.Primitive PrimitiveType.F32)
+        | Atom(Parser.Keyword "f64") :: [] -> success(AnyType.Primitive PrimitiveType.F64)
+        | Atom(Parser.Keyword "unit") :: [] -> success(AnyType.Primitive PrimitiveType.Unit)
+        | _ -> Error(InvalidTypeSignature tatom :: errors), []
 
 let assemblerEntryPoint: Assembler<unit> =
     let identifier =
@@ -230,6 +253,9 @@ let assemblerEntryPoint: Assembler<unit> =
                 | extra ->
                     Error(errorExtraAtoms extra (EmptyIdentifierEntry natom :: errors)), [])
 
+    let signature =
+        ()
+
     let directives =
         choice [
             moduleVersionDirective "format" (fun state -> state.ModuleFormatVersion) DuplicateFormatVersion
@@ -239,6 +265,8 @@ let assemblerEntryPoint: Assembler<unit> =
             moduleVersionDirective "version" (fun state -> state.ModuleHeaderVersion) DuplicateModuleVersion
 
             identifier
+
+            signature
 
             failUnexpectedAtom
         ]
