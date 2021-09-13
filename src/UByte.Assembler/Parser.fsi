@@ -3,6 +3,7 @@ module UByte.Assembler.Parser
 
 open FParsec
 
+[<NoComparison; StructuralEquality>]
 type Atom =
     | Identifier of string
     | StringLiteral of string
@@ -13,10 +14,14 @@ type Atom =
 
     override ToString: unit -> string
 
-and PositionedAtom =
+    interface System.IEquatable<Atom>
+
+and [<NoComparison; StructuralEquality>] PositionedAtom =
     { Atom: Atom
       Position: Position }
 
     override ToString: unit -> string
+
+    interface System.IEquatable<PositionedAtom>
 
 val sexpression : Parser<PositionedAtom list, unit>

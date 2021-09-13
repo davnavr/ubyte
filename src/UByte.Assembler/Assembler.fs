@@ -11,7 +11,7 @@ let atomErrorMsg =
     let format = sprintf "\"%O\" at %O"
     fun { Parser.Atom = atom; Parser.Position = pos } -> format atom pos
 
-type AssembleError =
+type AssembleError = // TODO: Rename to AssemblerError
     | ExpectedKeyword of expected: string * actual: Parser.PositionedAtom option
     | DuplicateFormatVersion of duplicate: Parser.PositionedAtom
     | InvalidVersionNumber of number: Parser.PositionedAtom
@@ -50,15 +50,6 @@ let inline (|Atom|) { Parser.Atom = atom } = atom
 type AssemblerResult<'T> = System.ValueTuple<Result<struct('T * AssembleError list), AssembleError list>, Parser.PositionedAtom list>
 
 type Assembler<'T> = Parser.PositionedAtom list -> AssembleError list -> State -> AssemblerResult<'T>
-
-//type AssemblerBuilder () =
-//    member inline _.Bind(expr: Assembler<'T>, body: 'T -> Assembler<'U>): Assembler<'U> =
-//        fun atoms errs ->
-//            match expr atoms errs with
-//            | Ok(t, errs'), atoms' -> body t atoms' errs'
-//            | Error errs', atoms' -> Error errs', atoms'
-
-//let assembler = AssemblerBuilder()
 
 let ret value: Assembler<'T> = fun atoms errors _ -> Ok(value, errors), atoms
 
@@ -132,9 +123,25 @@ let choice (parsers: Assembler<'T> list): Assembler<'T> =
             | Ok(result, errs'), atoms' ->
                 struct(Ok(result, errs'), atoms')
             | Error errs', atoms' ->
-                inner (struct(Error errs', atoms')) remaining atoms errors state
+                inner (Error errs', atoms') remaining atoms errors state
 
     fun atoms -> inner (struct(Error List.empty, atoms)) parsers atoms
+
+let many (parser: Assembler<'T>): Assembler<ImmutableArray<'T>> =
+    let rec inner (items: ImmutableArray<'T>.Builder) atoms errors state: AssemblerResult<_> =
+        match parser atoms errors state with
+        | (Ok(_, errors') as result), atoms'
+        | (Error errors' as result), atoms' ->
+            match result with
+            | Ok(result', _) -> items.Add result'
+            | Error _ -> ()
+
+            match atoms' with
+            | _ :: _ -> inner items atoms' errors' state
+            | [] -> Ok(items.ToImmutable(), errors'), atoms'
+    fun atoms -> inner (ImmutableArray.CreateBuilder()) atoms
+
+// TODO: Make a skipMany
 
 let directive name empty (contents: _ -> Assembler<'T>): Assembler<'T> =
     fun atoms errors state ->
@@ -146,9 +153,13 @@ let directive name empty (contents: _ -> Assembler<'T>): Assembler<'T> =
         | Atom(Parser.NestedAtom(Atom(Parser.Keyword keyword) as atom :: contents')) :: atoms' when keyword = name ->
             match contents atom contents' errors state with
             | Ok(result, errors'), [] -> Ok(result, errors'), atoms'
-            | Ok(_, errors'), extra -> Error(errorExtraAtoms extra errors' @ errors), atoms'
-            | Error errors', _ -> Error(errors' @ errors), atoms'
-        | _ -> failwith "TODO: How to deal with this?"
+            | Ok(_, errors'), extra -> Error(errorExtraAtoms extra errors'), atoms'
+            | Error errors', _ -> Error errors', atoms'
+        | Atom(Parser.Keyword _) as atom :: atoms'
+        | Atom(Parser.NestedAtom(Atom(Parser.Keyword _) as atom :: _)) :: atoms' ->
+            Error(ExpectedKeyword(name, Some atom) :: errors), atoms'
+        | _ ->
+            Error(ExpectedKeyword(name, None) :: errors), atoms
 
 let versionNumberList: Assembler<VersionNumbers> =
     let rec inner (numbers: ImmutableArray<_>.Builder) atoms errors: AssemblerResult<_> =
@@ -161,43 +172,32 @@ let versionNumberList: Assembler<VersionNumbers> =
             Error(InvalidVersionNumber bad :: errors), atoms
     fun atoms errors _ -> inner (ImmutableArray.CreateBuilder()) atoms errors
 
-//let keyword name atoms: struct(_ * _) =
-//    match atoms with
-//    | [] -> Error(ExpectedKeyword(name, None)), atoms
-//    | Atom(Parser.Keyword actual) :: rest when StringComparer.Ordinal.Equals(name, actual) -> Ok(), rest
-//    | bad :: rest -> Error(ExpectedKeyword(name, Some bad)), rest
-
-//let versionNumberList atoms =
-//    let rec inner (numbers: ImmutableArray<_>.Builder) atoms =
-//        match atoms with
-//        | [] ->
-//            Ok(numbers.ToImmutable())
-//        | Atom(Parser.IntegerLiteral n) :: numbers' when n >= 0L ->
-//            numbers.Add(uint32 n)
-//            inner numbers numbers'
-//        | bad :: _ ->
-//            Error(InvalidVersionNumber bad)
-//    inner (ImmutableArray.CreateBuilder()) atoms
-
-let versionDirective name = directive name (fun atom -> Ok(atom, VersionNumbers.empty)) (fun atom -> ret atom .>>. versionNumberList)
+let versionDirective name =
+    directive name (fun atom -> Ok(atom, VersionNumbers.empty)) (fun atom -> ret atom .>>. versionNumberList)
 
 let moduleVersionDirective name (getVersionField: _ -> _ ref) err: Assembler<_> =
-    versionDirective name
-    .>>. tryUpdateState (getVersionField >> Ok)
-    |> tryMap (fun ((atom, version), update) ->
-        match update.contents with
-        | ValueNone ->
-            update.contents <- ValueSome version
-            Ok()
-        | ValueSome _ -> Error(err atom))
+    fun atoms errors state ->
+        match versionDirective name atoms errors state with
+        | Ok((atom, version), errors'), atoms' ->
+            let update = getVersionField state
+            match update.contents with
+            | ValueNone ->
+                update.contents <- ValueSome version
+                Ok((), errors'), atoms'
+            | ValueSome _ ->
+                Ok((), err atom :: errors'), atoms'
+        | Error errors', atoms' -> Error errors', atoms'
 
 let assemblerEntryPoint: Assembler<unit> =
-    keyword "module"
-    >>. choice [
+    let directives =
+        choice [
             moduleVersionDirective "format" (fun state -> state.ModuleFormatVersion) DuplicateFormatVersion
 
-            moduleVersionDirective "version" (fun state -> state.ModuleFormatVersion) DuplicateModuleVersion
+            moduleVersionDirective "version" (fun state -> state.ModuleHeaderVersion) DuplicateModuleVersion
+            // TODO: Fix unknown atom causes rest of parsing to end early.
         ]
+
+    keyword "module" .>> many directives // TODO: use skipMany
 
 let assemble atoms =
     let state =
@@ -206,77 +206,8 @@ let assemble atoms =
           ModuleHeaderVersion = ref ValueNone }
 
     match assemblerEntryPoint atoms List.empty state with
-    | Ok _, [] ->
+    | Ok((), []), [] ->
         Ok(failwith "bad": Module)
-    | result, extra ->
-        match result with
-        | Ok _ -> List.empty
-        | Error errs -> errs
-        |> errorExtraAtoms extra
-        |> Error
-
-    //match keyword "module" atoms with
-    //| Ok(), atoms' ->
-    //    let mutable moduleHeaderName, moduleHeaderVersion, formatVersionNumbers = None, None, None
-
-    //    let rec declarations atoms errs =
-    //        let inline setFormatVersion atom fversion =
-    //            match formatVersionNumbers with
-    //            | Some _ -> DuplicateFormatVersion atom :: errs
-    //            | None ->
-    //                formatVersionNumbers <- Some fversion
-    //                errs
-
-    //        // TODO: Avoid code duplication
-    //        let inline setModuleVersion atom mversion =
-    //            match moduleHeaderVersion with
-    //            | Some _ -> DuplicateModuleVersion atom :: errs
-    //            | None ->
-    //                moduleHeaderVersion <- Some mversion
-    //                errs
-
-    //        match atoms with
-    //        // Module format version
-    //        | Atom(Parser.Keyword "format") as fversion :: next ->
-    //            declarations next (setFormatVersion fversion ImmutableArray.Empty)
-    //        | Atom(Parser.NestedAtom(Atom(Parser.Keyword "format") :: numbers)) as fversion :: next ->
-    //            match versionNumberList numbers with
-    //            | Ok numbers' -> declarations next (setFormatVersion fversion numbers')
-    //            | Error err -> declarations next (err :: errs)
-    //        // Module name
-    //        | Atom(Parser.Keyword "name") as mname :: next ->
-    //            declarations next (MissingModuleName mname :: errs)
-    //        | Atom(Parser.NestedAtom(Atom(Parser.Keyword "name") as mname :: contents)) :: next ->
-    //            match contents with
-    //            | Atom(Parser.StringLiteral name) :: extra ->
-    //                match extra, moduleHeaderName with
-    //                | [], None ->
-    //                    moduleHeaderName <- Some(Name.ofStr name)
-    //                    declarations next errs
-    //                | _, Some _ ->
-    //                    declarations next (DuplicateModuleName mname :: errs)
-    //                | _ :: _, None ->
-    //                    declarations next (extraneous extra errs)
-    //            | _ -> declarations next (MissingModuleName mname :: errs)
-    //        // Module version
-    //        // TODO: Avoid code duplication with other version like nodes
-    //        | Atom(Parser.Keyword "version") as mversion :: next ->
-    //            declarations next (setModuleVersion mversion ImmutableArray.Empty)
-    //        | Atom(Parser.NestedAtom(Atom(Parser.Keyword "version") :: numbers)) as mversion :: next ->
-    //            match versionNumberList numbers with
-    //            | Ok numbers' -> declarations next (setModuleVersion mversion numbers')
-    //            | Error err -> declarations next (err :: errs)
-
-    //        // ((double nested))
-    //        | Atom(Parser.NestedAtom [ Atom(Parser.NestedAtom _) as nested ]) :: next -> // TODO: Check that this can parse ((double nested)) things.
-    //            declarations (nested :: next) errs
-    //        // Unknown
-    //        | bad :: next ->
-    //            declarations next (UnexpectedAtom bad :: errs)
-    //        | [] -> errs
-
-    //    match declarations atoms' List.empty with
-    //    | [] ->
-    //        Ok(failwith "TODO: Build the module": Module)
-    //    | errs -> Error errs
-    //| Error err, _ -> Error [ err ]
+    | Ok((), errors), extra
+    | Error errors, extra ->
+        Error(errorExtraAtoms extra errors)
