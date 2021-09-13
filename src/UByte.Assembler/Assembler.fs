@@ -188,13 +188,21 @@ let moduleVersionDirective name (getVersionField: _ -> _ ref) err: Assembler<_> 
                 Ok((), err atom :: errors'), atoms'
         | Error errors', atoms' -> Error errors', atoms'
 
+let failUnexpectedAtom: Assembler<'T> =
+    fun atoms errors _ ->
+        match atoms with
+        | bad :: atoms' ->
+            Error(UnexpectedAtom bad :: errors), atoms'
+        | [] -> Error errors, []
+
 let assemblerEntryPoint: Assembler<unit> =
     let directives =
         choice [
             moduleVersionDirective "format" (fun state -> state.ModuleFormatVersion) DuplicateFormatVersion
 
             moduleVersionDirective "version" (fun state -> state.ModuleHeaderVersion) DuplicateModuleVersion
-            // TODO: Fix unknown atom causes rest of parsing to end early.
+
+            failUnexpectedAtom
         ]
 
     keyword "module" .>> many directives // TODO: use skipMany
@@ -210,4 +218,6 @@ let assemble atoms =
         Ok(failwith "bad": Module)
     | Ok((), errors), extra
     | Error errors, extra ->
-        Error(errorExtraAtoms extra errors)
+        errorExtraAtoms extra errors
+        |> List.rev
+        |> Error
