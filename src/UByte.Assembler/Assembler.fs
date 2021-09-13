@@ -1,6 +1,7 @@
 ﻿module UByte.Assembler.Assembler
 
 open System
+open System.Collections.Generic
 open System.Collections.Immutable
 
 open UByte.Format.Model
@@ -18,6 +19,7 @@ type AssembleError = // TODO: Rename to AssemblerError
     | MissingModuleName of name: Parser.PositionedAtom
     | DuplicateModuleName of duplicate: Parser.PositionedAtom
     | DuplicateModuleVersion of duplicate: Parser.PositionedAtom
+    | EmptyIdentifierEntry of identifier: Parser.PositionedAtom
     | UnexpectedAtom of Parser.PositionedAtom
 
     override this.ToString() =
@@ -37,13 +39,31 @@ type AssembleError = // TODO: Rename to AssemblerError
             sprintf "Duplicate module name at %O" pos
         | DuplicateModuleVersion { Parser.Position = pos } ->
             sprintf "Duplicate module version at %O" pos
+        | EmptyIdentifierEntry { Parser.Position = pos } ->
+            sprintf "The identifier entry at %O was unexpectedly empty, " pos
+            + "identifier entries should be of the form (identifier $my_name_symbol \"MyName\") or (identifier \"MyName\")"
         | UnexpectedAtom atom -> "Unexpected " + atomErrorMsg atom
+
+[<Sealed>]
+type SymbolDictionary<'T> () =
+    let items = ImmutableArray.CreateBuilder<'T>()
+    let symbols = Dictionary<string, int32>()
+
+    member _.Add(symbol, item: 'T) =
+        let i = items.Count
+
+        match symbol with
+        | ValueSome symbol' -> symbols.Add(symbol', i)
+        | ValueNone -> ()
+
+        items.Add item
 
 [<NoComparison; NoEquality>]
 type State =
     { ModuleFormatVersion: VersionNumbers voption ref
       mutable ModuleHeaderName: Name voption
-      ModuleHeaderVersion: VersionNumbers voption ref }
+      ModuleHeaderVersion: VersionNumbers voption ref
+      ModuleIdentifiers: SymbolDictionary<Name> }
 
 let inline (|Atom|) { Parser.Atom = atom } = atom
 
@@ -188,11 +208,28 @@ let moduleHeaderName =
                 | ValueNone, ValueSome name' -> Ok((state.ModuleHeaderName <- ValueSome name'), errors), []
                 | ValueNone, ValueNone -> Ok((), MissingModuleName natom :: errors), []
                 | ValueSome _, _ -> Ok((), DuplicateModuleName natom :: errors), []
-            | Atom(Parser.StringLiteral _) :: atoms'
-            | atoms' ->
-                Error(errorExtraAtoms atoms' (MissingModuleName natom :: errors)), atoms')
+            | Atom(Parser.StringLiteral _) :: extra ->
+                Error(errorExtraAtoms extra errors), []
+            | extra ->
+                Error(errorExtraAtoms extra (MissingModuleName natom :: errors)), [])
 
 let assemblerEntryPoint: Assembler<unit> =
+    let identifier =
+        directive
+            "identifier"
+            (EmptyIdentifierEntry >> Error)
+            (fun natom atoms errors state ->
+                match atoms with
+                | Atom(Parser.Identifier nsymbol) :: Atom(Parser.StringLiteral name) :: [] ->
+                    Ok(state.ModuleIdentifiers.Add(ValueSome nsymbol, Name.ofStr name), errors), []
+                | Atom(Parser.StringLiteral name) :: [] ->
+                    Ok(state.ModuleIdentifiers.Add(ValueNone, Name.ofStr name), errors), []
+                | Atom(Parser.Identifier _) :: Atom(Parser.StringLiteral _) :: extra
+                | Atom(Parser.StringLiteral _) :: extra ->
+                    Error(errorExtraAtoms extra errors), []
+                | extra ->
+                    Error(errorExtraAtoms extra (EmptyIdentifierEntry natom :: errors)), [])
+
     let directives =
         choice [
             moduleVersionDirective "format" (fun state -> state.ModuleFormatVersion) DuplicateFormatVersion
@@ -200,6 +237,8 @@ let assemblerEntryPoint: Assembler<unit> =
             moduleHeaderName
 
             moduleVersionDirective "version" (fun state -> state.ModuleHeaderVersion) DuplicateModuleVersion
+
+            identifier
 
             failUnexpectedAtom
         ]
@@ -210,7 +249,8 @@ let assemble atoms =
     let state =
         { ModuleFormatVersion = ref ValueNone
           ModuleHeaderName = ValueNone
-          ModuleHeaderVersion = ref ValueNone }
+          ModuleHeaderVersion = ref ValueNone
+          ModuleIdentifiers = SymbolDictionary() }
 
     match assemblerEntryPoint atoms List.empty state with
     | Ok((), []), [] ->
