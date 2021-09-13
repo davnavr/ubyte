@@ -51,16 +51,16 @@ type AssemblerResult<'T> = System.ValueTuple<Result<struct('T * AssembleError li
 
 type Assembler<'T> = Parser.PositionedAtom list -> AssembleError list -> State -> AssemblerResult<'T>
 
-let ret value: Assembler<'T> = fun atoms errors _ -> Ok(value, errors), atoms
+let private ret value: Assembler<'T> = fun atoms errors _ -> Ok(value, errors), atoms
 
-let errorExtraAtoms atoms errors =
+let private errorExtraAtoms atoms errors =
     let rec inner atoms errors =
         match atoms with
         | [] -> errors
         | extra :: next -> inner next (UnexpectedAtom extra :: errors)
     inner atoms errors
 
-let (.>>) (a: Assembler<'A>) (b: Assembler<'B>): Assembler<'A> =
+let private (.>>) (a: Assembler<'A>) (b: Assembler<'B>): Assembler<'A> =
     fun atoms errs state ->
         match a atoms errs state with
         | Ok(result, errs'), atoms' ->
@@ -69,13 +69,13 @@ let (.>>) (a: Assembler<'A>) (b: Assembler<'B>): Assembler<'A> =
             | Error errs'', atoms'' -> Error errs'', atoms''
         | Error errs', atoms' -> Error errs', atoms'
 
-let (>>.) (a: Assembler<'A>) (b: Assembler<'B>): Assembler<'B> =
+let private (>>.) (a: Assembler<'A>) (b: Assembler<'B>): Assembler<'B> =
     fun atoms errs state ->
         match a atoms errs state with
         | Ok(_, errs'), atoms' -> b atoms' errs' state
         | Error errs', atoms' -> Error errs', atoms'
 
-let pipe2 (a: Assembler<'A>) (b: Assembler<'B>) pipe: Assembler<'C> =
+let private pipe2 (a: Assembler<'A>) (b: Assembler<'B>) pipe: Assembler<'C> =
     fun atoms errs state ->
         match a atoms errs state with
         | Ok(resulta, errs'), atoms' ->
@@ -84,37 +84,22 @@ let pipe2 (a: Assembler<'A>) (b: Assembler<'B>) pipe: Assembler<'C> =
             | Error errs'', atoms'' -> Error errs'', atoms''
         | Error errs', atoms' -> Error errs', atoms'
 
-let (.>>.) a b = pipe2 a b (fun a' b' -> a', b')
+let private (.>>.) a b = pipe2 a b (fun a' b' -> a', b')
 
-let (|>>) (parser: Assembler<'T>) (mapping: 'T -> 'U): Assembler<'U> =
+let private (|>>) (parser: Assembler<'T>) (mapping: 'T -> 'U): Assembler<'U> =
     fun atoms errs state ->
         match parser atoms errs state with
         | Ok(result, errs'), atoms' -> Ok(mapping result, errs'), atoms'
         | Error errs', atoms' -> Error errs', atoms'
 
-let tryUpdateState updater: Assembler<'T> =
-    fun atoms errors state ->
-        match updater state with
-        | Ok result -> Ok(result, errors), atoms
-        | Error err -> Error(err :: errors), atoms
-
-let tryMap (mapping: 'T -> Result<'U, AssembleError>) (parser: Assembler<'T>): Assembler<'U> =
-    fun atoms errs state ->
-        match parser atoms errs state with
-        | Ok(result, errs'), atoms' ->
-            match mapping result with
-            | Ok result' -> Ok(result', errs'), atoms'
-            | Error err -> Error(err :: errs'), atoms'
-        | Error errs', atoms' -> Error errs', atoms'
-
-let keyword name: Assembler<unit> =
+let private keyword name: Assembler<unit> =
     fun atoms errors _ ->
         match atoms with
         | [] -> Error(ExpectedKeyword(name, None) :: errors), atoms
         | Atom(Parser.Keyword actual) :: rest when StringComparer.Ordinal.Equals(name, actual) -> Ok((), errors), rest
         | bad :: rest -> Error(ExpectedKeyword(name, Some bad) :: errors), rest
 
-let choice (parsers: Assembler<'T> list): Assembler<'T> =
+let private choice (parsers: Assembler<'T> list): Assembler<'T> =
     let rec inner (last: AssemblerResult<_>) (parsers: Assembler<'T> list) atoms errors state =
         match parsers with
         | [] -> last
@@ -127,7 +112,7 @@ let choice (parsers: Assembler<'T> list): Assembler<'T> =
 
     fun atoms -> inner (struct(Error List.empty, atoms)) parsers atoms
 
-let many (parser: Assembler<'T>): Assembler<ImmutableArray<'T>> =
+let private many (parser: Assembler<'T>): Assembler<ImmutableArray<'T>> =
     let rec inner (items: ImmutableArray<'T>.Builder) atoms errors state: AssemblerResult<_> =
         match parser atoms errors state with
         | (Ok(_, errors') as result), atoms'
@@ -181,11 +166,8 @@ let moduleVersionDirective name (getVersionField: _ -> _ ref) err: Assembler<_> 
         | Ok((atom, version), errors'), atoms' ->
             let update = getVersionField state
             match update.contents with
-            | ValueNone ->
-                update.contents <- ValueSome version
-                Ok((), errors'), atoms'
-            | ValueSome _ ->
-                Ok((), err atom :: errors'), atoms'
+            | ValueNone -> Ok((update.contents <- ValueSome version), errors'), atoms'
+            | ValueSome _ -> Ok((), err atom :: errors'), atoms'
         | Error errors', atoms' -> Error errors', atoms'
 
 let failUnexpectedAtom: Assembler<'T> =
@@ -195,10 +177,27 @@ let failUnexpectedAtom: Assembler<'T> =
             Error(UnexpectedAtom bad :: errors), atoms'
         | [] -> Error errors, []
 
+let moduleHeaderName =
+    directive
+        "name"
+        (MissingModuleName >> Error)
+        (fun natom atoms errors state ->
+            match atoms with
+            | Atom(Parser.StringLiteral name) :: [] ->
+                match state.ModuleHeaderName, Name.tryOfStr name with
+                | ValueNone, ValueSome name' -> Ok((state.ModuleHeaderName <- ValueSome name'), errors), []
+                | ValueNone, ValueNone -> Ok((), MissingModuleName natom :: errors), []
+                | ValueSome _, _ -> Ok((), DuplicateModuleName natom :: errors), []
+            | Atom(Parser.StringLiteral _) :: atoms'
+            | atoms' ->
+                Error(errorExtraAtoms atoms' (MissingModuleName natom :: errors)), atoms')
+
 let assemblerEntryPoint: Assembler<unit> =
     let directives =
         choice [
             moduleVersionDirective "format" (fun state -> state.ModuleFormatVersion) DuplicateFormatVersion
+
+            moduleHeaderName
 
             moduleVersionDirective "version" (fun state -> state.ModuleHeaderVersion) DuplicateModuleVersion
 
