@@ -4,8 +4,8 @@ module UByte.Assembler.Assembler
 type Position = FParsec.Position
 
 [<NoComparison; NoEquality>]
-type AssembleError
+type AssemblerError
 
-type AssembleError with override ToString: unit -> string
+type AssemblerError with override ToString: unit -> string
 
-val assemble : Parser.PositionedAtom list -> Result<UByte.Format.Model.Module, AssembleError list>
+val assemble : Parser.PositionedAtom list -> Result<UByte.Format.Model.Module, AssemblerError list>
