@@ -9,6 +9,7 @@
   (signature $sig_main (method (returns $sig_int)))
 
   (code $code_main (register $l0 $sig_int) (register $l1 $sig_int)
+    ; return 9 + 10
     (const.i32 9 $l0)
     (const.i32 10 $l1)
     (add $l0 $l1 $l0)

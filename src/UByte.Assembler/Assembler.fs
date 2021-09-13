@@ -5,6 +5,7 @@ open System.Collections.Generic
 open System.Collections.Immutable
 
 open UByte.Format.Model
+open UByte.Format.Model.InstructionSet
 
 type Position = FParsec.Position
 
@@ -26,6 +27,11 @@ type AssemblerError =
     | MissingTypeSignature of Parser.PositionedAtom
     | InvalidTypeSignature of ``type``: Parser.PositionedAtom
     | InvalidMethodSignature of method : Parser.PositionedAtom
+    | DuplicateSignatureSymbol of symbol: Name * code: Parser.PositionedAtom
+    | UnknownInstruction of name: string * instruction: Parser.PositionedAtom
+    | InvalidInstruction of instruction: Parser.PositionedAtom
+    | DuplicateCodeSymbol of symbol: Name * code: Parser.PositionedAtom
+    | MissingInstructionArguments of instruction: Parser.PositionedAtom * count: int32
     | UnexpectedAtom of Parser.PositionedAtom
 
     override this.ToString() =
@@ -63,7 +69,18 @@ type AssemblerError =
         | InvalidTypeSignature atom ->
             atomErrorMsg atom + " is an invalid type signature, a valid type should be a primitive (s32, bool, char16, etc.)"
         | InvalidMethodSignature atom ->
-            atomErrorMsg atom + " is an invalid method signature, method signatures are of the form (method (returns ...) (param"
+            atomErrorMsg atom + " is an invalid method signature, method signatures are of the form (method (returns "
+            + "$my_return_type_1 $my_return_type_2) (parameters $my_param_type_1 $my_param_type_2)"
+        | DuplicateSignatureSymbol(symbol, { Parser.Position = pos }) ->
+            sprintf "Duplicate symbol at %O, a type or method signature corresponding to the symbol $%O already exists" symbol pos
+        | UnknownInstruction(name, instr) ->
+            sprintf "%s is an unknown instruction, \"%s\" does not refer to any valid instruction" (atomErrorMsg instr) name
+        | InvalidInstruction instr ->
+            atomErrorMsg instr + " is not a valid instruction"
+        | DuplicateCodeSymbol(symbol, { Parser.Position = pos }) ->
+            sprintf "Duplicate symbol at %O, a code block corresponding to the symbol $%O already exists" symbol pos
+        | MissingInstructionArguments(instr, count) ->
+            sprintf "The instruction %s is missing %i arguments" (atomErrorMsg instr) count
         | UnexpectedAtom atom -> "Unexpected " + atomErrorMsg atom
 
 [<Sealed>]
@@ -81,7 +98,7 @@ type SymbolDictionary<'IndexKind, 'T when 'IndexKind :> IndexKinds.Kind> () =
             symbols.Add(symbol, i)
             this.AddAnonymous item
             None
-        | true, _ -> Some(fun a -> DuplicateIdentifierSymbol(symbol, a))
+        | true, _ -> Some(fun a -> symbol, a) 
 
     member this.Add(symbol, item) =
         match symbol with
@@ -100,7 +117,8 @@ type State =
       ModuleHeaderVersion: VersionNumbers voption ref
       ModuleIdentifiers: SymbolDictionary<IndexKinds.Identifier, Name>
       ModuleTypeSignatures: SymbolDictionary<IndexKinds.TypeSignature, AnyType>
-      ModuleMethodSignatures: SymbolDictionary<IndexKinds.MethodSignature, MethodSignature> }
+      ModuleMethodSignatures: SymbolDictionary<IndexKinds.MethodSignature, MethodSignature>
+      ModuleCode: SymbolDictionary<IndexKinds.Code, Code> }
 
 let inline (|Atom|) { Parser.Atom = atom } = atom
 
@@ -217,6 +235,62 @@ let (|ParsedMethodSignature|) matom errors state atoms =
         | _ -> invalidMethodSignature
     | _ -> invalidMethodSignature
 
+let rec instructions body errors state =
+    let registers = SymbolDictionary<IndexKinds.Register, _>()
+    let instrs = ImmutableArray.CreateBuilder<Instruction>()
+
+    let operation name count body errors args: struct(_ * _) voption =
+        match body with
+        | Atom(Parser.Keyword op) :: body' when op = name ->
+            ValueSome(body', failwith "TODO: Error for missing argument" :: errors)
+        | Atom(Parser.NestedAtom(Atom(Parser.Keyword op) :: arguments)) as opatom :: body' when op = name ->
+            let arguments' = List.toArray arguments
+            let extra = count - arguments'.Length
+            if arguments'.Length >= count then
+                match args arguments' with
+                | Ok instr ->
+                    instrs.Add instr
+
+                    let errors' =
+                        if arguments'.Length = count
+                        then errors
+                        else extraneous (List.skip extra arguments) errors
+
+                    ValueSome(body', errors')
+                | Error err ->
+                    ValueSome(body', err :: errors)
+            else
+                ValueSome(body', MissingInstructionArguments(opatom, extra) :: errors)
+        | _ -> ValueNone
+
+    /// Takes a single register as an argument.
+    let (|SingleOp|) name body: struct(_ * _) voption =
+        match body with
+        | Atom(Parser.Keyword op) :: body' when op = name ->
+            ValueSome(body', failwith "TODO: Error for missing argument")
+        | Atom(Parser.NestedAtom [ Atom(Parser.Keyword op); Atom(Parser.Identifier argr) ]) :: body' when op = name ->
+            failwith "TODO: Hey"
+        | _ -> ValueNone
+
+    let rec inner body errors =
+        match body with
+        | [] ->
+            match errors with
+            | [] -> Ok(failwith "TODO: Make code": Code)
+            | _ -> Error errors
+        // "register"
+        | Atom(Parser.Keyword "nop") :: body' ->
+            instrs.Add InstructionSet.Nop
+            inner body' errors
+        
+        | (Atom(Parser.Keyword unknown) as op) :: body'
+        | (Atom(Parser.NestedAtom(Atom(Parser.Keyword unknown) :: _)) as op) :: body' ->
+            inner body' (UnknownInstruction(unknown, op) :: errors)
+        | bad :: body' ->
+            inner body' (InvalidInstruction bad :: errors)
+
+    inner body errors
+
 let assemble atoms =
     let state =
         { ModuleFormatVersion = ref ValueNone
@@ -224,7 +298,8 @@ let assemble atoms =
           ModuleHeaderVersion = ref ValueNone
           ModuleIdentifiers = SymbolDictionary()
           ModuleTypeSignatures = SymbolDictionary()
-          ModuleMethodSignatures = SymbolDictionary() }
+          ModuleMethodSignatures = SymbolDictionary()
+          ModuleCode = SymbolDictionary() }
 
     match atoms with
     | Atom(Parser.Keyword "module") :: contents ->
@@ -248,7 +323,7 @@ let assemble atoms =
                         | ParsedIdentifier(ValueSome name) :: extra ->
                             match state.ModuleIdentifiers.Add(symbol, name) with
                             | None -> struct([], extraneous extra errors)
-                            | Some err -> struct([], err iatom :: errors)
+                            | Some err -> struct([], DuplicateIdentifierSymbol(err iatom) :: errors)
                         | ParsedIdentifier ValueNone :: _
                         | [] -> struct([], EmptyIdentifierEntry iatom :: errors))
                     atoms
@@ -264,19 +339,33 @@ let assemble atoms =
                             match t with
                             | ValueSome([], t') ->
                                 match state.ModuleTypeSignatures.Add(symbol, t') with
-                                | None -> struct([], extraneous extra errors)
-                                | Some err -> struct([], err satom :: errors)
+                                | None -> [], extraneous extra errors
+                                | Some err -> [], DuplicateSignatureSymbol(err satom) :: errors
                             | ValueSome(_ :: _, _)
                             | ValueNone ->
-                                struct([], InvalidTypeSignature tatom :: errors)
+                                [], InvalidTypeSignature tatom :: errors
                         | Atom(Parser.NestedAtom(Atom(Parser.Keyword "method") :: msig)) as matom :: extra ->
                             match msig with
                             | ParsedMethodSignature matom errors state (Ok msig') ->
                                 match state.ModuleMethodSignatures.Add(symbol, msig') with
-                                | None -> struct([], extraneous extra errors)
-                                | Some err -> struct([], err satom :: errors)
-                            | _ -> struct([], InvalidMethodSignature matom :: errors)
-                        | _ -> struct([], InvalidSignatureKind satom :: errors))
+                                | None -> [], extraneous extra errors
+                                | Some err -> [], DuplicateSignatureSymbol(err satom) :: errors
+                            | _ -> [], InvalidMethodSignature matom :: errors
+                        | _ -> [], InvalidSignatureKind satom :: errors)
+                    atoms
+                    errors
+                    state
+
+            let inline (|ModuleCode|_|) atoms =
+                keywordWithSymbol
+                    "code"
+                    (fun symbol catom body errors state ->
+                        match instructions body errors state with
+                        | Ok code ->
+                            match state.ModuleCode.Add(symbol, code) with
+                            | None -> [], errors
+                            | Some err -> [], DuplicateCodeSymbol(err catom) :: errors
+                        | Error errors' -> [], errors')
                     atoms
                     errors
                     state
@@ -285,7 +374,8 @@ let assemble atoms =
             | VersionField "format" state.ModuleFormatVersion DuplicateFormatVersion (atoms', errors')
             | VersionField "version" state.ModuleHeaderVersion DuplicateModuleVersion (atoms', errors')
             | ModuleIdentifier (atoms', errors')
-            | ModuleSignature (atoms', errors') ->
+            | ModuleSignature (atoms', errors')
+            | ModuleCode (atoms', errors') ->
                 inner atoms' errors'
             | Atom(Parser.NestedAtom(Atom(Parser.Keyword "name") as n :: ParsedIdentifier(ValueSome name) :: extra)) :: atoms' ->
                 match state.ModuleHeaderVersion.contents with
