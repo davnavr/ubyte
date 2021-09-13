@@ -45,7 +45,7 @@ let atom: Parser<PositionedAtom, unit> =
             skipChar '$' >>. (many1Chars idchar) |>> Identifier <?> "identifier"
             // TODO: Allow escape sequences
             quot >>. manyCharsTill idchar quot |>> StringLiteral <?> "string literal"
-            many1Chars keychar |>> Keyword <?> "keyword"
+            keychar .>>. manyChars idchar |>> (fun (s, remaining) -> Keyword(string s + remaining)) <?> "keyword"
             pint64 |>> IntegerLiteral <?> "integer literal"
             // If parsing float literals, see http://www.quanttec.com/fparsec/reference/charparsers.html#members.numberLiteral to avoid problems with determining if a number if an integer or float
             cell |>> NestedAtom
