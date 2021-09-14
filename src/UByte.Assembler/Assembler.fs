@@ -31,6 +31,7 @@ type AssemblerError =
     | InvalidInstruction of instruction: Parser.PositionedAtom
     | DuplicateCodeSymbol of symbol: Name * code: Parser.PositionedAtom
     | MissingInstructionArguments of instruction: Parser.PositionedAtom * count: int32
+    | DuplicateRegisterSymbol of symbol: Name * register: Parser.PositionedAtom
     | UnexpectedAtom of Parser.PositionedAtom
 
     override this.ToString() =
@@ -80,6 +81,7 @@ type AssemblerError =
             sprintf "Duplicate symbol at %O, a code block corresponding to the symbol $%O already exists" pos symbol
         | MissingInstructionArguments(instr, count) ->
             sprintf "The instruction %s is missing %i arguments" (atomErrorMsg instr) count
+
         | UnexpectedAtom atom -> "Unexpected " + atomErrorMsg atom
 
 [<Sealed>]
@@ -99,7 +101,7 @@ type SymbolDictionary<'IndexKind, 'T when 'IndexKind :> IndexKinds.Kind> () =
             None
         | true, _ -> Some(fun a -> symbol, a) 
 
-    member this.Add(symbol, item) =
+    member this.Add(symbol, item): (Parser.PositionedAtom -> _ * _) option =
         match symbol with
         | ValueSome symbol -> this.AddNamed(symbol, item)
         | ValueNone -> this.AddAnonymous item; None
@@ -291,7 +293,7 @@ let rec instructions body errors state =
                 | _ ->
                     Error(UnexpectedAtom args.[2])
 
-        let registers iatom body =
+        let registerSymbolList iatom body =
             let rec inner (regs: ImmutableArray<_>.Builder) iatom errors body =
                 match body with
                 | Atom(Parser.Identifier rname) :: remaining ->
@@ -308,12 +310,31 @@ let rec instructions body errors state =
                 | [] -> struct(regs.ToImmutable(), errors)
             inner (ImmutableArray.CreateBuilder()) iatom errors body
 
+        let (|CodeRegister|_|) body =
+            keywordWithSymbol
+                "register"
+                (fun symbol iatom atoms errors state ->
+                    match atoms with
+                    | Atom(Parser.Identifier rt) :: extra -> // TODO: Allow parsing of register flags.
+                        let rt' = Name.ofStr rt
+                        match state.ModuleTypeSignatures.FromSymbol rt' with
+                        | ValueSome rt'' ->
+                            match registers.Add(symbol, { RegisterType = rt''; RegisterFlags = RegisterFlags.None }) with
+                            | None -> [], extraneous extra errors
+                            | Some err -> [], [ DuplicateRegisterSymbol(err iatom) ]
+                        | ValueNone ->
+                            [], [ SymbolNotDefined(rt', iatom) ]
+                    | extra -> [], extraneous extra errors)
+                body
+                errors
+                state
+
         match body with
         | [] ->
             match errors with
-            | [] -> Ok(failwith "TODO: Make code": Code)
+            | [] ->
+                Ok(failwith "TODO: Make code": Code)
             | _ -> Error errors
-        // "register"
         | Atom(Parser.Keyword "nop") :: body' ->
             instrs.Add InstructionSet.Nop
             inner body' errors
@@ -323,10 +344,11 @@ let rec instructions body errors state =
             instrs.Add(InstructionSet.Ret ImmutableArray.Empty)
             inner body' errors
         | (Atom(Parser.NestedAtom(Atom(Parser.Keyword "ret") :: rregisters)) as iatom) :: body' ->
-            let struct(regs, errors') = registers iatom rregisters
+            let struct(regs, errors') = registerSymbolList iatom rregisters
             instrs.Add(InstructionSet.Ret regs)
             inner body' errors'
 
+        | CodeRegister(body', errors)
         | Op3 "add" InstructionSet.Add (ValueSome(body', errors)) ->
             inner body' errors
 
