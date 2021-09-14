@@ -107,6 +107,7 @@ module InstructionSet =
         | ``add.ovf`` = 0x24u
         | ``sub.ovf`` = 0x25u
         | ``mul.ovf`` = 0x26u
+        | incr = 0x2Cu
         | ``const.i32`` = 0x30u
         | ``const.i64`` = 0x31u
         | ``const.f32`` = 0x32u

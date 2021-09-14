@@ -5,7 +5,6 @@ open System.Collections.Generic
 open System.Collections.Immutable
 
 open UByte.Format.Model
-open UByte.Format.Model.InstructionSet
 
 type Position = FParsec.Position
 
@@ -235,7 +234,7 @@ let (|ParsedMethodSignature|) matom errors state atoms =
 
 let rec instructions body errors state =
     let registers = SymbolDictionary<IndexKinds.Register, _>()
-    let instrs = ImmutableArray.CreateBuilder<Instruction>()
+    let instrs = ImmutableArray.CreateBuilder<InstructionSet.Instruction>()
 
     let operation name count body args: struct(_ * _) voption =
         match body with
@@ -261,17 +260,19 @@ let rec instructions body errors state =
                 ValueSome(body', [ MissingInstructionArguments(opatom, extra) ])
         | _ -> ValueNone
 
-    /// Takes a single register as an argument.
-    let (|SingleOp|) name body: struct(_ * _) voption =
-        match body with
-        | Atom(Parser.Keyword op) :: body' when op = name ->
-            ValueSome(body', failwith "TODO: Error for missing argument")
-        | Atom(Parser.NestedAtom [ Atom(Parser.Keyword op); Atom(Parser.Identifier argr) ]) :: body' when op = name ->
-            failwith "TODO: Hey"
-        | _ -> ValueNone
-
     let rec inner body errors =
-        let (|BinaryOp|) name op body: struct(_ * _) voption =
+        let (|Op1|) name op body =
+            operation name 1 body <| fun iatom args ->
+                match args.[0] with
+                | Atom(Parser.Identifier rname) ->
+                    let rname' = Name.ofStr rname
+                    match registers.FromSymbol rname' with
+                    | ValueSome r' -> Ok(op r')
+                    | ValueNone -> Error(SymbolNotDefined(rname', iatom))
+                | bad ->
+                    Error(UnexpectedAtom bad)
+
+        let (|Op3|) name op body =
             operation name 3 body <| fun iatom args ->
                 match args with
                 | [| Atom(Parser.Identifier xr); Atom(Parser.Identifier yr); Atom(Parser.Identifier rr) |] ->
@@ -290,6 +291,23 @@ let rec instructions body errors state =
                 | _ ->
                     Error(UnexpectedAtom args.[2])
 
+        let registers iatom body =
+            let rec inner (regs: ImmutableArray<_>.Builder) iatom errors body =
+                match body with
+                | Atom(Parser.Identifier rname) :: remaining ->
+                    let rname' = Name.ofStr rname
+                    let errors' =
+                        match registers.FromSymbol rname' with
+                        | ValueSome r ->
+                            regs.Add r
+                            errors
+                        | ValueNone -> SymbolNotDefined(rname', iatom) :: errors
+                    inner regs iatom errors' remaining
+                | bad :: remaining ->
+                    inner regs iatom (UnexpectedAtom bad :: errors) remaining
+                | [] -> struct(regs.ToImmutable(), errors)
+            inner (ImmutableArray.CreateBuilder()) iatom errors body
+
         match body with
         | [] ->
             match errors with
@@ -299,9 +317,20 @@ let rec instructions body errors state =
         | Atom(Parser.Keyword "nop") :: body' ->
             instrs.Add InstructionSet.Nop
             inner body' errors
-        
-        | BinaryOp "add" Add (ValueSome(body', errors)) ->
+        | Atom(Parser.NestedAtom(Atom(Parser.Keyword "nop") :: extra)) :: body' ->
+            inner body' (extraneous extra errors)
+        | Atom(Parser.Keyword "ret") :: body' ->
+            instrs.Add(InstructionSet.Ret ImmutableArray.Empty)
             inner body' errors
+        | (Atom(Parser.NestedAtom(Atom(Parser.Keyword "ret") :: rregisters)) as iatom) :: body' ->
+            let struct(regs, errors') = registers iatom rregisters
+            instrs.Add(InstructionSet.Ret regs)
+            inner body' errors'
+
+        | Op3 "add" InstructionSet.Add (ValueSome(body', errors)) ->
+            inner body' errors
+
+        //| Op1 "incr"
 
         | (Atom(Parser.Keyword unknown) as op) :: body'
         | (Atom(Parser.NestedAtom(Atom(Parser.Keyword unknown) :: _)) as op) :: body' ->
