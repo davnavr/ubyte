@@ -86,8 +86,10 @@ type AssemblerError =
 
 [<Sealed>]
 type SymbolDictionary<'IndexKind, 'T when 'IndexKind :> IndexKinds.Kind> () =
-    let items = ImmutableArray.CreateBuilder<'T>()
+    let items = List<'T>()
     let symbols = Dictionary<Name, int32>()
+
+    member _.Count = items.Count
 
     member _.AddAnonymous item = items.Add item
 
@@ -110,6 +112,8 @@ type SymbolDictionary<'IndexKind, 'T when 'IndexKind :> IndexKinds.Kind> () =
         match symbols.TryGetValue symbol with
         | true, item -> ValueSome(Index(Checked.uint32 item))
         | false, _ -> ValueNone
+
+    member _.GetEnumerator() = items.GetEnumerator()
 
 [<NoComparison; NoEquality>]
 type State =
@@ -333,7 +337,13 @@ let rec instructions body errors state =
         | [] ->
             match errors with
             | [] ->
-                Ok(failwith "TODO: Make code": Code)
+                { Code.RegisterTypes =
+                    let rtypes = ImmutableArray.CreateBuilder<struct(_ * _)>(registers.Count)
+                    // TODO: Optimize by increasting count uint32 for registers instead of adding them one to one.
+                    for register in registers do rtypes.Add(1u, register)
+                    rtypes.ToImmutable()
+                  Instructions = instrs.ToImmutable() }
+                |> Ok
             | _ -> Error errors
         | Atom(Parser.Keyword "nop") :: body' ->
             instrs.Add InstructionSet.Nop
