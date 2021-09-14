@@ -52,7 +52,7 @@ type AssemblerError =
         | DuplicateModuleVersion { Parser.Position = pos } ->
             sprintf "Duplicate module version at %O" pos
         | SymbolNotDefined(symbol, atom) ->
-            sprintf "The symbol %O in %s is not defined" symbol (atomErrorMsg atom)
+            sprintf "The symbol $%O in %s is not defined" symbol (atomErrorMsg atom)
         | EmptyIdentifierEntry atom ->
             atomErrorMsg atom +
             "is not a valid identifier, identifiers should be of the form (identifier $my_name_symbol \"MyName\") or " +
@@ -72,13 +72,13 @@ type AssemblerError =
             atomErrorMsg atom + " is an invalid method signature, method signatures are of the form (method (returns "
             + "$my_return_type_1 $my_return_type_2) (parameters $my_param_type_1 $my_param_type_2)"
         | DuplicateSignatureSymbol(symbol, { Parser.Position = pos }) ->
-            sprintf "Duplicate symbol at %O, a type or method signature corresponding to the symbol $%O already exists" symbol pos
+            sprintf "Duplicate symbol at %O, a type or method signature corresponding to the symbol $%O already exists" pos symbol
         | UnknownInstruction(name, instr) ->
             sprintf "%s is an unknown instruction, \"%s\" does not refer to any valid instruction" (atomErrorMsg instr) name
         | InvalidInstruction instr ->
             atomErrorMsg instr + " is not a valid instruction"
         | DuplicateCodeSymbol(symbol, { Parser.Position = pos }) ->
-            sprintf "Duplicate symbol at %O, a code block corresponding to the symbol $%O already exists" symbol pos
+            sprintf "Duplicate symbol at %O, a code block corresponding to the symbol $%O already exists" pos symbol
         | MissingInstructionArguments(instr, count) ->
             sprintf "The instruction %s is missing %i arguments" (atomErrorMsg instr) count
         | UnexpectedAtom atom -> "Unexpected " + atomErrorMsg atom
@@ -124,10 +124,8 @@ let inline (|Atom|) { Parser.Atom = atom } = atom
 
 type ExpressionParserResult = System.ValueTuple<Parser.PositionedAtom list, AssemblerError list>
 
-let rec extraneous atoms errors =
-    match atoms with
-    | [] -> List.rev errors
-    | extra :: remaining -> extraneous remaining (UnexpectedAtom extra :: errors)
+let extraneous atoms errors =
+    Seq.fold (fun errors extra -> UnexpectedAtom extra :: errors) errors atoms
 
 let keyword name contents atoms (errors: AssemblerError list) (state: State): ExpressionParserResult option =
     let contents' watom nested atoms': struct(_ * _) option =
@@ -239,28 +237,28 @@ let rec instructions body errors state =
     let registers = SymbolDictionary<IndexKinds.Register, _>()
     let instrs = ImmutableArray.CreateBuilder<Instruction>()
 
-    let operation name count body errors args: struct(_ * _) voption =
+    let operation name count body args: struct(_ * _) voption =
         match body with
         | Atom(Parser.Keyword op) :: body' when op = name ->
-            ValueSome(body', failwith "TODO: Error for missing argument" :: errors)
+            ValueSome(body', [ failwith "TODO: Error for missing argument" ])
         | Atom(Parser.NestedAtom(Atom(Parser.Keyword op) :: arguments)) as opatom :: body' when op = name ->
             let arguments' = List.toArray arguments
             let extra = count - arguments'.Length
             if arguments'.Length >= count then
-                match args arguments' with
+                match args opatom arguments' with
                 | Ok instr ->
                     instrs.Add instr
 
                     let errors' =
                         if arguments'.Length = count
-                        then errors
-                        else extraneous (List.skip extra arguments) errors
+                        then []
+                        else extraneous (List.skip extra arguments) []
 
                     ValueSome(body', errors')
                 | Error err ->
-                    ValueSome(body', err :: errors)
+                    ValueSome(body', [ err ])
             else
-                ValueSome(body', MissingInstructionArguments(opatom, extra) :: errors)
+                ValueSome(body', [ MissingInstructionArguments(opatom, extra) ])
         | _ -> ValueNone
 
     /// Takes a single register as an argument.
@@ -273,6 +271,25 @@ let rec instructions body errors state =
         | _ -> ValueNone
 
     let rec inner body errors =
+        let (|BinaryOp|) name op body: struct(_ * _) voption =
+            operation name 3 body <| fun iatom args ->
+                match args with
+                | [| Atom(Parser.Identifier xr); Atom(Parser.Identifier yr); Atom(Parser.Identifier rr) |] ->
+                    let xr' = Name.ofStr xr
+                    let yr' = Name.ofStr yr
+                    let rr' = Name.ofStr rr
+                    match registers.FromSymbol xr', registers.FromSymbol yr', registers.FromSymbol rr' with
+                    | ValueSome x, ValueSome y, ValueSome r -> Ok(op(x, y, r))
+                    | ValueNone, _, _ -> Error(SymbolNotDefined(xr', iatom))
+                    | _, ValueNone, _ -> Error(SymbolNotDefined(yr', iatom))
+                    | _, _, ValueNone -> Error(SymbolNotDefined(rr', iatom))
+                | [| badx; Atom(Parser.Identifier _); Atom(Parser.Identifier _) |] ->
+                    Error(UnexpectedAtom badx)
+                | [| _; bady; Atom(Parser.Identifier _) |] ->
+                    Error(UnexpectedAtom bady)
+                | _ ->
+                    Error(UnexpectedAtom args.[2])
+
         match body with
         | [] ->
             match errors with
@@ -283,6 +300,9 @@ let rec instructions body errors state =
             instrs.Add InstructionSet.Nop
             inner body' errors
         
+        | BinaryOp "add" Add (ValueSome(body', errors)) ->
+            inner body' errors
+
         | (Atom(Parser.Keyword unknown) as op) :: body'
         | (Atom(Parser.NestedAtom(Atom(Parser.Keyword unknown) :: _)) as op) :: body' ->
             inner body' (UnknownInstruction(unknown, op) :: errors)
