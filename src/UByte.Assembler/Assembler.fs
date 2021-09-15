@@ -38,6 +38,7 @@ type AssemblerError =
     | DuplicateMethodSymbol of symbol: Name * method: Parser.PositionedAtom
     | MissingMethodSignature of method: Parser.PositionedAtom
     | MissingMethodKind of method: Parser.PositionedAtom
+    | DuplicateEntryPoint of Parser.PositionedAtom
     | UnexpectedAtom of Parser.PositionedAtom
 
     override this.ToString() =
@@ -103,6 +104,8 @@ type AssemblerError =
         | MissingMethodKind method ->
             atomErrorMsg method + " is missing the method kind, which is of the form (defined $my_method_body) for methods " +
             "with an implementation"
+        | DuplicateEntryPoint { Parser.Position = pos } ->
+            sprintf "Duplicate entry point at %O" pos
         | UnexpectedAtom atom -> "Unexpected " + atomErrorMsg atom
 
 [<Sealed>]
@@ -150,6 +153,7 @@ type MethodLookup () =
     //let imported
 
     member _.AddDefinition(symbol, item) = defined.Add(symbol, item)
+    member _.FindDefinition symbol = defined.FromSymbol symbol
 
 [<NoComparison; NoEquality>]
 type State =
@@ -162,7 +166,8 @@ type State =
       ModuleCode: SymbolDictionary<IndexKinds.Code, Code>
       ModuleNamespaces: Dictionary<string, Code>
       ModuleTypes: TypeDefinitionLookup
-      ModuleMethods: MethodLookup }
+      ModuleMethods: MethodLookup
+      ModuleEntryPoint: MethodIndex voption ref }
 
 let inline (|Atom|) { Parser.Atom = atom } = atom
 
@@ -599,7 +604,8 @@ let assemble atoms =
           ModuleCode = SymbolDictionary()
           ModuleNamespaces = Dictionary()
           ModuleTypes = TypeDefinitionLookup()
-          ModuleMethods = MethodLookup() }
+          ModuleMethods = MethodLookup()
+          ModuleEntryPoint = ref ValueNone }
 
     match atoms with
     | Atom(Parser.Keyword "module") :: contents ->
@@ -732,6 +738,14 @@ let assemble atoms =
             | Atom(Parser.Keyword "name") as name :: atoms'
             | Atom(Parser.NestedAtom(Atom(Parser.Keyword "name") as name :: _)) :: atoms' ->
                 inner atoms' (MissingModuleName name :: errors)
+            | Atom(Parser.NestedAtom(Atom(Parser.Keyword "entrypoint") :: Atom(Parser.Identifier epoint) :: extra)) as eatom :: atoms' ->
+                let epoint' = Name.ofStr epoint
+                match state.ModuleEntryPoint.contents, state.ModuleMethods.FindDefinition epoint' with
+                | ValueNone, ValueSome entryi ->
+                    state.ModuleEntryPoint.contents <- ValueSome entryi
+                    inner atoms' (extraneous extra errors)
+                | _ ->
+                    inner atoms' (DuplicateEntryPoint eatom :: errors)
             | unknown :: remaining ->
                 inner remaining (UnexpectedAtom unknown :: errors)
             | [] -> errors
