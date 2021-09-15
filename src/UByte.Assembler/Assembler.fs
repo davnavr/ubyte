@@ -550,7 +550,29 @@ let assemble atoms =
 
                         let rec inner types errors =
                             match types with
-                            //| "name" // TODO: allow list of string literals
+                            | Atom(Parser.Keyword "name") :: remaining ->
+                                nname <- ValueSome ImmutableArray.Empty
+                                inner remaining errors
+                            | (Atom(Parser.NestedAtom(Atom(Parser.Keyword "name") :: names)) as natom) :: remaining ->
+                                let rec nloop (builder: ImmutableArray<_>.Builder) names =
+                                    match names with
+                                    | Atom(Parser.Identifier ni) :: names' ->
+                                        let ni' = Name.ofStr ni
+                                        match state.ModuleIdentifiers.FromSymbol ni' with
+                                        | ValueSome n ->
+                                            builder.Add n
+                                            nloop builder names'
+                                        | ValueNone ->
+                                            Some(SymbolNotDefined(ni', natom))
+                                    | bad :: _ ->
+                                        Some(UnexpectedAtom bad)
+                                    | [] ->
+                                        nname <- ValueSome(builder.ToImmutable())
+                                        None
+
+                                match nloop (ImmutableArray.CreateBuilder()) names with
+                                | None -> inner remaining errors
+                                | Some err -> inner remaining (err :: errors)
                             | ModuleTypeDefinition errors state (ValueSome(ValueSome t, errors')) :: remaining ->
                                 types'.Add t
                                 inner remaining errors'
