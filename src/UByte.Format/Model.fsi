@@ -498,6 +498,9 @@ type Module =
       EntryPoint: LengthEncoded<MethodIndex voption>
       Debug: LengthEncoded<Debug> }
 
+    ///// A LEB128 unsigned integer preceding the header indicating the number of data vectors that follow.
+    //member DataVectorCount: uvarint
+
     member Endianness : Endianness
 
 [<RequireQualifiedAccess>]

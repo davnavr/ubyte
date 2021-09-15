@@ -32,6 +32,9 @@ type AssemblerError =
     | DuplicateCodeSymbol of symbol: Name * code: Parser.PositionedAtom
     | MissingInstructionArguments of instruction: Parser.PositionedAtom * count: int32
     | DuplicateRegisterSymbol of symbol: Name * register: Parser.PositionedAtom
+    | DuplicateTypeSymbol of symbol: Name * Parser.PositionedAtom
+    | MissingTypeKind of Parser.PositionedAtom
+    | InvalidVisibility of visibility: Parser.PositionedAtom
     | UnexpectedAtom of Parser.PositionedAtom
 
     override this.ToString() =
@@ -81,7 +84,15 @@ type AssemblerError =
             sprintf "Duplicate symbol at %O, a code block corresponding to the symbol $%O already exists" pos symbol
         | MissingInstructionArguments(instr, count) ->
             sprintf "The instruction %s is missing %i arguments" (atomErrorMsg instr) count
-
+        | DuplicateRegisterSymbol(symbol, { Parser.Position = pos }) ->
+            sprintf "Duplicate symbol at %O, a register corresponding to the symbol $%O already exists in this code" pos symbol
+        | DuplicateTypeSymbol(symbol, { Parser.Position = pos }) ->
+            sprintf "Duplicate symbol at %O, a type definition corresponding to the symbol $%O already exists" pos symbol
+        | MissingTypeKind atom ->
+            atomErrorMsg atom + "is missing a type kind, specifiy the kind of the type with (class), (struct), or (interface)"
+        | InvalidVisibility atom ->
+            atomErrorMsg atom + " is not a valid visibility value, a valid visibility value is of the form (visibility public)" +
+            ", (visibility private), or (visibility unspecified)"
         | UnexpectedAtom atom -> "Unexpected " + atomErrorMsg atom
 
 [<Sealed>]
@@ -115,15 +126,24 @@ type SymbolDictionary<'IndexKind, 'T when 'IndexKind :> IndexKinds.Kind> () =
 
     member _.GetEnumerator() = items.GetEnumerator()
 
+[<Sealed>]
+type TypeDefinitionLookup () =
+    let defined = SymbolDictionary<IndexKinds.TypeDefinition, TypeDefinition>()
+    //let imported = SymbolDictionary<IndexKinds.TypeDefinition, TypeDefinitionImport>()
+
+    member _.AddDefinition(symbol, item) = defined.Add(symbol, item)
+
 [<NoComparison; NoEquality>]
 type State =
     { ModuleFormatVersion: VersionNumbers voption ref
       mutable ModuleHeaderName: Name voption
       ModuleHeaderVersion: VersionNumbers voption ref
-      ModuleIdentifiers: SymbolDictionary<IndexKinds.Identifier, Name>
+      ModuleIdentifiers: SymbolDictionary<IndexKinds.Identifier, string>
       ModuleTypeSignatures: SymbolDictionary<IndexKinds.TypeSignature, AnyType>
       ModuleMethodSignatures: SymbolDictionary<IndexKinds.MethodSignature, MethodSignature>
-      ModuleCode: SymbolDictionary<IndexKinds.Code, Code> }
+      ModuleCode: SymbolDictionary<IndexKinds.Code, Code>
+      ModuleNamespaces: Dictionary<string, Code>
+      ModuleTypes: TypeDefinitionLookup }
 
 let inline (|Atom|) { Parser.Atom = atom } = atom
 
@@ -372,6 +392,74 @@ let rec instructions body errors state =
 
     inner body errors
 
+let (|ParsedVisibility|) flags contents =
+    let inline setVisibilityFlags vis vatom contents' =
+        match flags.contents with
+        | ValueNone ->
+            flags.contents <- ValueSome vis
+            ValueSome(None, contents')
+        | ValueSome _ ->
+            ValueSome(Some(UnexpectedAtom vatom), contents')
+
+    match contents with
+    | (Atom(Parser.Keyword "visibility")) as vatom :: contents' ->
+        setVisibilityFlags VisibilityFlags.Unspecified vatom contents'
+    | (Atom(Parser.NestedAtom(Atom(Parser.Keyword "visibility") :: flags)) as vatom) :: contents' ->
+        let inline ok flags = setVisibilityFlags flags vatom contents'
+        match flags with
+        | [ Atom(Parser.Keyword "public") ] -> ok VisibilityFlags.Public
+        | [ Atom(Parser.Keyword "private") ] -> ok VisibilityFlags.Private
+        | [ Atom(Parser.Keyword "unspecified") ] -> ok VisibilityFlags.Unspecified
+        | _ -> ValueSome(Some(InvalidVisibility vatom), contents')
+    | _ ->
+        ValueNone
+
+let rec (|ModuleTypeDefinition|) errors state tatom: struct(TypeDefinition voption * _) voption =
+    match tatom with
+    | Atom(Parser.NestedAtom(Atom(Parser.Keyword "type") :: contents)) ->
+        // perfect place where Computation Expression would be great
+        // TODO: Get symbol
+        let symbol, contents' =
+            match contents with
+            | Atom(Parser.Identifier symbol) :: contents' -> ValueSome symbol, contents'
+            | _ -> ValueNone, contents
+
+        let mutable name, tkind = ValueNone, ValueNone
+        let vflags = ref ValueNone
+
+        let rec inner contents errors =
+            match contents with
+            | (Atom(Parser.NestedAtom(Atom(Parser.Keyword "name") :: Atom(Parser.StringLiteral name') :: extra)) as natom) :: remaining ->
+                match name with
+                | ValueNone ->
+                    name <- ValueSome name'
+                    inner remaining (extraneous extra errors)
+                | ValueSome _ ->
+                    inner remaining (UnexpectedAtom natom :: errors)
+            | ParsedVisibility vflags (ValueSome(result, remaining)) ->
+                match result with
+                | None -> inner remaining errors
+                | Some err -> inner remaining (err :: errors)
+            // TODO: Read type kind (class base abstract)
+
+            // TODO: Read methods and fields
+            | bad :: remaining ->
+                inner remaining (UnexpectedAtom bad :: errors)
+            | [] -> errors
+
+
+        let errors' = inner contents' errors
+
+        match tkind with
+        | ValueSome tkind' ->
+            failwith "bad"
+        | ValueNone ->
+            ValueSome(ValueNone, errors')
+    | Atom(Parser.NestedAtom(Atom(Parser.Keyword "type") :: _))
+    | Atom(Parser.Keyword "type") ->
+        failwith "TODO: Error for bad type (empty)"
+    | _ -> ValueNone
+
 let assemble atoms =
     let state =
         { ModuleFormatVersion = ref ValueNone
@@ -380,7 +468,9 @@ let assemble atoms =
           ModuleIdentifiers = SymbolDictionary()
           ModuleTypeSignatures = SymbolDictionary()
           ModuleMethodSignatures = SymbolDictionary()
-          ModuleCode = SymbolDictionary() }
+          ModuleCode = SymbolDictionary()
+          ModuleNamespaces = Dictionary()
+          ModuleTypes = TypeDefinitionLookup() }
 
     match atoms with
     | Atom(Parser.Keyword "module") :: contents ->
@@ -402,7 +492,7 @@ let assemble atoms =
                     (fun symbol iatom atoms errors state ->
                         match atoms with
                         | ParsedIdentifier(ValueSome name) :: extra ->
-                            match state.ModuleIdentifiers.Add(symbol, name) with
+                            match state.ModuleIdentifiers.Add(symbol, string name) with
                             | None -> struct([], extraneous extra errors)
                             | Some err -> struct([], DuplicateIdentifierSymbol(err iatom) :: errors)
                         | ParsedIdentifier ValueNone :: _
@@ -451,12 +541,37 @@ let assemble atoms =
                     errors
                     state
 
+            let inline (|ModuleNamespace|_|) atoms =
+                keyword
+                    "namespace"
+                    (fun natom types errors state ->
+                        let mutable nname = ValueNone
+                        let types' = ImmutableArray.CreateBuilder()
+
+                        let rec inner types errors =
+                            match types with
+                            //| "name" // TODO: allow list of string literals
+                            | ModuleTypeDefinition errors state (ValueSome(ValueSome t, errors')) :: remaining ->
+                                types'.Add t
+                                inner remaining errors'
+                            | ModuleTypeDefinition errors state (ValueSome(ValueNone, errors')) :: remaining ->
+                                inner remaining errors'
+                            | bad :: remaining ->
+                                inner remaining (UnexpectedAtom bad :: errors)
+                            | [] -> struct([], errors)
+
+                        inner types errors)
+                    atoms
+                    errors
+                    state
+
             match atoms with
             | VersionField "format" state.ModuleFormatVersion DuplicateFormatVersion (atoms', errors')
             | VersionField "version" state.ModuleHeaderVersion DuplicateModuleVersion (atoms', errors')
-            | ModuleIdentifier (atoms', errors')
-            | ModuleSignature (atoms', errors')
-            | ModuleCode (atoms', errors') ->
+            | ModuleIdentifier(atoms', errors')
+            | ModuleSignature(atoms', errors')
+            | ModuleCode(atoms', errors')
+            | ModuleNamespace(atoms', errors') ->
                 inner atoms' errors'
             | Atom(Parser.NestedAtom(Atom(Parser.Keyword "name") as n :: ParsedIdentifier(ValueSome name) :: extra)) :: atoms' ->
                 match state.ModuleHeaderVersion.contents with
