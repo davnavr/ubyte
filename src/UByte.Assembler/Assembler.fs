@@ -35,6 +35,9 @@ type AssemblerError =
     | DuplicateTypeSymbol of symbol: Name * Parser.PositionedAtom
     | MissingTypeKind of Parser.PositionedAtom
     | InvalidVisibility of visibility: Parser.PositionedAtom
+    | DuplicateMethodSymbol of symbol: Name * method: Parser.PositionedAtom
+    | MissingMethodSignature of method: Parser.PositionedAtom
+    | MissingMethodKind of method: Parser.PositionedAtom
     | UnexpectedAtom of Parser.PositionedAtom
 
     override this.ToString() =
@@ -89,10 +92,17 @@ type AssemblerError =
         | DuplicateTypeSymbol(symbol, { Parser.Position = pos }) ->
             sprintf "Duplicate symbol at %O, a type definition corresponding to the symbol $%O already exists" pos symbol
         | MissingTypeKind atom ->
-            atomErrorMsg atom + "is missing a type kind, specifiy the kind of the type with (class), (struct), or (interface)"
+            atomErrorMsg atom + " is missing a type kind, specifiy the kind of the type with (class), (struct), or (interface)"
         | InvalidVisibility atom ->
             atomErrorMsg atom + " is not a valid visibility value, a valid visibility value is of the form (visibility public)" +
             ", (visibility private), or (visibility unspecified)"
+        | DuplicateMethodSymbol(symbol, { Parser.Position = pos }) ->
+            sprintf "Duplicate symbol at %O, a method corresponding to the symbol $%O already exists" pos symbol
+        | MissingMethodSignature method ->
+            atomErrorMsg method + " is missing the method signature (signature $my_method_signature)"
+        | MissingMethodKind method ->
+            atomErrorMsg method + " is missing the method kind, which is of the form (defined $my_method_body) for methods " +
+            "with an implementation"
         | UnexpectedAtom atom -> "Unexpected " + atomErrorMsg atom
 
 [<Sealed>]
@@ -134,6 +144,13 @@ type TypeDefinitionLookup () =
 
     member _.AddDefinition(symbol, item) = defined.Add(symbol, item)
 
+[<Sealed>]
+type MethodLookup () =
+    let defined = SymbolDictionary<IndexKinds.Method, Method>()
+    //let imported
+
+    member _.AddDefinition(symbol, item) = defined.Add(symbol, item)
+
 [<NoComparison; NoEquality>]
 type State =
     { ModuleFormatVersion: VersionNumbers voption ref
@@ -144,7 +161,8 @@ type State =
       ModuleMethodSignatures: SymbolDictionary<IndexKinds.MethodSignature, MethodSignature>
       ModuleCode: SymbolDictionary<IndexKinds.Code, Code>
       ModuleNamespaces: Dictionary<string, Code>
-      ModuleTypes: TypeDefinitionLookup }
+      ModuleTypes: TypeDefinitionLookup
+      ModuleMethods: MethodLookup }
 
 let inline (|Atom|) { Parser.Atom = atom } = atom
 
@@ -415,37 +433,109 @@ let (|ParsedVisibility|) flags contents =
     | _ ->
         ValueNone
 
-let (|ParsedMethod|) errors state contents =
-    ()
+let (|ParsedName|) rname errors state atoms: struct(_ * _) voption =
+    match atoms with
+    | Atom(Parser.NestedAtom(Atom(Parser.Keyword "name") :: Atom(Parser.Identifier name') :: extra)) as natom :: remaining ->
+        match rname.contents with
+        | ValueNone ->
+            let name' = Name.ofStr name'
+            match state.ModuleIdentifiers.FromSymbol name' with
+            | ValueSome namei ->
+                rname.contents <- ValueSome namei
+                ValueSome(remaining, extraneous extra errors)
+            | ValueNone ->
+                ValueSome(remaining, SymbolNotDefined(name', natom) :: errors)
+        | ValueSome _ -> ValueSome(remaining, UnexpectedAtom natom :: errors)
+    | _ -> ValueNone
 
-let rec (|ModuleTypeDefinition|) errors state tatom: struct(TypeDefinition voption * _) voption =
-    match tatom with
-    | Atom(Parser.NestedAtom(Atom(Parser.Keyword "type") :: contents)) ->
-        // perfect place where Computation Expression would be great
-        // TODO: Get symbol
+let (|ParsedMethod|) errors state contents: struct(Method voption * _ * _) voption =
+    match contents with
+    | (Atom(Parser.NestedAtom(Atom(Parser.Keyword "method") :: contents)) as matom) :: remaining ->
+        // TODO: Avoid code duplication with type definition symbol
         let symbol, contents' =
             match contents with
             | Atom(Parser.Identifier symbol) :: contents' -> ValueSome(Name.ofStr symbol), contents'
             | _ -> ValueNone, contents
 
-        let mutable tname, tkind = ValueNone, ValueNone
-        let vflags = ref ValueNone
+        let mutable mflags, msig, mkind = MethodFlags.Final, ValueNone, ValueNone
+        let mname, vflags = ref ValueNone, ref ValueNone
+
+        let rec inner contents errors =
+            match contents with
+            | ParsedName mname errors state (ValueSome(remaining, errors')) ->
+                inner remaining errors'
+            | ParsedVisibility vflags (ValueSome(result, remaining)) ->
+                match result with
+                | None -> inner remaining errors
+                | Some err -> inner remaining (err :: errors)
+            // TODO: Have loop to parse flags.
+            | Atom(Parser.NestedAtom [ Atom(Parser.Keyword "flags"); Atom(Parser.Keyword "static") ]) :: remaining ->
+                mflags <- mflags ||| MethodFlags.Static
+                inner remaining errors
+            // TODO: Parse signature + identifier to refer to signature
+            | Atom(Parser.NestedAtom [ Atom(Parser.Keyword "signature"); Atom(Parser.Identifier sigid) ]) as satom :: remaining ->
+                let sigid' = Name.ofStr sigid
+                match msig, state.ModuleMethodSignatures.FromSymbol sigid' with
+                | ValueNone, ValueSome sigi ->
+                    msig <- ValueSome sigi
+                    inner remaining errors
+                | _ ->
+                    inner remaining (UnexpectedAtom satom :: errors)
+            // TODO: Parse method type + identifier to refer to method body
+            | Atom(Parser.NestedAtom [ Atom(Parser.Keyword "defined"); Atom(Parser.Identifier bodyid) ]) as mkind' :: remaining ->
+                let bodyid' = Name.ofStr bodyid
+                match mkind, state.ModuleCode.FromSymbol bodyid' with
+                | ValueNone, ValueSome bodyi ->
+                    mkind <- ValueSome(MethodBody.Defined bodyi)
+                    inner remaining errors
+                | _ ->
+                    inner remaining (UnexpectedAtom mkind' :: errors)
+            | bad :: remaining ->
+                inner remaining (UnexpectedAtom bad :: errors)
+            | [] -> errors
+
+        let errors' = inner contents' errors
+
+        match msig, mkind with
+        | ValueSome msig', ValueSome mbody' ->
+            let method =
+                { Method.MethodName =
+                    match mname.contents with
+                    | ValueSome tnamei -> tnamei
+                    | ValueNone -> state.ModuleIdentifiers.AddAnonymous String.Empty
+                  MethodVisibility = ValueOption.defaultValue VisibilityFlags.Private vflags.contents
+                  MethodFlags = mflags
+                  TypeParameters = ImmutableArray.Empty
+                  Signature = msig'
+                  MethodAnnotations = ImmutableArray.Empty
+                  Body = mbody' }
+
+            match state.ModuleMethods.AddDefinition(symbol, method) with
+            | None -> ValueSome(ValueSome method, remaining, errors')
+            | Some err -> ValueSome(ValueNone, remaining, DuplicateMethodSymbol(err matom) :: errors')
+        | ValueNone, _ ->
+            ValueSome(ValueNone, remaining, MissingMethodSignature matom :: errors')
+        | _, ValueNone ->
+            ValueSome(ValueNone, remaining, MissingMethodKind matom :: errors')
+    | _ -> ValueNone
+
+let rec (|ModuleTypeDefinition|) errors state tatom: struct(TypeDefinition voption * _) voption =
+    match tatom with
+    | Atom(Parser.NestedAtom(Atom(Parser.Keyword "type") :: contents)) ->
+        // TODO: Avoid code duplication with method definition symbol
+        let symbol, contents' =
+            match contents with
+            | Atom(Parser.Identifier symbol) :: contents' -> ValueSome(Name.ofStr symbol), contents'
+            | _ -> ValueNone, contents
+
+        let mutable tkind = ValueNone
+        let tname, vflags = ref ValueNone, ref ValueNone
         let fields, methods = ImmutableArray.CreateBuilder(), ImmutableArray.CreateBuilder()
 
         let rec inner contents errors =
             match contents with
-            | Atom(Parser.NestedAtom(Atom(Parser.Keyword "name") :: Atom(Parser.Identifier name') :: extra)) as natom :: remaining ->
-                match tname with
-                | ValueNone ->
-                    let name' = Name.ofStr name'
-                    match state.ModuleIdentifiers.FromSymbol name' with
-                    | ValueSome namei ->
-                        tname <- ValueSome namei
-                        inner remaining (extraneous extra errors)
-                    | ValueNone ->
-                        inner remaining (SymbolNotDefined(name', natom) :: errors)
-                | ValueSome _ ->
-                    inner remaining (UnexpectedAtom natom :: errors)
+            | ParsedName tname errors state (ValueSome(remaining, errors')) ->
+                inner remaining errors'
             | ParsedVisibility vflags (ValueSome(result, remaining)) ->
                 match result with
                 | None -> inner remaining errors
@@ -462,8 +552,10 @@ let rec (|ModuleTypeDefinition|) errors state tatom: struct(TypeDefinition vopti
                         inner remaining (MissingTypeKind katom :: errors)
                 | ValueSome _ ->
                     inner remaining (UnexpectedAtom katom :: errors)
-
-            // TODO: Read methods and fields
+            //| ParsedField
+            | ParsedMethod errors state (ValueSome(method, contents', errors')) ->
+                ValueOption.iter methods.Add method
+                inner contents' errors'
             | bad :: remaining ->
                 inner remaining (UnexpectedAtom bad :: errors)
             | [] -> errors
@@ -474,7 +566,7 @@ let rec (|ModuleTypeDefinition|) errors state tatom: struct(TypeDefinition vopti
         | ValueSome tkind' ->
             let tdef =
                 { TypeDefinition.TypeName =
-                    match tname with
+                    match tname.contents with
                     | ValueSome tnamei -> tnamei
                     | ValueNone -> state.ModuleIdentifiers.AddAnonymous String.Empty
                   TypeVisibility = ValueOption.defaultValue VisibilityFlags.Unspecified vflags.contents
@@ -506,7 +598,8 @@ let assemble atoms =
           ModuleMethodSignatures = SymbolDictionary()
           ModuleCode = SymbolDictionary()
           ModuleNamespaces = Dictionary()
-          ModuleTypes = TypeDefinitionLookup() }
+          ModuleTypes = TypeDefinitionLookup()
+          ModuleMethods = MethodLookup() }
 
     match atoms with
     | Atom(Parser.Keyword "module") :: contents ->
@@ -609,10 +702,8 @@ let assemble atoms =
                                 match nloop (ImmutableArray.CreateBuilder()) names with
                                 | None -> inner remaining errors
                                 | Some err -> inner remaining (err :: errors)
-                            | ModuleTypeDefinition errors state (ValueSome(ValueSome t, errors')) :: remaining ->
-                                types'.Add t
-                                inner remaining errors'
-                            | ModuleTypeDefinition errors state (ValueSome(ValueNone, errors')) :: remaining ->
+                            | ModuleTypeDefinition errors state (ValueSome(t, errors')) :: remaining ->
+                                ValueOption.iter types'.Add t
                                 inner remaining errors'
                             | bad :: remaining ->
                                 inner remaining (UnexpectedAtom bad :: errors)
