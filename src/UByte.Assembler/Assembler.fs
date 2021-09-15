@@ -414,6 +414,9 @@ let (|ParsedVisibility|) flags contents =
     | _ ->
         ValueNone
 
+let (|ParsedMethod|) errors state contents =
+    ()
+
 let rec (|ModuleTypeDefinition|) errors state tatom: struct(TypeDefinition voption * _) voption =
     match tatom with
     | Atom(Parser.NestedAtom(Atom(Parser.Keyword "type") :: contents)) ->
@@ -421,7 +424,7 @@ let rec (|ModuleTypeDefinition|) errors state tatom: struct(TypeDefinition vopti
         // TODO: Get symbol
         let symbol, contents' =
             match contents with
-            | Atom(Parser.Identifier symbol) :: contents' -> ValueSome symbol, contents'
+            | Atom(Parser.Identifier symbol) :: contents' -> ValueSome(Name.ofStr symbol), contents'
             | _ -> ValueNone, contents
 
         let mutable name, tkind = ValueNone, ValueNone
@@ -429,7 +432,7 @@ let rec (|ModuleTypeDefinition|) errors state tatom: struct(TypeDefinition vopti
 
         let rec inner contents errors =
             match contents with
-            | (Atom(Parser.NestedAtom(Atom(Parser.Keyword "name") :: Atom(Parser.StringLiteral name') :: extra)) as natom) :: remaining ->
+            | Atom(Parser.NestedAtom(Atom(Parser.Keyword "name") :: Atom(Parser.StringLiteral name') :: extra)) as natom :: remaining ->
                 match name with
                 | ValueNone ->
                     name <- ValueSome name'
@@ -440,7 +443,18 @@ let rec (|ModuleTypeDefinition|) errors state tatom: struct(TypeDefinition vopti
                 match result with
                 | None -> inner remaining errors
                 | Some err -> inner remaining (err :: errors)
-            // TODO: Read type kind (class base abstract)
+            | Atom(Parser.NestedAtom(Atom(Parser.Keyword "class") :: attributes)) as katom :: remaining ->
+                match tkind with
+                | ValueNone ->
+                    match attributes with
+                    // TODO: Account for other type kind flags for classes
+                    | [ Atom(Parser.Keyword "base"); Atom(Parser.Keyword "abstract") ] ->
+                        tkind <- ValueSome(TypeDefinitionKind.Class(ValueNone, ClassDefinitionFlags.Abstract))
+                        inner remaining errors
+                    | _ ->
+                        inner remaining (MissingTypeKind katom :: errors)
+                | ValueSome _ ->
+                    inner remaining (UnexpectedAtom katom :: errors)
 
             // TODO: Read methods and fields
             | bad :: remaining ->
@@ -452,7 +466,11 @@ let rec (|ModuleTypeDefinition|) errors state tatom: struct(TypeDefinition vopti
 
         match tkind with
         | ValueSome tkind' ->
-            failwith "bad"
+            let tdef = failwith "bad": TypeDefinition
+
+            match state.ModuleTypes.AddDefinition(symbol, tdef) with
+            | None -> ValueSome(ValueSome tdef, errors')
+            | Some err -> ValueSome(ValueNone, DuplicateTypeSymbol(err tatom) :: errors')
         | ValueNone ->
             ValueSome(ValueNone, errors')
     | Atom(Parser.NestedAtom(Atom(Parser.Keyword "type") :: _))
