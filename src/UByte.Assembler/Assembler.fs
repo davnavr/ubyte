@@ -102,22 +102,23 @@ type SymbolDictionary<'IndexKind, 'T when 'IndexKind :> IndexKinds.Kind> () =
 
     member _.Count = items.Count
 
-    member _.AddAnonymous item = items.Add item
+    member _.AddAnonymous item: Index<'IndexKind> =
+        let i = items.Count
+        items.Add item
+        Index(uint32 i)
 
     member this.AddNamed(symbol, item) =
-        let i = items.Count
-
         match symbols.TryGetValue symbol with
         | false, _ ->
-            symbols.Add(symbol, i)
-            this.AddAnonymous item
+            let (Index i) = this.AddAnonymous item
+            symbols.Add(symbol, Checked.int32 i)
             None
         | true, _ -> Some(fun a -> symbol, a) 
 
     member this.Add(symbol, item): (Parser.PositionedAtom -> _ * _) option =
         match symbol with
         | ValueSome symbol -> this.AddNamed(symbol, item)
-        | ValueNone -> this.AddAnonymous item; None
+        | ValueNone -> this.AddAnonymous item |> ignore; None
 
     member _.FromSymbol symbol: Index<'IndexKind> voption =
         match symbols.TryGetValue symbol with
@@ -427,16 +428,22 @@ let rec (|ModuleTypeDefinition|) errors state tatom: struct(TypeDefinition vopti
             | Atom(Parser.Identifier symbol) :: contents' -> ValueSome(Name.ofStr symbol), contents'
             | _ -> ValueNone, contents
 
-        let mutable name, tkind = ValueNone, ValueNone
+        let mutable tname, tkind = ValueNone, ValueNone
         let vflags = ref ValueNone
+        let fields, methods = ImmutableArray.CreateBuilder(), ImmutableArray.CreateBuilder()
 
         let rec inner contents errors =
             match contents with
-            | Atom(Parser.NestedAtom(Atom(Parser.Keyword "name") :: Atom(Parser.StringLiteral name') :: extra)) as natom :: remaining ->
-                match name with
+            | Atom(Parser.NestedAtom(Atom(Parser.Keyword "name") :: Atom(Parser.Identifier name') :: extra)) as natom :: remaining ->
+                match tname with
                 | ValueNone ->
-                    name <- ValueSome name'
-                    inner remaining (extraneous extra errors)
+                    let name' = Name.ofStr name'
+                    match state.ModuleIdentifiers.FromSymbol name' with
+                    | ValueSome namei ->
+                        tname <- ValueSome namei
+                        inner remaining (extraneous extra errors)
+                    | ValueNone ->
+                        inner remaining (SymbolNotDefined(name', natom) :: errors)
                 | ValueSome _ ->
                     inner remaining (UnexpectedAtom natom :: errors)
             | ParsedVisibility vflags (ValueSome(result, remaining)) ->
@@ -461,12 +468,23 @@ let rec (|ModuleTypeDefinition|) errors state tatom: struct(TypeDefinition vopti
                 inner remaining (UnexpectedAtom bad :: errors)
             | [] -> errors
 
-
         let errors' = inner contents' errors
 
         match tkind with
         | ValueSome tkind' ->
-            let tdef = failwith "bad": TypeDefinition
+            let tdef =
+                { TypeDefinition.TypeName =
+                    match tname with
+                    | ValueSome tnamei -> tnamei
+                    | ValueNone -> state.ModuleIdentifiers.AddAnonymous String.Empty
+                  TypeVisibility = ValueOption.defaultValue VisibilityFlags.Unspecified vflags.contents
+                  TypeKind = tkind'
+                  TypeLayout = TypeDefinitionLayout.Unspecified // TODO: Implement parsing of (layout flags)
+                  ImplementedInterfaces = ImmutableArray.Empty
+                  TypeParameters = ImmutableArray.Empty
+                  TypeAnnotations = ImmutableArray.Empty
+                  Fields = fields.ToImmutable()
+                  Methods = methods.ToImmutable() }
 
             match state.ModuleTypes.AddDefinition(symbol, tdef) with
             | None -> ValueSome(ValueSome tdef, errors')
