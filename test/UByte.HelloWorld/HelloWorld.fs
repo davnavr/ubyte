@@ -20,7 +20,7 @@ let program =
           PointerSize = PointerSize.Unspecified }
       Identifiers =
         let identifiers =
-            Array.map Name.ofStr [|
+            [|
                 "Example"
                 "HelloWorld"
                 "main"

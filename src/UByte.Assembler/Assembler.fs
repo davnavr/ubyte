@@ -16,7 +16,7 @@ type AssemblerError =
     | ExpectedKeyword of expected: string * actual: Parser.PositionedAtom option
     | DuplicateFormatVersion of duplicate: Parser.PositionedAtom
     | InvalidVersionNumber of number: Parser.PositionedAtom
-    | MissingModuleName of name: Parser.PositionedAtom
+    | MissingModuleName of name: Parser.PositionedAtom voption
     | DuplicateModuleName of duplicate: Parser.PositionedAtom
     | DuplicateModuleVersion of duplicate: Parser.PositionedAtom
     | SymbolNotDefined of symbol: Name * Parser.PositionedAtom
@@ -39,6 +39,7 @@ type AssemblerError =
     | MissingMethodSignature of method: Parser.PositionedAtom
     | MissingMethodKind of method: Parser.PositionedAtom
     | DuplicateEntryPoint of Parser.PositionedAtom
+    | InvalidEntryPoint of Parser.PositionedAtom
     | UnexpectedAtom of Parser.PositionedAtom
 
     override this.ToString() =
@@ -53,7 +54,8 @@ type AssemblerError =
             atomErrorMsg atom
             + "is not a valid version number, versions are specified as a list of positive integers"
         | MissingModuleName atom ->
-            atomErrorMsg atom + "is missing the module name, module names are of the form (name \"my.module.name\")"
+            (ValueOption.map atomErrorMsg atom |> ValueOption.defaultValue "The module") +
+            " is missing the module name, module names are of the form (name \"my.module.name\")"
         | DuplicateModuleName { Parser.Position = pos } ->
             sprintf "Duplicate module name at %O" pos
         | DuplicateModuleVersion { Parser.Position = pos } ->
@@ -106,11 +108,13 @@ type AssemblerError =
             "with an implementation"
         | DuplicateEntryPoint { Parser.Position = pos } ->
             sprintf "Duplicate entry point at %O" pos
+        | InvalidEntryPoint atom ->
+            atomErrorMsg atom + " is not a valid entry point, specify the entry point with (entrypoint $my_main_method)"
         | UnexpectedAtom atom -> "Unexpected " + atomErrorMsg atom
 
 [<Sealed>]
 type SymbolDictionary<'IndexKind, 'T when 'IndexKind :> IndexKinds.Kind> () =
-    let items = List<'T>()
+    let items = ImmutableArray.CreateBuilder<'T>()
     let symbols = Dictionary<Name, int32>()
 
     member _.Count = items.Count
@@ -138,6 +142,8 @@ type SymbolDictionary<'IndexKind, 'T when 'IndexKind :> IndexKinds.Kind> () =
         | true, item -> ValueSome(Index(Checked.uint32 item))
         | false, _ -> ValueNone
 
+    member _.ToVector(): vector<'T> = items.ToImmutable()
+
     member _.GetEnumerator() = items.GetEnumerator()
 
 [<Sealed>]
@@ -155,6 +161,52 @@ type MethodLookup () =
     member _.AddDefinition(symbol, item) = defined.Add(symbol, item)
     member _.FindDefinition symbol = defined.FromSymbol symbol
 
+[<Struct>]
+type NamespaceLookupEnumerator =
+    val mutable private enumerator: Dictionary<vector<IdentifierIndex>, ImmutableArray<TypeDefinition>.Builder * ImmutableArray<TypeAlias>.Builder>.Enumerator
+
+    new (lookup: Dictionary<_, _>) = { enumerator = lookup.GetEnumerator() }
+
+    member this.Current =
+        let (KeyValue(ns, (tdefs, taliases))) = this.enumerator.Current
+        { Namespace.NamespaceName = ns
+          TypeDefinitions = tdefs.ToImmutable()
+          TypeAliases = taliases.ToImmutable() }
+
+    member this.MoveNext() = this.enumerator.MoveNext()
+    
+    interface IEnumerator<Namespace> with
+        member this.Current = this.Current
+        member this.Current = this.Current :> obj
+        member this.MoveNext() = this.MoveNext()
+        member this.Reset() = (this.enumerator :> IEnumerator<_>).Reset()
+        member this.Dispose() = this.enumerator.Dispose()
+
+[<Sealed>]
+type NamespaceLookup () =
+    let namespaces = Dictionary<ImmutableArray<_>, ImmutableArray<TypeDefinition>.Builder * ImmutableArray<TypeAlias>.Builder> LanguagePrimitives.FastGenericEqualityComparer
+
+    member _.Count = namespaces.Count
+
+    member private _.GetNamespace ns =
+        match namespaces.TryGetValue ns with
+        | true, existing -> existing
+        | false, _ ->
+            let lists = ImmutableArray.CreateBuilder(), ImmutableArray.CreateBuilder()
+            namespaces.Add(ns, lists)
+            lists
+
+    member this.AddDefinition(ns, tdef) = (fst(this.GetNamespace ns)).Add tdef
+
+    //member _.AddAlias
+
+    member _.GetEnumerator() = new NamespaceLookupEnumerator(namespaces)
+
+    interface IReadOnlyCollection<Namespace> with
+        member this.Count = this.Count
+        member this.GetEnumerator() = this.GetEnumerator() :> IEnumerator<_>
+        member this.GetEnumerator() = this.GetEnumerator() :> System.Collections.IEnumerator
+
 [<NoComparison; NoEquality>]
 type State =
     { ModuleFormatVersion: VersionNumbers voption ref
@@ -164,7 +216,7 @@ type State =
       ModuleTypeSignatures: SymbolDictionary<IndexKinds.TypeSignature, AnyType>
       ModuleMethodSignatures: SymbolDictionary<IndexKinds.MethodSignature, MethodSignature>
       ModuleCode: SymbolDictionary<IndexKinds.Code, Code>
-      ModuleNamespaces: Dictionary<string, Code>
+      ModuleNamespaces: NamespaceLookup
       ModuleTypes: TypeDefinitionLookup
       ModuleMethods: MethodLookup
       ModuleEntryPoint: MethodIndex voption ref }
@@ -602,7 +654,7 @@ let assemble atoms =
           ModuleTypeSignatures = SymbolDictionary()
           ModuleMethodSignatures = SymbolDictionary()
           ModuleCode = SymbolDictionary()
-          ModuleNamespaces = Dictionary()
+          ModuleNamespaces = NamespaceLookup()
           ModuleTypes = TypeDefinitionLookup()
           ModuleMethods = MethodLookup()
           ModuleEntryPoint = ref ValueNone }
@@ -729,7 +781,7 @@ let assemble atoms =
             | ModuleNamespace(atoms', errors') ->
                 inner atoms' errors'
             | Atom(Parser.NestedAtom(Atom(Parser.Keyword "name") as n :: ParsedIdentifier(ValueSome name) :: extra)) :: atoms' ->
-                match state.ModuleHeaderVersion.contents with
+                match state.ModuleHeaderName with
                 | ValueNone ->
                     state.ModuleHeaderName <- ValueSome name
                     inner atoms' (extraneous extra errors)
@@ -737,7 +789,7 @@ let assemble atoms =
                     inner atoms' (DuplicateModuleName n :: errors)
             | Atom(Parser.Keyword "name") as name :: atoms'
             | Atom(Parser.NestedAtom(Atom(Parser.Keyword "name") as name :: _)) :: atoms' ->
-                inner atoms' (MissingModuleName name :: errors)
+                inner atoms' (MissingModuleName(ValueSome name) :: errors)
             | Atom(Parser.NestedAtom(Atom(Parser.Keyword "entrypoint") :: Atom(Parser.Identifier epoint) :: extra)) as eatom :: atoms' ->
                 let epoint' = Name.ofStr epoint
                 match state.ModuleEntryPoint.contents, state.ModuleMethods.FindDefinition epoint' with
@@ -746,13 +798,38 @@ let assemble atoms =
                     inner atoms' (extraneous extra errors)
                 | _ ->
                     inner atoms' (DuplicateEntryPoint eatom :: errors)
+            | Atom(Parser.NestedAtom(Atom(Parser.Keyword "entrypoint") :: _)) as eatom :: atoms' ->
+                inner atoms' (InvalidEntryPoint eatom :: errors)
             | unknown :: remaining ->
                 inner remaining (UnexpectedAtom unknown :: errors)
             | [] -> errors
 
-        match inner contents List.empty with
-        | [] ->
-            Ok(failwith "TODO: Make module": Module)
-        | errors -> Error errors
+        let errors' = inner contents List.empty
+
+        match state.ModuleHeaderName, errors' with
+        | ValueSome mname, [] ->
+            { Module.Magic = magic
+              FormatVersion = VersionNumbers.ofValueOption state.ModuleFormatVersion.contents
+              Header =
+                { ModuleHeader.Module =
+                    { ModuleIdentifier.ModuleName = mname
+                      Version = VersionNumbers.ofValueOption state.ModuleHeaderVersion.contents }
+                  Flags = ModuleHeaderFlags.LittleEndian
+                  PointerSize = PointerSize.Unspecified }
+              Identifiers = { IdentifierSection.Identifiers = state.ModuleIdentifiers.ToVector() }
+              Imports = ImmutableArray.Empty
+              TypeSignatures = state.ModuleTypeSignatures.ToVector()
+              MethodSignatures = state.ModuleMethodSignatures.ToVector()
+              Data = ImmutableArray.Empty
+              Code = state.ModuleCode.ToVector()
+              Namespaces = ImmutableArray.CreateRange state.ModuleNamespaces
+              EntryPoint = state.ModuleEntryPoint.contents
+              Debug = () }
+            |> Ok
+        | ValueNone, errors ->
+            if state.ModuleHeaderName.IsSome then failwith "uh oh"
+            Error(MissingModuleName ValueNone :: errors)
+        | _, (_ :: _ as errors) ->
+            Error errors
     | _ ->
         Error [ ExpectedKeyword("module", List.tryHead atoms) ]

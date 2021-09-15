@@ -185,9 +185,9 @@ module InstructionSet =
 
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
 type IdentifierSection = // TODO: Rename to something else
-    { Identifiers: vector<Name> }
+    { Identifiers: vector<string> }
 
-    member Item : index: IdentifierIndex -> Name with get
+    member Item : index: IdentifierIndex -> string with get
 
 [<RequireQualifiedAccess>]
 module Tag =
@@ -507,6 +507,7 @@ type Module =
 module VersionNumbers =
     val semver : major: uvarint -> minor: uvarint -> patch: uvarint -> VersionNumbers
     val empty : VersionNumbers
+    val ofValueOption : version: VersionNumbers voption -> VersionNumbers
 
 [<RequireQualifiedAccess>]
 module MethodSignature =

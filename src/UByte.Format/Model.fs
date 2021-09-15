@@ -129,7 +129,7 @@ module InstructionSet =
 
 [<RequireQualifiedAccess>]
 type IdentifierSection =
-    { Identifiers: vector<Name> }
+    { Identifiers: vector<string> }
 
     member this.Item with get (Index i: IdentifierIndex) = this.Identifiers.[Checked.int32 i]
 
@@ -385,3 +385,4 @@ module MethodSignature =
 module VersionNumbers =
     let empty = VersionNumbers ImmutableArray.Empty
     let semver major minor patch = VersionNumbers(ImmutableArray.Create(major, minor, item3 = patch))
+    let ofValueOption version = ValueOption.defaultValue empty version
