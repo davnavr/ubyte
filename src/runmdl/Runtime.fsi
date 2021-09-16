@@ -26,7 +26,7 @@ type MethodInvocationResult = ImmutableArray<RuntimeRegister>
 
 [<Sealed>]
 type RuntimeMethod =
-    member Name : Model.Name
+    member Name : string
 
     member Invoke : previous: RuntimeStackFrame * arguments: (ImmutableArray<RuntimeRegister> -> unit) -> MethodInvocationResult
 
@@ -44,7 +44,7 @@ type RuntimeStackFrame with member CurrentMethod : RuntimeMethod voption
 type RuntimeTypeDefinition =
     //member Namespace : ImmutableArray<string>
 
-    member Name : Model.Name
+    member Name : string
 
     //member InvokeInitializer: unit -> 
 
