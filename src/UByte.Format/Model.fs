@@ -107,6 +107,7 @@ module InstructionSet =
         | ``add.ovf`` = 0x24u
         | ``sub.ovf`` = 0x25u
         | ``mul.ovf`` = 0x26u
+        | incr = 0x2Cu
         | ``const.i32`` = 0x30u
         | ``const.i64`` = 0x31u
         | ``const.f32`` = 0x32u
@@ -128,7 +129,7 @@ module InstructionSet =
 
 [<RequireQualifiedAccess>]
 type IdentifierSection =
-    { Identifiers: vector<Name> }
+    { Identifiers: vector<string> }
 
     member this.Item with get (Index i: IdentifierIndex) = this.Identifiers.[Checked.int32 i]
 
@@ -376,5 +377,12 @@ module Name =
         | ValueSome name' -> name'
         | ValueNone -> invalidArg (nameof name) "The name must not be empty"
 
+module MethodSignature =
+    let empty =
+        { ReturnTypes = ImmutableArray.Empty
+          ParameterTypes = ImmutableArray.Empty }
+
 module VersionNumbers =
+    let empty = VersionNumbers ImmutableArray.Empty
     let semver major minor patch = VersionNumbers(ImmutableArray.Create(major, minor, item3 = patch))
+    let ofValueOption version = ValueOption.defaultValue empty version

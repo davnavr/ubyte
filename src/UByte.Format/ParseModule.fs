@@ -282,7 +282,7 @@ let fromBytes (source: #IByteSequence) =
       Header = header'
       Identifiers =
         let struct(_, identifiers) = lengthEncodedData source
-        { IdentifierSection.Identifiers = vector identifiers name }
+        { IdentifierSection.Identifiers = vector identifiers ustring }
       Imports =
         let struct(_, imports) = lengthEncodedData source
         vector imports moduleImport

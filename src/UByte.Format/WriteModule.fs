@@ -35,10 +35,12 @@ let vector writer (items: vector<'T>) dest =
 
 let versions (VersionNumbers numbers) dest = vector LEB128.uint numbers dest
 
-let name (Name name) dest =
-    LEB128.uint (uint32 name.Length) dest
+let str (chars: string) dest =
+    LEB128.uint (uint32 chars.Length) dest
     // NOTE: Can write strings more efficeintly by using StreamWriter or Encoder
-    dest.Write(ReadOnlySpan(System.Text.Encoding.UTF8.GetBytes name))
+    dest.Write(ReadOnlySpan(System.Text.Encoding.UTF8.GetBytes chars))
+
+let name (Name name) dest = str name dest
 
 let lengthEncodedData (buffer: MemoryStream) dest writer =
     let inline reset() = buffer.Seek(0L, SeekOrigin.Begin) |> ignore
@@ -188,7 +190,7 @@ let toStream (stream: Stream) (md: Module) =
             bits1 header.Flags dest
             bits1 header.PointerSize dest
 
-        lengthEncodedVector buffer stream md.Identifiers.Identifiers name
+        lengthEncodedVector buffer stream md.Identifiers.Identifiers str
 
         lengthEncodedVector buffer stream md.Imports <| fun import dest ->
             failwith "TODO: Imports not supported yet"

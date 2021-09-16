@@ -20,7 +20,7 @@ let program =
           PointerSize = PointerSize.Unspecified }
       Identifiers =
         let identifiers =
-            Array.map Name.ofStr [|
+            [|
                 "Example"
                 "HelloWorld"
                 "main"
@@ -81,6 +81,13 @@ let program =
       EntryPoint = ValueSome(Index 0u)
       Debug = () }
 
+type private This = class end
+
+let getEmbeddedText =
+    let assem = typeof<This>.Assembly
+    let names = assem.GetManifestResourceNames()
+    fun (name: string) -> Array.find (fun (str: string) -> str.EndsWith name) names |> assem.GetManifestResourceStream
+
 let tests = testList "hello world" [
     testCase "writes to file" <| fun () ->
         WriteModule.toPath "hello_world.mdle" program
@@ -91,6 +98,29 @@ let tests = testList "hello world" [
         let rbuffer = new MemoryStream(wbuffer.ToArray())
         let parsed = ParseModule.fromStream rbuffer
         parsed.Header.Module =! program.Header.Module
+
+    let parseHelloWorld() =
+        let result =
+            FParsec.CharParsers.runParserOnStream
+                UByte.Assembler.Parser.sexpression
+                ()
+                "HelloWorld.tmodule"
+                (getEmbeddedText "HelloWorld.tmodule")
+                System.Text.Encoding.UTF8
+        match result with
+        | FParsec.CharParsers.ParserResult.Success(atoms, _, _) -> atoms
+        | FParsec.CharParsers.ParserResult.Failure(msg, err, ()) -> failwithf "Parsing failed %A %A" msg err
+
+    testCase "text format can be parsed" (parseHelloWorld >> ignore)
+
+    testCase "text format can be assembled" <| fun() ->
+        let atoms = parseHelloWorld()
+        match UByte.Assembler.Assembler.assemble atoms with
+        | Ok _ -> ()
+        | Error errs ->
+            let errors = System.Text.StringBuilder()
+            for err in errs do errors.Append("Error: ").Append(err).AppendLine() |> ignore
+            failtest(errors.ToString())
 ]
 
 [<EntryPoint>]

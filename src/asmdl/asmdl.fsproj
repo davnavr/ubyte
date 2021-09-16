@@ -7,13 +7,10 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="HelloWorld.tmodule" />
-    <Compile Include="HelloWorld.fs" />
+    <Compile Include="Program.fs" />
 
-    <PackageReference Include="Expecto" Version="9.0.4" />
-    <PackageReference Include="Unquote" Version="6.1.0" />
+    <PackageReference Include="Argu" Version="6.1.1" />
 
-    <ProjectReference Include="$(RootDirectory)\src\UByte.Format\UByte.Format.fsproj" />
     <ProjectReference Include="$(RootDirectory)\src\UByte.Assembler\UByte.Assembler.fsproj" />
   </ItemGroup>
 

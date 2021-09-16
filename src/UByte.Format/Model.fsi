@@ -122,6 +122,8 @@ module InstructionSet =
         | ``sub.ovf`` = 0x25u
         | ``mul.ovf`` = 0x26u
 
+        | incr = 0x2Cu
+
         | ``const.i32`` = 0x30u
         | ``const.i64`` = 0x31u
         | ``const.f32`` = 0x32u
@@ -183,9 +185,9 @@ module InstructionSet =
 
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
 type IdentifierSection = // TODO: Rename to something else
-    { Identifiers: vector<Name> }
+    { Identifiers: vector<string> }
 
-    member Item : index: IdentifierIndex -> Name with get
+    member Item : index: IdentifierIndex -> string with get
 
 [<RequireQualifiedAccess>]
 module Tag =
@@ -496,11 +498,20 @@ type Module =
       EntryPoint: LengthEncoded<MethodIndex voption>
       Debug: LengthEncoded<Debug> }
 
+    ///// A LEB128 unsigned integer preceding the header indicating the number of data vectors that follow.
+    //member DataVectorCount: uvarint
+
     member Endianness : Endianness
 
 [<RequireQualifiedAccess>]
 module VersionNumbers =
     val semver : major: uvarint -> minor: uvarint -> patch: uvarint -> VersionNumbers
+    val empty : VersionNumbers
+    val ofValueOption : version: VersionNumbers voption -> VersionNumbers
+
+[<RequireQualifiedAccess>]
+module MethodSignature =
+    val empty : MethodSignature
 
 [<RequireQualifiedAccess>]
 module Name =
