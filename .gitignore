@@ -1,5 +1,3 @@
-*.mdle
-
 # .NET build outputs
 bin/
 obj/

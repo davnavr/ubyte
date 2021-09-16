@@ -5,7 +5,7 @@ open System.IO
 open Argu
 
 type Argument =
-    | [<ExactlyOnce>] Program of ``program.mdle``: string
+    | [<ExactlyOnce>] Program of ``program.binmdl``: string
     //| Additional_Import_Dirs
     | Launch_Interpreter_Debugger
 

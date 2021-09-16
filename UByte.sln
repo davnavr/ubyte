@@ -9,7 +9,9 @@ Project("{6EC3EE1D-3C4E-46DD-8F32-0CC8E7565705}") = "interpreter", "src\interpre
 EndProject
 Project("{6EC3EE1D-3C4E-46DD-8F32-0CC8E7565705}") = "UByte.HelloWorld", "test\UByte.HelloWorld\UByte.HelloWorld.fsproj", "{CF1B94BB-DFC6-482D-A315-51A023FBCC9A}"
 EndProject
-Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "UByte.Assembler", "src\UByte.Assembler\UByte.Assembler.fsproj", "{2EDEE754-5D7D-4DEB-B113-772A13144FC9}"
+Project("{6EC3EE1D-3C4E-46DD-8F32-0CC8E7565705}") = "UByte.Assembler", "src\UByte.Assembler\UByte.Assembler.fsproj", "{2EDEE754-5D7D-4DEB-B113-772A13144FC9}"
+EndProject
+Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "asmdl", "src\asmdl\asmdl.fsproj", "{FCDF2E73-D0BB-4AC3-9148-5E1AB43FE02F}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -33,6 +35,10 @@ Global
 		{2EDEE754-5D7D-4DEB-B113-772A13144FC9}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{2EDEE754-5D7D-4DEB-B113-772A13144FC9}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{2EDEE754-5D7D-4DEB-B113-772A13144FC9}.Release|Any CPU.Build.0 = Release|Any CPU
+		{FCDF2E73-D0BB-4AC3-9148-5E1AB43FE02F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{FCDF2E73-D0BB-4AC3-9148-5E1AB43FE02F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{FCDF2E73-D0BB-4AC3-9148-5E1AB43FE02F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{FCDF2E73-D0BB-4AC3-9148-5E1AB43FE02F}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
