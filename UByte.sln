@@ -5,13 +5,13 @@ VisualStudioVersion = 16.0.31613.86
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{6EC3EE1D-3C4E-46DD-8F32-0CC8E7565705}") = "UByte.Format", "src\UByte.Format\UByte.Format.fsproj", "{9EC5E04A-9BD0-4ADC-B90D-306FFAE32B30}"
 EndProject
-Project("{6EC3EE1D-3C4E-46DD-8F32-0CC8E7565705}") = "interpreter", "src\interpreter\interpreter.fsproj", "{232DF93C-8343-4328-BF92-A3B07DD82C91}"
-EndProject
 Project("{6EC3EE1D-3C4E-46DD-8F32-0CC8E7565705}") = "UByte.HelloWorld", "test\UByte.HelloWorld\UByte.HelloWorld.fsproj", "{CF1B94BB-DFC6-482D-A315-51A023FBCC9A}"
 EndProject
 Project("{6EC3EE1D-3C4E-46DD-8F32-0CC8E7565705}") = "UByte.Assembler", "src\UByte.Assembler\UByte.Assembler.fsproj", "{2EDEE754-5D7D-4DEB-B113-772A13144FC9}"
 EndProject
-Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "asmdl", "src\asmdl\asmdl.fsproj", "{FCDF2E73-D0BB-4AC3-9148-5E1AB43FE02F}"
+Project("{6EC3EE1D-3C4E-46DD-8F32-0CC8E7565705}") = "asmdl", "src\asmdl\asmdl.fsproj", "{FCDF2E73-D0BB-4AC3-9148-5E1AB43FE02F}"
+EndProject
+Project("{6EC3EE1D-3C4E-46DD-8F32-0CC8E7565705}") = "runmdl", "src\runmdl\runmdl.fsproj", "{BAE31C7E-10F5-4CF7-9237-B1D15BDE7BFB}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -23,10 +23,6 @@ Global
 		{9EC5E04A-9BD0-4ADC-B90D-306FFAE32B30}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{9EC5E04A-9BD0-4ADC-B90D-306FFAE32B30}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{9EC5E04A-9BD0-4ADC-B90D-306FFAE32B30}.Release|Any CPU.Build.0 = Release|Any CPU
-		{232DF93C-8343-4328-BF92-A3B07DD82C91}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{232DF93C-8343-4328-BF92-A3B07DD82C91}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{232DF93C-8343-4328-BF92-A3B07DD82C91}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{232DF93C-8343-4328-BF92-A3B07DD82C91}.Release|Any CPU.Build.0 = Release|Any CPU
 		{CF1B94BB-DFC6-482D-A315-51A023FBCC9A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{CF1B94BB-DFC6-482D-A315-51A023FBCC9A}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{CF1B94BB-DFC6-482D-A315-51A023FBCC9A}.Release|Any CPU.ActiveCfg = Release|Any CPU
@@ -39,6 +35,10 @@ Global
 		{FCDF2E73-D0BB-4AC3-9148-5E1AB43FE02F}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{FCDF2E73-D0BB-4AC3-9148-5E1AB43FE02F}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{FCDF2E73-D0BB-4AC3-9148-5E1AB43FE02F}.Release|Any CPU.Build.0 = Release|Any CPU
+		{BAE31C7E-10F5-4CF7-9237-B1D15BDE7BFB}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{BAE31C7E-10F5-4CF7-9237-B1D15BDE7BFB}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{BAE31C7E-10F5-4CF7-9237-B1D15BDE7BFB}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{BAE31C7E-10F5-4CF7-9237-B1D15BDE7BFB}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
