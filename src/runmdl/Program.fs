@@ -19,7 +19,6 @@ let interpreterArgumentParser = ArgumentParser.Create<Argument>()
 
 [<EntryPoint>]
 let main argv =
-    // TODO: Use Argu to parse arguments intended for the interpreter
     let iargs, pargs =
         match Array.tryFindIndex ((=) "--") argv with
         | Some i ->

@@ -192,6 +192,8 @@ type RuntimeTypeDefinition (rmodule: RuntimeModule, t: TypeDefinition, mstart: M
 
 [<Sealed>]
 type RuntimeModule (m: Module, moduleImportResolver: ModuleImport -> RuntimeModule) as rm =
+    // TODO: Allow module m to be collected by GC by only storing necessary information.
+
     let typeDefLookup, methodDefLookup =
         let mutable typei =
             let mutable i = 0u

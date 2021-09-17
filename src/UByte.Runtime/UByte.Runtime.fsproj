@@ -1,0 +1,16 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net5.0</TargetFramework>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <WarnOn>3390;$(WarnOn)</WarnOn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Runtime.fsi" />
+    <Compile Include="Runtime.fs" />
+
+    <ProjectReference Include="$(RootDirectory)\src\UByte.Format\UByte.Format.fsproj" />
+  </ItemGroup>
+
+</Project>
