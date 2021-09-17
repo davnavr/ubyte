@@ -2,7 +2,6 @@
 module UByte.Interpreter.Runtime
 
 open System
-open System.Collections.Generic
 open System.Collections.Immutable
 
 open UByte.Format
@@ -52,8 +51,6 @@ type RuntimeTypeDefinition =
     member Name : string
 
     //member InvokeInitializer: unit -> 
-
-    member InitializeMethod : Model.MethodIndex -> RuntimeMethod
 
 /// Thrown when the entry point of a module could not be found.
 [<Sealed; Class>]

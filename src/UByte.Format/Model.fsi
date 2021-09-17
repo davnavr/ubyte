@@ -121,6 +121,7 @@ module InstructionSet =
         | ``reg.copy`` = 0x17u
 
         // Arithmetic
+        // TODO: Should math opcodes get unsigned versions like in CIL?
         | add = 0x20u
         | sub = 0x21u
         | mul = 0x22u
@@ -128,9 +129,15 @@ module InstructionSet =
         | ``add.ovf`` = 0x24u
         | ``sub.ovf`` = 0x25u
         | ``mul.ovf`` = 0x26u
-
+        //|  = 27u
+        //|  = 28u
+        //|  = 29u
+        //|  = 2Au
+        //|  = 2Bu
         | incr = 0x2Cu
-
+        | ``incr.ovf`` = 0x2Du
+        | decr = 0x2Eu
+        | ``decr.ovf`` = 0x2Fu
         | ``const.i32`` = 0x30u
         | ``const.i64`` = 0x31u
         | ``const.f32`` = 0x32u
@@ -138,10 +145,26 @@ module InstructionSet =
         | ``const.true`` = 0x34u
         | ``const.zero`` = 0x35u
         | ``const.false`` = 0x35u
+        //|  = 36u
+        //|  = 37u
+        //|  = 38u
+        //|  = 39u
+        //|  = 3Au
+        //|  = 3Bu
+        //|  = 3Cu
+        //|  = 3Du
+        //|  = 3Eu
+        //|  = 3Fu
+        | ``and`` = 0x40u
+        | ``or`` = 0x41u
+        | ``not`` = 0x42u
+        | ``xor`` = 0x43u
+        //| rem = 0x44u
+        //| ``rem.ovf`` = 0x45u
 
         // Branching
-        | br = 0x40u
-        | ``br.eq`` = 0x41u
+        | br = 0xB0u
+        | ``br.eq`` = 0xB1u
 
     /// <remarks>
     /// Instructions that store integer constants into a register <c>const.</c> are followed by the integer constants in the
@@ -275,7 +298,7 @@ and [<NoComparison; StructuralEquality>] AnyType =
     //(e.g., will an object reference to some class in this system allow a value to be stored in it like a byref, or should a new type be added? Make a SafePointer type?)
     | ObjectReference of ReferenceType
     | UnsafePointer of AnyType
-    /// User-defined struct that is passed by value. The index must point to a struct.
+    /// User-defined struct that is passed by value. The types index must point to a struct.
     | ValueType of TypeDefinitionIndex
 
     interface IEquatable<AnyType>
@@ -331,7 +354,11 @@ type Field =
       FieldFlags: FieldFlags
       FieldType: TypeSignatureIndex
       /// An array of annotations applied to the field.
-      FieldAnnotations: vector<unit> }
+      FieldAnnotations: vector<unit>
+      ///// An array of initializers that must be run before the first time the value of this field is loaded, applies only to static
+      ///// fields.
+      //Initializers: vector<InitializerIndex>
+      }
 
 [<Flags>]
 type MethodFlags =
@@ -354,6 +381,8 @@ type Method =
       Signature: MethodSignatureIndex
       /// An array of annotations applied to the method.
       MethodAnnotations: vector<unit>
+      ///// An array of initializers that must be run before the first time this method is called, applies only to static methods.
+      //Initializers: vector<InitializerIndex>
       Body: MethodBody }
 
 /// Allows renaming of types in the metadata, similar to F#'s type abbreviations.

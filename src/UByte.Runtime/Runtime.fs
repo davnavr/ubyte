@@ -14,6 +14,7 @@ type RuntimeRegister =
     | R2 of uint16 ref
     | R4 of uint32 ref
     | R8 of uint64 ref
+    //| RNative of nativeint
     //| RStruct of byte[]
     | RPtr of obj ref
 
@@ -183,22 +184,12 @@ type RuntimeMethod (rmodule: RuntimeModule, method: Method) =
         | MethodBody.Abstract -> failwith "TODO: Handle virtual calls"
 
 [<Sealed>]
-type RuntimeTypeDefinition (rmodule: RuntimeModule, t: TypeDefinition, mstart: MethodIndex) =
-    let (Index mstart) = mstart
-    let methods = Dictionary<MethodIndex, RuntimeMethod> t.Methods.Length
-    let name = lazy rmodule.IdentifierAt t.TypeName
+type RuntimeTypeDefinition (rm: RuntimeModule, t: TypeDefinition) =
+    let name = lazy rm.IdentifierAt t.TypeName
 
-    member _.Module = rmodule
+    member _.Module = rm
 
     member _.Name = name.Value
-
-    member _.InitializeMethod(Index i as mi) =
-        match methods.TryGetValue mi with
-        | true, existing -> existing
-        | false, _ ->
-            let method = failwith "TODO: Init method"
-            methods.Add(mi, method)
-            method
 
 let createIndexedLookup (count: int32) initializer =
     let lookup = Dictionary<Index<_>, _> count
@@ -215,6 +206,7 @@ type MissingEntryPointException (message: string) = inherit RuntimeException(mes
 
 [<Sealed>]
 type RuntimeModule (m: Module, moduleImportResolver: ModuleImport -> RuntimeModule) as rm =
+    // TODO: Account for imports
     let methodDefLookup =
         createIndexedLookup m.Methods.Length <| fun (Index i) -> RuntimeMethod(rm, m.Methods.[Checked.int32 i])
 
@@ -226,10 +218,9 @@ type RuntimeModule (m: Module, moduleImportResolver: ModuleImport -> RuntimeModu
 
     member _.CodeAt(Index i: CodeIndex) = m.Code.[Checked.int32 i]
 
-    // TODO: How to figure out which types own which methods to initialize them?
     member _.InitializeMethod i = methodDefLookup i
 
-    member _.InitializeType (i: TypeDefinitionIndex) = failwith "bad": RuntimeTypeDefinition
+    member _.InitializeType (i: TypeDefinitionIndex) = failwith "TODO: Implement loading of types": RuntimeTypeDefinition
 
     member this.InvokeEntryPoint(argv: string[]) =
         match m.EntryPoint with
@@ -247,8 +238,9 @@ type RuntimeModule (m: Module, moduleImportResolver: ModuleImport -> RuntimeModu
             | 1 -> // TODO: Check signature of method to determine if a 32bit integer exit code is returned
                 match result.[0] with
                 | RuntimeRegister.R4 { contents = ecode } -> int32 ecode
+                | _ -> failwith "TODO: Either check signature for s32 or u32 before hand or automatically convert return register to int32"
             | _ -> failwith "TODO: Multiple exit codes on entry point not supported"
-        | ValueNone -> raise(MissingEntryPointException "The entry point method of the module could not be found")
+        | ValueNone -> raise(MissingEntryPointException "The entry point method of the module is not defined")
 
 let initialize program moduleImportLoader =
     let moduleImportResolver =
