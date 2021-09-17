@@ -339,7 +339,7 @@ let rec instructions body errors state =
     let registers = SymbolDictionary<IndexKinds.Register, _>()
     let instrs = ImmutableArray.CreateBuilder<InstructionSet.Instruction>()
 
-    let operation name count body args: struct(_ * _) voption =
+    let operation name count errors body args: struct(_ * _) voption =
         match body with
         | Atom(Parser.Keyword op) :: body' when op = name ->
             ValueSome(body', [ failwith "TODO: Error for missing argument" ])
@@ -353,19 +353,19 @@ let rec instructions body errors state =
 
                     let errors' =
                         if arguments'.Length = count
-                        then []
-                        else extraneous (List.skip extra arguments) []
+                        then errors
+                        else extraneous (List.skip extra arguments) errors
 
                     ValueSome(body', errors')
                 | Error err ->
-                    ValueSome(body', [ err ])
+                    ValueSome(body', err :: errors)
             else
-                ValueSome(body', [ MissingInstructionArguments(opatom, extra) ])
+                ValueSome(body', MissingInstructionArguments(opatom, extra) :: errors)
         | _ -> ValueNone
 
     let rec inner body errors =
         let (|Op1|) name op body =
-            operation name 1 body <| fun iatom args ->
+            operation name 1 errors body <| fun iatom args ->
                 match args.[0] with
                 | Atom(Parser.Identifier rname) ->
                     let rname' = Name.ofStr rname
@@ -376,7 +376,7 @@ let rec instructions body errors state =
                     Error(UnexpectedAtom bad)
 
         let (|Op3|) name op body =
-            operation name 3 body <| fun iatom args ->
+            operation name 3 errors body <| fun iatom args ->
                 match args with
                 | [| Atom(Parser.Identifier xr); Atom(Parser.Identifier yr); Atom(Parser.Identifier rr) |] ->
                     let xr' = Name.ofStr xr
