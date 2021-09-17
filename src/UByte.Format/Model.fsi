@@ -31,6 +31,7 @@ type VersionNumbers =
     interface IComparable<VersionNumbers>
 
 val currentFormatVersion : VersionNumbers
+val currentDataVectorCount : uvarint
 
 /// Represents a length-encoded UTF-8 string.
 type ustring = string
@@ -498,8 +499,8 @@ type Module =
       EntryPoint: LengthEncoded<MethodIndex voption>
       Debug: LengthEncoded<Debug> }
 
-    ///// A LEB128 unsigned integer preceding the header indicating the number of data vectors that follow.
-    //member DataVectorCount: uvarint
+    /// A LEB128 unsigned integer preceding the header indicating the number of data vectors that follow.
+    member DataVectorCount: uvarint
 
     member Endianness : Endianness
 

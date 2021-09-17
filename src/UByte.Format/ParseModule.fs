@@ -274,6 +274,8 @@ let fromBytes (source: #IByteSequence) =
     let magic' = magic source
     let fversion = versions source
     if fversion <> Model.currentFormatVersion then failwithf "TODO: Error for unsupported version %O" fversion
+    let dcount = LEB128.uint source // TODO: Ensure data vector count is valid.
+    if dcount <> currentDataVectorCount then failwithf "TODO: Error for unsupported data vector count %i" dcount
     let header' = header source
 
     // TODO: Check that length encoded data has no remaining bytes left

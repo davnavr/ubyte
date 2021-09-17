@@ -59,6 +59,7 @@ type VersionNumbers =
     interface IComparable with member this.CompareTo o = Comparison.compare this (o :?> VersionNumbers)
 
 let currentFormatVersion = ImmutableArray.Create(0u, 0u) |> VersionNumbers
+let currentDataVectorCount = 10u
 
 type ustring = string
 
@@ -363,6 +364,8 @@ type Module =
       Debug: LengthEncoded<Debug> }
 
     member this.Endianness = this.Header.Endianness
+
+    member _.DataVectorCount: uvarint = currentDataVectorCount
 
 let (|Name|) (Name name) = name
 

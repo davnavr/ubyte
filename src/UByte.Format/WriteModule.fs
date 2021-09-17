@@ -182,6 +182,7 @@ let toStream (stream: Stream) (md: Module) =
         let (Magic magic) = md.Magic
         stream.Write(magic.AsSpan())
         versions md.FormatVersion stream
+        LEB128.uint md.DataVectorCount stream
 
         lengthEncodedData buffer stream <| fun dest ->
             let header = md.Header
