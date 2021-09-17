@@ -6,7 +6,8 @@ open Argu
 
 type Argument =
     | [<ExactlyOnce>] Program of ``program.binmdl``: string
-    //| Additional_Import_Dirs
+    //| Import_Dir
+    //| Import
     | Launch_Interpreter_Debugger
 
     interface IArgParserTemplate with
@@ -30,4 +31,7 @@ let main argv =
 
     if iargs'.Contains <@ Launch_Interpreter_Debugger @> then System.Diagnostics.Debugger.Launch() |> ignore
 
-    Runtime.run (FileInfo(iargs'.GetResult <@ Program @>)) Array.empty
+    let runtime =
+        Runtime.initialize (UByte.Format.ParseModule.fromPath(iargs'.GetResult <@ Program @>)) (fun _ -> failwith "TODO: Imports not yet supported")
+
+    runtime.InvokeEntryPoint pargs

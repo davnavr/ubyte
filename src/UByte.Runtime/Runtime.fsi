@@ -4,7 +4,6 @@ module UByte.Interpreter.Runtime
 open System
 open System.Collections.Generic
 open System.Collections.Immutable
-open System.IO
 
 open UByte.Format
 
@@ -26,7 +25,7 @@ type RuntimeStackFrame =
 type RuntimeException =
     inherit Exception
 
-    member CurrentFrame : RuntimeStackFrame
+    member CurrentFrame : RuntimeStackFrame voption
 
 type MethodInvocationResult = ImmutableArray<RuntimeRegister>
 
@@ -56,15 +55,21 @@ type RuntimeTypeDefinition =
 
     member InitializeMethod : Model.MethodIndex -> RuntimeMethod
 
+/// Thrown when the entry point of a module could not be found.
+[<Sealed; Class>]
+type MissingEntryPointException = inherit RuntimeException
+
 [<Sealed>]
 type RuntimeModule =
     member InitializeType : Model.TypeDefinitionIndex -> RuntimeTypeDefinition
 
     member InitializeMethod : Model.MethodIndex -> RuntimeMethod
 
-    interface IEquatable<RuntimeModule>
+    /// <summary>Invokes the entry point of the program, supplying the specified arguments.</summary>
+    /// <exception cref="T:UByte.Interpreter.Runtime.MissingEntryPointException" />
+    member InvokeEntryPoint : argv: string[] -> int32
 
 type RuntimeMethod with member Module : RuntimeModule
 type RuntimeTypeDefinition with member Module : RuntimeModule
 
-val run : program: FileInfo -> importDirs: IReadOnlyCollection<DirectoryInfo> -> int32
+val initialize : program: Model.Module -> moduleImportLoader: (Model.ModuleIdentifier -> Model.Module) -> RuntimeModule

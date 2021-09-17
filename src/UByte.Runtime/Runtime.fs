@@ -6,7 +6,6 @@ open System.Collections.Immutable
 open System.IO
 open System.Runtime.CompilerServices
 
-open UByte.Format
 open UByte.Format.Model
 
 [<RequireQualifiedAccess>]
@@ -35,7 +34,7 @@ type RuntimeRegister =
         | R4 _, R1 _
         | R8 _, R4 _
         | R8 _, R2 _
-        | R8 _, R1 _ -> failwith "TODO: Error for size mismatch"
+        | R8 _, R1 _ -> failwith "TODO: Truncating not yet supported"
         | RPtr { contents = value }, RPtr dest -> dest.contents <- value
         | RPtr _, _
         | _, RPtr _ -> failwith "TODO: Error for cannot mix integers and reference types"
@@ -61,9 +60,9 @@ type RuntimeStackFrame
 type RuntimeException =
     inherit Exception
 
-    val private frame: RuntimeStackFrame
+    val private frame: RuntimeStackFrame voption
 
-    new (frame) = { inherit Exception(); frame = frame }
+    new (message, frame) = { inherit Exception(message = message); frame = frame }
 
     new (frame, inner: Exception) = { inherit Exception(inner.Message, inner); frame = frame }
 
@@ -201,86 +200,66 @@ type RuntimeTypeDefinition (rmodule: RuntimeModule, t: TypeDefinition, mstart: M
             methods.Add(mi, method)
             method
 
+let createIndexedLookup (count: int32) initializer =
+    let lookup = Dictionary<Index<_>, _> count
+    fun i ->
+        match lookup.TryGetValue i with
+        | true, existing -> existing
+        | false, _ ->
+            let value = initializer i
+            lookup.Add(i, value)
+            value
+
+[<Sealed>]
+type MissingEntryPointException (message: string) = inherit RuntimeException(message, ValueNone)
+
 [<Sealed>]
 type RuntimeModule (m: Module, moduleImportResolver: ModuleImport -> RuntimeModule) as rm =
-    // TODO: Allow module m to be collected by GC by only storing necessary information.
-
-    let typeDefLookup, methodDefLookup =
-        let mutable typei =
-            let mutable i = 0u
-            for mimport in m.Imports do
-                for ns in mimport.ImportedNamespaces do i <- i + uint32 ns.TypeImports.Length + uint32 ns.TypeAliases.Length
-            i
-
-        let mutable methodi = 0u
-
-        let types = Dictionary<TypeDefinitionIndex, RuntimeTypeDefinition>()
-        let methods = Dictionary<MethodIndex, TypeDefinitionIndex>()
-
-        for ni = 0 to m.Namespaces.Length - 1 do
-            let ntypes = m.Namespaces.[ni].TypeDefinitions
-            for i = 0 to ntypes.Length - 1 do
-                let ti = Index(typei + uint32 i)
-                types.[ti] <- RuntimeTypeDefinition(rm, ntypes.[i], Index methodi)
-                let ms = ntypes.[i].Methods
-                for mi = 0 to ms.Length - 1 do methods.[Index(methodi + uint32 mi)] <- ti
-                methodi <- methodi + uint32 ms.Length
-            typei <- typei + uint32 ntypes.Length
-
-        types, methods
-
-    member _.Identifier = m.Header.Module
+    let methodDefLookup =
+        createIndexedLookup m.Methods.Length <| fun (Index i) -> RuntimeMethod(rm, m.Methods.[Checked.int32 i])
 
     member _.IdentifierAt(Index i: IdentifierIndex) = m.Identifiers.Identifiers.[Checked.int32 i]
-    member _.CodeAt(Index i: CodeIndex) = m.Code.[Checked.int32 i]
+
     member _.TypeSignatureAt(Index i: TypeSignatureIndex) = m.TypeSignatures.[Checked.int32 i]
+
     member _.MethodSignatureAt(Index i: MethodSignatureIndex) = m.MethodSignatures.[Checked.int32 i]
 
-    member _.InitializeType i =
-        match typeDefLookup.TryGetValue i with
-        | true, existing -> existing
-        | false, _ -> // Assume it is a type import.
-            failwith "TODO: Type imports not yet implemented."
+    member _.CodeAt(Index i: CodeIndex) = m.Code.[Checked.int32 i]
 
-    member this.InitializeMethod i =
-        match methodDefLookup.TryGetValue i with
-        | true, rt -> this.InitializeType(rt).InitializeMethod i
-        | false, _ -> // Assume it is a method import.
-            failwith "TODO: Method imports not yet implemented."
+    // TODO: How to figure out which types own which methods to initialize them?
+    member _.InitializeMethod i = methodDefLookup i
 
-    interface IEquatable<RuntimeModule> with member this.Equals other = this.Identifier = other.Identifier
+    member _.InitializeType (i: TypeDefinitionIndex) = failwith "bad": RuntimeTypeDefinition
 
-let executionEntryPoint (program: Module) (moduleImportLoader: ModuleImport -> Module) =
+    member this.InvokeEntryPoint(argv: string[]) =
+        match m.EntryPoint with
+        | ValueSome ei ->
+            // TODO: Pass argv to method somehow.
+            let main = this.InitializeMethod ei
+            // TODO: Check signature of method to determine if argv should be passed.
+            let arguments (args: ImmutableArray<_>) = if not args.IsDefaultOrEmpty then invalidOp "TODO: Passing of arguments for main not supported"
+
+            let start = RuntimeStackFrame(ValueNone, ImmutableArray.Empty, ImmutableArray.Empty, ValueNone)
+            let result = main.Invoke(start, arguments)
+
+            match result.Length with
+            | 0 -> 0
+            | 1 -> // TODO: Check signature of method to determine if a 32bit integer exit code is returned
+                match result.[0] with
+                | RuntimeRegister.R4 { contents = ecode } -> int32 ecode
+            | _ -> failwith "TODO: Multiple exit codes on entry point not supported"
+        | ValueNone -> raise(MissingEntryPointException "The entry point method of the module could not be found")
+
+let initialize program moduleImportLoader =
     let moduleImportResolver =
         let resolved = Dictionary<ModuleImport, RuntimeModule> program.Imports.Length
         let rec resolver import =
             match resolved.TryGetValue import with
             | true, existing -> existing
             | false, _ ->
-                let r = RuntimeModule(moduleImportLoader import, resolver)
+                let r = RuntimeModule(moduleImportLoader import.ImportedModule, resolver)
                 resolved.Add(import, r)
                 r
         resolver
 
-    match program.EntryPoint with
-    | ValueSome main ->
-        let application = RuntimeModule(program, moduleImportResolver)
-        let main' = application.InitializeMethod main
-
-        // TODO: Check signature of method to determine if argv should be passed.
-        let arguments (args: ImmutableArray<_>) = if not args.IsDefaultOrEmpty then invalidOp "TODO: Passing of arguments for main not supported"
-
-        let start = RuntimeStackFrame(ValueNone, ImmutableArray.Empty, ImmutableArray.Empty, ValueNone)
-        let result = main'.Invoke(start, arguments)
-
-        match result.Length with
-        | 0 -> 1
-        | 1 -> // TODO: Check signature of method to determine if a 32bit integer exit code is returned
-            match result.[0] with
-            | RuntimeRegister.R4 { contents = ecode } -> int32 ecode
-        | _ -> failwith "TODO: Multiple exit codes on entry point not supported"
-    | ValueNone -> failwithf "TODO: Error for missing entry point method"
-
-let run program (importDirs: IReadOnlyCollection<DirectoryInfo>) =
-    executionEntryPoint (ParseModule.fromFile program) <| fun _ ->
-        failwith "TODO: Implement resolution of references"
+    RuntimeModule(program, moduleImportResolver)

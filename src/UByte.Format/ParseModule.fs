@@ -260,18 +260,6 @@ let instruction endianness source =
 
     | bad -> failwithf "TODO: Unrecognized opcode 0x08%X" (uint32 bad)
 
-let code endianness source =
-    { Code.RegisterTypes =
-        vector source <| fun source ->
-            let count = LEB128.uint source
-            let rtype =
-                { RegisterType = index source
-                  RegisterFlags = bits1 source }
-            struct(count, rtype)
-      Instructions =
-        let struct(_, instructions) = lengthEncodedData source
-        vector instructions (instruction endianness) }
-
 let fromBytes (source: #IByteSequence) =
     let magic' = magic source
     let fversion = versions source
