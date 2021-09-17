@@ -58,6 +58,17 @@ type RuntimeStackFrame
         let i' = Checked.int32 i
         if i' >= args.Length then this.Registers.[i' - args.Length] else args.[i']
 
+type RuntimeException =
+    inherit Exception
+
+    val private frame: RuntimeStackFrame
+
+    new (frame) = { inherit Exception(); frame = frame }
+
+    new (frame, inner: Exception) = { inherit Exception(inner.Message, inner); frame = frame }
+
+    member this.CurrentFrame = this.frame
+
 type MethodInvocationResult = ImmutableArray<RuntimeRegister>
 
 [<RequireQualifiedAccess>]

@@ -218,6 +218,8 @@ module Tag =
         | U8 = 0x10uy
         | U16 = 0x20uy
         | U32 = 0x40uy
+        //| SNative = 0x49uy
+        //| UNative = 0x55uy
         | U64 = 0x80uy
         /// Precedes a type index, represents a user-defined struct.
         | ValueType = 0xA1uy

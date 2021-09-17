@@ -22,6 +22,12 @@ type RuntimeStackFrame =
 
     member RegisterAt : Model.RegisterIndex -> RuntimeRegister
 
+[<Class>]
+type RuntimeException =
+    inherit Exception
+
+    member CurrentFrame : RuntimeStackFrame
+
 type MethodInvocationResult = ImmutableArray<RuntimeRegister>
 
 [<Sealed>]
