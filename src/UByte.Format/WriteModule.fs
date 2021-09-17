@@ -113,8 +113,8 @@ let typeDef t dest =
     if not t.TypeAnnotations.IsDefaultOrEmpty then failwith "TODO: Annotated types not yet supported"
     dest.WriteByte 0uy // length of vector
 
-    vector fieldDef t.Fields dest
-    vector methodDef t.Methods dest
+    vector index t.Fields dest
+    vector index t.Methods dest
 
 let registerType (struct(count: uvarint, t: RegisterType)) dest =
     LEB128.uint count dest
@@ -230,6 +230,10 @@ let toStream (stream: Stream) (md: Module) =
         lengthEncodedVector buffer stream md.Code <| fun code dest ->
             vector registerType code.RegisterTypes dest
             lengthEncodedVector auxbuf dest code.Instructions (instruction md.Endianness)
+
+        lengthEncodedVector buffer stream md.Fields (fun _ _ -> failwith "TODO: Fields not supported yet")
+
+        lengthEncodedVector buffer stream md.Methods methodDef
 
         lengthEncodedVector buffer stream md.Namespaces <| fun ns dest ->
             vector index ns.NamespaceName dest

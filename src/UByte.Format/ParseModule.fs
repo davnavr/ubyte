@@ -126,8 +126,8 @@ let typeDefinitionImport source =
         if kind > Tag.TypeDefinitionKind.Struct then failwithf "TODO: Invalid type kind 0x%02X (%A)" (uint8 kind) kind
         kind
       TypeParameters = LEB128.uint source
-      Fields = vector source fieldImport
-      Methods = vector source methodImport }
+      Fields = vector source index
+      Methods = vector source index }
 
 let namespaceImport source =
     { NamespaceImport.NamespaceName = vector source index
@@ -136,6 +136,8 @@ let namespaceImport source =
 
 let moduleImport source =
     { ModuleImport.ImportedModule = moduleID source
+      ImportedFields = vector source fieldImport
+      ImportedMethods = vector source methodImport
       ImportedNamespaces = vector source namespaceImport }
 
 let typeSignature source =
@@ -202,8 +204,8 @@ let typeDefinition source =
       ImplementedInterfaces = vector source (fun _ -> failwith "TODO: Interfaces not yet supported")
       TypeParameters = vector source genericTypeParam
       TypeAnnotations = vector source annotation
-      Fields = vector source field
-      Methods = vector source method }
+      Fields = vector source index
+      Methods = vector source index }
 
 let typeAlias source =
     { TypeAlias.AliasName = index source
@@ -312,6 +314,12 @@ let fromBytes (source: #IByteSequence) =
               Instructions =
                 let struct(_, instructions) = lengthEncodedData source
                 vector instructions (instruction header'.Endianness) }
+      Fields =
+        let struct(_, fields) = lengthEncodedData source
+        vector fields field
+      Methods =
+          let struct(_, methods) = lengthEncodedData source
+          vector methods method
       Namespaces =
         let struct(_, namespaces) = lengthEncodedData source
         vector namespaces namespace'

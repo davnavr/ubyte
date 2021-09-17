@@ -160,6 +160,7 @@ type MethodLookup () =
 
     member _.AddDefinition(symbol, item) = defined.Add(symbol, item)
     member _.FindDefinition symbol = defined.FromSymbol symbol
+    member _.ToVector() = defined.ToVector()
 
 [<Struct>]
 type NamespaceLookupEnumerator =
@@ -505,7 +506,7 @@ let (|ParsedName|) rname errors state atoms: struct(_ * _) voption =
         | ValueSome _ -> ValueSome(remaining, UnexpectedAtom natom :: errors)
     | _ -> ValueNone
 
-let (|ParsedMethod|) errors state contents: struct(Method voption * _ * _) voption =
+let (|ParsedMethod|) errors state contents: struct(_ * _) voption =
     match contents with
     | (Atom(Parser.NestedAtom(Atom(Parser.Keyword "method") :: contents)) as matom) :: remaining ->
         // TODO: Avoid code duplication with type definition symbol
@@ -526,9 +527,6 @@ let (|ParsedMethod|) errors state contents: struct(Method voption * _ * _) vopti
                 | None -> inner remaining errors
                 | Some err -> inner remaining (err :: errors)
             // TODO: Have loop to parse flags.
-            | Atom(Parser.NestedAtom [ Atom(Parser.Keyword "flags"); Atom(Parser.Keyword "static") ]) :: remaining ->
-                mflags <- mflags ||| MethodFlags.Static
-                inner remaining errors
             // TODO: Parse signature + identifier to refer to signature
             | Atom(Parser.NestedAtom [ Atom(Parser.Keyword "signature"); Atom(Parser.Identifier sigid) ]) as satom :: remaining ->
                 let sigid' = Name.ofStr sigid
@@ -568,12 +566,12 @@ let (|ParsedMethod|) errors state contents: struct(Method voption * _ * _) vopti
                   Body = mbody' }
 
             match state.ModuleMethods.AddDefinition(symbol, method) with
-            | None -> ValueSome(ValueSome method, remaining, errors')
-            | Some err -> ValueSome(ValueNone, remaining, DuplicateMethodSymbol(err matom) :: errors')
+            | None -> ValueSome(remaining, errors')
+            | Some err -> ValueSome(remaining, DuplicateMethodSymbol(err matom) :: errors')
         | ValueNone, _ ->
-            ValueSome(ValueNone, remaining, MissingMethodSignature matom :: errors')
+            ValueSome(remaining, MissingMethodSignature matom :: errors')
         | _, ValueNone ->
-            ValueSome(ValueNone, remaining, MissingMethodKind matom :: errors')
+            ValueSome(remaining, MissingMethodKind matom :: errors')
     | _ -> ValueNone
 
 let rec (|ModuleTypeDefinition|) errors state tatom: struct(TypeDefinition voption * _) voption =
@@ -610,9 +608,17 @@ let rec (|ModuleTypeDefinition|) errors state tatom: struct(TypeDefinition vopti
                 | ValueSome _ ->
                     inner remaining (UnexpectedAtom katom :: errors)
             //| ParsedField
-            | ParsedMethod errors state (ValueSome(method, contents', errors')) ->
-                ValueOption.iter methods.Add method
-                inner contents' errors'
+            //| ParsedMethod errors state (ValueSome(method, contents', errors')) ->
+            //    ValueOption.iter methods.Add method
+            //    inner contents' errors'
+            | Atom(Parser.NestedAtom [ Atom(Parser.Keyword "method"); Atom(Parser.Identifier mname) ]) as matom :: remaining ->
+                let mname' = Name.ofStr mname
+                match state.ModuleMethods.FindDefinition mname' with
+                | ValueSome mi ->
+                    methods.Add mi
+                    inner remaining errors
+                | ValueNone ->
+                    inner remaining (SymbolNotDefined(mname', matom) :: errors)
             | bad :: remaining ->
                 inner remaining (UnexpectedAtom bad :: errors)
             | [] -> errors
@@ -778,7 +784,8 @@ let assemble atoms =
             | ModuleIdentifier(atoms', errors')
             | ModuleSignature(atoms', errors')
             | ModuleCode(atoms', errors')
-            | ModuleNamespace(atoms', errors') ->
+            | ModuleNamespace(atoms', errors')
+            | ParsedMethod errors state (ValueSome(atoms', errors')) ->
                 inner atoms' errors'
             | Atom(Parser.NestedAtom(Atom(Parser.Keyword "name") as n :: ParsedIdentifier(ValueSome name) :: extra)) :: atoms' ->
                 match state.ModuleHeaderName with
@@ -822,6 +829,8 @@ let assemble atoms =
               MethodSignatures = state.ModuleMethodSignatures.ToVector()
               Data = ImmutableArray.Empty
               Code = state.ModuleCode.ToVector()
+              Fields = ImmutableArray.Empty // state.ModuleFields.ToVector()
+              Methods = state.ModuleMethods.ToVector()
               Namespaces = ImmutableArray.CreateRange state.ModuleNamespaces
               EntryPoint = state.ModuleEntryPoint.contents
               Debug = () }

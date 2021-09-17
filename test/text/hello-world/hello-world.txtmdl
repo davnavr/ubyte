@@ -16,13 +16,15 @@
     (ret $l0)
   )
 
+  (method $method_main (name $id_entry_point) (visibility public)
+    (signature $sig_main)
+    (defined $code_main)
+  )
+
   (namespace (name $id_namespace)
     (type $class_hello_world (name $id_class) (visibility public)
       (class base abstract)
-      (method $method_main (name $id_entry_point) (visibility public) (flags static)
-        (signature $sig_main)
-        (defined $code_main)
-      )
+      (method $method_main)
     )
   )
 

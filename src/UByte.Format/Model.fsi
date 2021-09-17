@@ -62,6 +62,7 @@ module IndexKinds =
     type [<Sealed; Class>] Register = inherit Kind
     type [<Sealed; Class>] TypeDefinition = inherit Kind
     type [<Sealed; Class>] Method = inherit Kind
+    type [<Sealed; Class>] Field = inherit Kind
 
 [<IsReadOnly; Struct; StructuralComparison; StructuralEquality>]
 type Index<'Kind when 'Kind :> IndexKinds.Kind> =
@@ -94,11 +95,16 @@ type RegisterIndex = Index<IndexKinds.Register>
 type TypeDefinitionIndex = Index<IndexKinds.TypeDefinition>
 
 /// <summary>
-/// An index into the module's imported methods or defined methods. An index of <c>0</c> refers to the index of the
-/// first imported method of the first imported type, if any are imported. The index of the first method defined in this module
-/// is equal to the number of imported methods.
+/// An index into the module's imported or defined methods. An index of <c>0</c> refers to the index of the first imported
+/// method. The index of the first method defined in this module is equal to the number of imported methods.
 /// </summary>
 type MethodIndex = Index<IndexKinds.Method>
+
+/// <summary>
+/// An index into the module's imported or defined fields. An index of <c>0</c> refers to the index of the first imported field.
+/// The index of the first field defined in this module is equal to the number of imported fields.
+/// </summary>
+type FieldIndex = Index<IndexKinds.Field>
 
 module InstructionSet =
     /// Opcodes are represented as LEB128 encoded unsigned integers.
@@ -257,7 +263,7 @@ type PrimitiveType =
 [<RequireQualifiedAccess; NoComparison; StructuralEquality>]
 type ReferenceType =
     | Defined of TypeDefinitionIndex
-    | Any of AnyType
+    | Any of AnyType // TODO: Remove this, and add BoxedPrimitive and BoxedValueType
     /// One-dimensional array whose first element is at index zero.
     | Vector of AnyType
 
@@ -265,6 +271,8 @@ type ReferenceType =
 
 and [<NoComparison; StructuralEquality>] AnyType =
     | Primitive of PrimitiveType
+    // TODO: Differentiate between object references and things that are similar to .NET byrefs
+    //(e.g., will an object reference to some class in this system allow a value to be stored in it like a byref, or should a new type be added? Make a SafePointer type?)
     | ObjectReference of ReferenceType
     | UnsafePointer of AnyType
     /// User-defined struct that is passed by value. The index must point to a struct.
@@ -297,8 +305,8 @@ type TypeDefinitionImport =
     { TypeName: IdentifierIndex
       TypeKind: Tag.TypeDefinitionKind
       TypeParameters: uvarint
-      Fields: vector<FieldImport>
-      Methods: vector<MethodImport> }
+      Fields: vector<FieldIndex>
+      Methods: vector<MethodIndex> }
 
 /// Used to specify whether or not a type, field, or method can be imported by another module.
 type VisibilityFlags =
@@ -328,13 +336,12 @@ type Field =
 [<Flags>]
 type MethodFlags =
     | Final = 0uy
-    | NotFinal = 0b0000_0001uy
-    | Static = 0b0000_0010uy
+    | Instance = 0b0000_0001uy
     | ValidMask = 0b0000_0001uy
 
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
 type MethodBody =
-    | Defined of CodeIndex
+    | Defined of CodeIndex // TODO: Have flags indicating if method is final be here instead?
     | Abstract
     //| External of
 
@@ -390,8 +397,8 @@ type TypeDefinition =
       TypeParameters: vector<unit>
       /// An array of annotations applied to the type.
       TypeAnnotations: vector<unit>
-      Fields: vector<Field>
-      Methods: vector<Method> }
+      Fields: vector<FieldIndex>
+      Methods: vector<MethodIndex> }
 
 [<NoComparison; NoEquality>]
 type NamespaceImport =
@@ -440,15 +447,14 @@ type ModuleIdentifier =
 
     interface IEquatable<ModuleIdentifier>
 
-[<NoComparison; StructuralEquality>]
 type ModuleImport =
     { ImportedModule: ModuleIdentifier
+      ImportedFields: vector<FieldImport>
+      ImportedMethods: vector<MethodImport>
       ImportedNamespaces: vector<NamespaceImport> }
 
-    interface IEquatable<ModuleImport>
-
 [<Flags>]
-type ModuleHeaderFlags =
+type ModuleHeaderFlags = // TODO: Have endian information be somewhere else, and allow endian-agnostic things.
     | LittleEndian = 0uy
     /// Indicates that numeric constants stored in the module data are in big-endian order.
     | BigEndian = 0b0000_0001uy
@@ -493,6 +499,10 @@ type Module =
       /// An array of byte arrays containing miscellaneous data such as the contents of string literals.
       Data: LengthEncoded<vector<vector<byte>>>
       Code: LengthEncoded<vector<Code>>
+      ////TypeAliases:
+      //TypeDefinitions: // TODO: Should types be out here just like the fields and methods?
+      Fields: LengthEncoded<vector<Field>>
+      Methods: LengthEncoded<vector<Method>>
       /// An array of the namespaces defined in the module, which contain the module's types.
       Namespaces: LengthEncoded<vector<Namespace>>
       /// An optional index specifying the entry point method of the application.

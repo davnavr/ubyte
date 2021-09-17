@@ -59,7 +59,7 @@ type VersionNumbers =
     interface IComparable with member this.CompareTo o = Comparison.compare this (o :?> VersionNumbers)
 
 let currentFormatVersion = ImmutableArray.Create(0u, 0u) |> VersionNumbers
-let currentDataVectorCount = 10u
+let currentDataVectorCount = 12u
 
 type ustring = string
 
@@ -81,6 +81,7 @@ module IndexKinds =
     type [<Sealed; Class>] Data = inherit Kind
     type [<Sealed; Class>] TypeDefinition = inherit Kind
     type [<Sealed; Class>] Method = inherit Kind
+    type [<Sealed; Class>] Field = inherit Kind
 
 [<Struct; StructuralComparison; StructuralEquality>]
 type Index<'Kind when 'Kind :> IndexKinds.Kind> =
@@ -94,6 +95,7 @@ type RegisterIndex = Index<IndexKinds.Register>
 type DataIndex = Index<IndexKinds.Data>
 type TypeDefinitionIndex = Index<IndexKinds.TypeDefinition>
 type MethodIndex = Index<IndexKinds.Method>
+type FieldIndex = Index<IndexKinds.Field>
 
 module InstructionSet =
     type Opcode =
@@ -211,8 +213,8 @@ type TypeDefinitionImport =
     { TypeName: IdentifierIndex
       TypeKind: Tag.TypeDefinitionKind
       TypeParameters: uvarint
-      Fields: vector<FieldImport>
-      Methods: vector<MethodImport> }
+      Fields: vector<FieldIndex>
+      Methods: vector<MethodIndex> }
 
 type VisibilityFlags =
     | Unspecified = 0uy
@@ -236,8 +238,7 @@ type Field =
 [<Flags>]
 type MethodFlags =
     | Final = 0uy
-    | NotFinal = 0b0000_0001uy
-    | Static = 0b0000_0010uy
+    | Instance = 0b0000_0001uy
     | ValidMask = 0b0000_0001uy
 
 [<RequireQualifiedAccess>]
@@ -283,8 +284,8 @@ type TypeDefinition =
       ImplementedInterfaces: vector<unit>
       TypeParameters: vector<unit>
       TypeAnnotations: vector<unit>
-      Fields: vector<Field>
-      Methods: vector<Method> }
+      Fields: vector<FieldIndex>
+      Methods: vector<MethodIndex> }
 
 type NamespaceImport =
     { NamespaceName: vector<IdentifierIndex>
@@ -319,8 +320,11 @@ type Debug = unit
 [<NoComparison; StructuralEquality>]
 type ModuleIdentifier = { ModuleName: Name; Version: VersionNumbers }
 
-[<NoComparison; StructuralEquality>]
-type ModuleImport = { ImportedModule: ModuleIdentifier; ImportedNamespaces: vector<NamespaceImport> }
+type ModuleImport =
+    { ImportedModule: ModuleIdentifier
+      ImportedFields: vector<FieldImport>
+      ImportedMethods: vector<MethodImport>
+      ImportedNamespaces: vector<NamespaceImport> }
 
 [<Flags>]
 type ModuleHeaderFlags =
@@ -359,6 +363,8 @@ type Module =
       MethodSignatures: LengthEncoded<vector<MethodSignature>>
       Data: LengthEncoded<vector<vector<byte>>>
       Code: LengthEncoded<vector<Code>>
+      Fields: LengthEncoded<vector<Field>>
+      Methods: LengthEncoded<vector<Method>>
       Namespaces: LengthEncoded<vector<Namespace>>
       EntryPoint: LengthEncoded<MethodIndex voption>
       Debug: LengthEncoded<Debug> }

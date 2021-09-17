@@ -129,7 +129,7 @@ type RuntimeMethod (rmodule: RuntimeModule, method: Method) =
 
     member _.Name = rmodule.IdentifierAt method.MethodName
 
-    member _.HasThis = method.MethodFlags &&& MethodFlags.Static <> MethodFlags.Static
+    member _.HasThis = false // TODO: Check method.Flags
 
     member private _.CreateRegister rtype =
         match rmodule.TypeSignatureAt rtype with
@@ -197,7 +197,7 @@ type RuntimeTypeDefinition (rmodule: RuntimeModule, t: TypeDefinition, mstart: M
         match methods.TryGetValue mi with
         | true, existing -> existing
         | false, _ ->
-            let method = RuntimeMethod(rmodule, t.Methods.[Checked.int32 mstart + Checked.int32 i])
+            let method = failwith "TODO: Init method"
             methods.Add(mi, method)
             method
 
