@@ -38,7 +38,8 @@ let main argv =
     | FParsec.CharParsers.Success(contents, (), _) ->
         match Assembler.assemble contents with
         | Ok mdle ->
-            use output' = output.OpenWrite()
+            output.Directory.Create()
+            use output' = output.Create()
             UByte.Format.WriteModule.toStream output' mdle
             0
         | Error errors ->

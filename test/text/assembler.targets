@@ -1,0 +1,40 @@
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+
+  <Import Project="..\..\Directory.Build.props" />
+
+  <PropertyGroup>
+    <OutputFile Condition="'$(OutputFile)'==''">$(MSBuildProjectDirectory)\out\$(MSBuildProjectName).binmdl</OutputFile>
+  </PropertyGroup>
+
+  <Target Name="Clean">
+    <Delete Files="$(OutputFile)" />
+  </Target>
+
+  <Target Name="Build" AfterTargets="Clean" Inputs="$(InputFile)" Outputs="$(OutputFile)">
+
+    <PropertyGroup>
+      <AssemblerArguments>--input &quot;$(InputFile)&quot; --output &quot;$(OutputFile)&quot;</AssemblerArguments>
+    </PropertyGroup>
+
+    <Exec
+      Command="dotnet run -p &quot;$(RootDirectory)\src\asmdl\asmdl.fsproj&quot; -- $(AssemblerArguments)"
+      ConsoleToMsBuild="true"
+      LogStandardErrorAsError="true" />
+
+  </Target>
+
+  <Target Name="Rebuild" DependsOnTargets="Clean; Build" />
+
+  <Target Name="Run" DependsOnTargets="Build">
+    <PropertyGroup>
+      <InterpreterArguments>--input &quot;$(InputFile)&quot; --output &quot;$(OutputFile)&quot;</InterpreterArguments>
+    </PropertyGroup>
+
+    <Exec
+      Command="dotnet run -p &quot;$(RootDirectory)\src\asmdl\asmdl.fsproj&quot; -- $(InterpreterArguments)"
+      ConsoleToMsBuild="true"
+      LogStandardErrorAsError="true" />
+
+  </Target>
+
+</Project>
