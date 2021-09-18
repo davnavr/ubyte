@@ -375,6 +375,21 @@ let rec instructions body errors state =
                 | bad ->
                     Error(UnexpectedAtom bad)
 
+        let (|Op2|) name op body =
+            operation name 2 errors body <| fun iatom args ->
+                match args with
+                | [| Atom(Parser.Identifier xr); Atom(Parser.Identifier yr) |] ->
+                    let xr' = Name.ofStr xr
+                    let yr' = Name.ofStr yr
+                    match registers.FromSymbol xr', registers.FromSymbol yr' with
+                    | ValueSome x, ValueSome y -> Ok(op(x, y))
+                    | ValueNone, _ -> Error(SymbolNotDefined(xr', iatom))
+                    | _, ValueNone -> Error(SymbolNotDefined(yr', iatom))
+                | [| badx; Atom(Parser.Identifier _) |] ->
+                    Error(UnexpectedAtom badx)
+                | _ ->
+                    Error(UnexpectedAtom args.[2])
+
         let (|Op3|) name op body =
             operation name 3 errors body <| fun iatom args ->
                 match args with
@@ -454,13 +469,36 @@ let rec instructions body errors state =
             let struct(regs, errors') = registerSymbolList iatom rregisters
             instrs.Add(InstructionSet.Ret regs)
             inner body' errors'
-
         | CodeRegister(body', errors)
-        | Op3 "add" InstructionSet.Add (ValueSome(body', errors)) ->
+        | Op2 "reg.copy" InstructionSet.Reg_copy (ValueSome(body', errors))
+        | Op3 "add" InstructionSet.Add (ValueSome(body', errors))
+        | Op3 "sub" InstructionSet.Sub (ValueSome(body', errors))
+        | Op3 "mul" InstructionSet.Mul (ValueSome(body', errors))
+        | Op3 "div" InstructionSet.Div (ValueSome(body', errors))
+        | Op1 "incr" InstructionSet.Incr (ValueSome(body', errors))
+        | Op1 "decr" InstructionSet.Decr (ValueSome(body', errors))
+        | Op1 "const.true" InstructionSet.Const_true (ValueSome(body', errors))
+        | Op1 "const.false" InstructionSet.Const_false (ValueSome(body', errors))
+        | Op1 "const.zero" InstructionSet.Const_zero (ValueSome(body', errors))
+        | Op3 "and" InstructionSet.And (ValueSome(body', errors))
+        | Op3 "or" InstructionSet.Or (ValueSome(body', errors))
+        | Op3 "not" InstructionSet.Not (ValueSome(body', errors))
+        | Op3 "xor" InstructionSet.Xor (ValueSome(body', errors))
+        | Op3 "rem" InstructionSet.Rem (ValueSome(body', errors))
+        | Op2 "rotl" InstructionSet.Rotl (ValueSome(body', errors))
+        | Op2 "rotr" InstructionSet.Rotr (ValueSome(body', errors))
+        | Op1 "obj.null" InstructionSet.Obj_null (ValueSome(body', errors)) ->
             inner body' errors
-
-        //| Op1 "incr"
-
+        | Atom(Parser.NestedAtom [ Atom(Parser.Keyword "const.i32"); Atom(Parser.IntegerLiteral i); Atom(Parser.Identifier dreg) ]) as catom :: body' ->
+            let dreg' = Name.ofStr dreg
+            match registers.FromSymbol dreg' with
+            | ValueSome regi ->
+                // TODO: Have error if integer i is not a valid 32-bit integer.
+                instrs.Add(InstructionSet.Const_i32(Checked.int32 i, regi))
+                errors
+            | ValueNone ->
+                SymbolNotDefined(dreg', catom) :: errors
+            |> inner body'
         | (Atom(Parser.Keyword unknown) as op) :: body'
         | (Atom(Parser.NestedAtom(Atom(Parser.Keyword unknown) :: _)) as op) :: body' ->
             inner body' (UnknownInstruction(unknown, op) :: errors)
@@ -803,8 +841,10 @@ let assemble atoms =
                 | ValueNone, ValueSome entryi ->
                     state.ModuleEntryPoint.contents <- ValueSome entryi
                     inner atoms' (extraneous extra errors)
-                | _ ->
+                | ValueSome _, _ ->
                     inner atoms' (DuplicateEntryPoint eatom :: errors)
+                | _, ValueNone ->
+                    inner atoms' (SymbolNotDefined(epoint', eatom) :: errors)
             | Atom(Parser.NestedAtom(Atom(Parser.Keyword "entrypoint") :: _)) as eatom :: atoms' ->
                 inner atoms' (InvalidEntryPoint eatom :: errors)
             | unknown :: remaining ->

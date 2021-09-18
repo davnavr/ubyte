@@ -271,7 +271,7 @@ let instruction endianness source =
     | Opcode.``const.i32`` -> Const_i32(Constant.i32 endianness source, index source)
     
     | Opcode.``const.true`` -> index1 Const_true
-    | Opcode.``const.zero`` -> index1 Const_zero
+    | Opcode.``const.zero`` (*| Opcode.``const.false``*) -> index1 Const_zero
 
     | Opcode.``and`` -> index3 And
     | Opcode.``or`` -> index3 Or

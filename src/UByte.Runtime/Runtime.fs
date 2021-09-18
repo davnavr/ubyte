@@ -115,6 +115,7 @@ module Interpreter =
                 | RuntimeRegister.R8 dest' -> dest'.contents <- uint64 value
                 | _ -> failwith "TODO: Error for cannot store 32 bit integer into register"
                 loop current instructions methodIndexResolver (i + 1)
+            | bad -> failwithf "TODO: Implement interpretation of %A instruction" bad
         else
             failwith "TODO: error for method did not return"
 
