@@ -144,27 +144,37 @@ module Constant =
     let i32 value endianness dest = integer<int32> value endianness dest
 
 let instruction endianness i dest =
+    let inline (|Opcode|) op _: Opcode = op
+
     match i with
     | Instruction.Nop -> opcode Opcode.nop dest
     | Instruction.Ret registers ->
         opcode Opcode.ret dest
         vector index registers dest
-    | Instruction.Call(method, aregs, rregs) ->
-        opcode Opcode.call dest
+    | (Instruction.Call(method, aregs, rregs) & Opcode Opcode.call op)
+    | (Instruction.Call_virt(method, aregs, rregs) & Opcode Opcode.``call.virt`` op)
+    | (Instruction.Call_ret(method, aregs, rregs) & Opcode Opcode.``call.ret`` op)
+    | (Instruction.Call_virt_ret(method, aregs, rregs) & Opcode Opcode.``call.virt.ret`` op) ->
+        opcode op dest
         index method dest
         vector index aregs dest
         vector index rregs dest
-    | Instruction.Reg_copy(sreg, dreg) ->
-        opcode Opcode.``reg.copy`` dest
-        index sreg dest
-        index dreg dest
-    | Instruction.Add(xreg, yreg, rreg) ->
-        opcode Opcode.add dest
-        index xreg dest
-        index yreg dest
-        index rreg dest
-    | Instruction.Sub(xreg, yreg, rreg) ->
-        opcode Opcode.sub dest
+    | (Instruction.Reg_copy(reg1, reg2) & Opcode Opcode.``reg.copy`` op)
+    | (Instruction.Rotl(reg1, reg2) & Opcode Opcode.rotl op)
+    | (Instruction.Rotr(reg1, reg2) & Opcode Opcode.rotr op) ->
+        opcode op dest
+        index reg1 dest
+        index reg2 dest
+    | (Instruction.Add(xreg, yreg, rreg) & Opcode Opcode.add op)
+    | (Instruction.Sub(xreg, yreg, rreg) & Opcode Opcode.sub op)
+    | (Instruction.Mul(xreg, yreg, rreg) & Opcode Opcode.mul op)
+    | (Instruction.Div(xreg, yreg, rreg) & Opcode Opcode.div op)
+    | (Instruction.And(xreg, yreg, rreg) & Opcode Opcode.``and`` op)
+    | (Instruction.Or(xreg, yreg, rreg) & Opcode Opcode.``or`` op)
+    | (Instruction.Not(xreg, yreg, rreg) & Opcode Opcode.``not`` op)
+    | (Instruction.Xor(xreg, yreg, rreg) & Opcode Opcode.xor op)
+    | (Instruction.Rem(xreg, yreg, rreg) & Opcode Opcode.rem op) ->
+        opcode op dest
         index xreg dest
         index yreg dest
         index rreg dest
@@ -172,7 +182,13 @@ let instruction endianness i dest =
         opcode Opcode.``const.i32`` dest
         Constant.i32 value endianness dest
         index rreg dest
-    | bad -> failwithf "TODO: Bad instr %A" bad
+    | (Instruction.Const_true reg & Opcode Opcode.``const.true`` op)
+    | (Instruction.Const_false reg & Opcode Opcode.``const.false`` op)
+    | (Instruction.Const_zero reg & Opcode Opcode.``const.zero`` op)
+    | (Instruction.Obj_null reg & Opcode Opcode.``obj.null`` op) ->
+        opcode op dest
+        index reg dest
+    | _ -> failwithf "TODO: Cannot write unsupported instruction %A" i
 
 let toStream (stream: Stream) (md: Module) =
     if isNull stream then nullArg(nameof stream)

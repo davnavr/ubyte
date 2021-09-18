@@ -112,10 +112,10 @@ module InstructionSet =
         | nop = 0u
         | ret = 1u
 
-        | call = 0x10u
-
-
-
+        // Call
+        | call = 5u
+        | ``call.virt`` = 6u
+        // ``call. = 7u
 
         // Register
         | ``reg.copy`` = 0x17u
@@ -159,12 +159,34 @@ module InstructionSet =
         | ``or`` = 0x41u
         | ``not`` = 0x42u
         | ``xor`` = 0x43u
-        //| rem = 0x44u
+        | rem = 0x44u
         //| ``rem.ovf`` = 0x45u
+        // TODO: Have operation that stores both division result AND remainder.
+        //| = 0x46u
+        //| = 0x47u
+        // TODO: Have oepration for shifting integer bits left and right
+        //| = 0x48u
+        //| = 0x49u
+        //| = 0x4Au
+        //| = 0x4Bu
+        // TODO: Have conversion operators (int to float, float to int, etc.) that differ from reg.copy
+        | rotl = 0x4Cu
+        | rotr = 0x4Du
 
         // Branching
-        | br = 0xB0u
-        | ``br.eq`` = 0xB1u
+        | br = 0x60u
+        | ``br.eq`` = 0x61u
+
+        // Object
+        | ``obj.new`` = 0x70u
+        | ``obj.null`` = 0x71u
+        | ``obj.ldfd`` = 0x72u
+        | ``obj.stfd`` = 0x73u
+        | ``obj.throw`` = 0x74u
+
+        // Tail Call
+        | ``call.ret`` = 0x90u
+        | ``call.virt.ret`` = 0x91u
 
     /// <remarks>
     /// Instructions that store integer constants into a register <c>const.</c> are followed by the integer constants in the
@@ -176,7 +198,8 @@ module InstructionSet =
         /// <remarks>
         /// To simplify parsing, the number of registers containing the values to return is included as part of the instruction.
         /// </remarks>
-        | Ret of vector<RegisterIndex>
+        | Ret of results: vector<RegisterIndex>
+        
 
         /// <summary>
         /// Calls the specified <paramref name="method"/> supplying the specified <paramref name="arguments"/> and storing the
@@ -187,6 +210,7 @@ module InstructionSet =
         /// To simplify parsing, the number of argument registers is included as part of the instruction.
         /// </remarks>
         | Call of method: MethodIndex * arguments: vector<RegisterIndex> * results: vector<RegisterIndex> // TODO: How to ignore some return values? Maybe treat index 0 as ignore?
+        | Call_virt of method: MethodIndex * arguments: vector<RegisterIndex> * results: vector<RegisterIndex>
 
         /// <summary>
         /// Copies the value stored in the <paramref name="source"/> register to the <paramref name="destination"/> register.
@@ -199,19 +223,91 @@ module InstructionSet =
         /// and stores the sum in the <paramref name="result"/> register.
         /// </summary>
         | Add of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
-
         /// <summary>
         /// Subtracts the value in register <paramref name="y"/> from register <paramref name="x"/> without an overflow check,
         /// and stores the difference in the <paramref name="result"/> register.
         /// </summary>
         | Sub of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
+        /// <summary>
+        /// Computes the product of the values in registers <paramref name="x"/> and <paramref name="y"/> without an overflow
+        /// check, and stores the product in the <paramref name="result"/> register.
+        /// </summary>
+        | Mul of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
+        /// <summary>
+        /// Divides the value in register <paramref name="x"/> by the value in register <paramref name="y"/>, and stores the
+        /// result in the <paramref name="result"/> register.
+        /// </summary>
+        | Div of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
+
+        /// <summary>
+        /// Increments the value stored in the register by one, without an overflow check.
+        /// </summary>
+        | Incr of RegisterIndex
+
+        /// <summary>
+        /// Decrements the value stored in the register by one, without an overflow check.
+        /// </summary>
+        | Decr of RegisterIndex
 
         /// <summary>
         /// Stores a signed or unsigned 32-bit integer <paramref name="value"/> into the specified <paramref name="destination"/>
         /// register.
         /// </summary>
-        /// <remarks>The integer is stored in the four bytes after the opcode, stored in the endianness as specified by the module header.</remarks>
+        /// <remarks>
+        /// The integer is stored in the four bytes after the opcode, stored in the endianness as specified by the module header.
+        /// </remarks>
         | Const_i32 of value: int32 * destination: RegisterIndex
+
+        /// <summary>
+        /// Stores a <see langword="true"/> value or the integer <c>1</c> into the specified register.
+        /// </summary>
+        | Const_true of RegisterIndex
+        /// <summary>
+        /// An alias for <c>const.zero</c>. stores a <see langword="false"/> value or the integer <c>0</c> into the specified
+        /// register.
+        /// </summary>
+        | Const_false of RegisterIndex
+        /// <summary>
+        /// An alias for <c>const.false</c>, stores a value of <c>0</c> into the specified register.
+        /// </summary>
+        | Const_zero of RegisterIndex
+
+        /// <summary>
+        /// Computes the bitwise <c>AND</c> of the values stored in registers <paramref name="x"/> and <paramref name="y"/> and
+        /// stores the result in the <paramref name="result"/> register.
+        /// </summary>
+        | And of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
+        /// <summary>
+        /// Computes the bitwise <c>OR</c> of the values stored in registers <paramref name="x"/> and <paramref name="y"/> and
+        /// stores the result in the <paramref name="result"/> register.
+        /// </summary>
+        | Or of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
+        /// <summary>
+        /// Computes the bitwise <c>NOT</c> of the values stored in registers <paramref name="x"/> and <paramref name="y"/> and
+        /// stores the result in the <paramref name="result"/> register.
+        /// </summary>
+        | Not of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
+        /// <summary>
+        /// Computes the bitwise <c>XOR</c> of the values stored in registers <paramref name="x"/> and <paramref name="y"/> and
+        /// stores the result in the <paramref name="result"/> register.
+        /// </summary>
+        | Xor of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
+        /// <summary>
+        /// Divides the value in register <paramref name="x"/> by the value in register <paramref name="y"/>, and stores the
+        /// remainder in the <paramref name="result"/> register.
+        /// </summary>
+        | Rem of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
+
+        | Rotl of amount: RegisterIndex * RegisterIndex
+        | Rotr of amount: RegisterIndex * RegisterIndex
+
+        /// <summary>
+        /// Stores a <see langword="null"/> object reference into the specified <paramref name="destination"/> register.
+        /// </summary>
+        | Obj_null of destination: RegisterIndex
+
+        | Call_ret of method: MethodIndex * arguments: vector<RegisterIndex> * results: vector<RegisterIndex>
+        | Call_virt_ret of method: MethodIndex * arguments: vector<RegisterIndex> * results: vector<RegisterIndex>
 
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
 type IdentifierSection = // TODO: Rename to something else

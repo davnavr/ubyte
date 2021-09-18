@@ -243,20 +243,49 @@ module Constant =
     let i32 endianness source = integer<int32, _> endianness source
 
 let instruction endianness source =
+    let inline callargs instr: Instruction = instr(index source, vector source index, vector source index)
+    let inline index1 instr: Instruction = instr(index source)
+    let inline index2 instr: Instruction = instr(index source, index source)
+    let inline index3 instr: Instruction = instr(index source, index source, index source)
+
     match LanguagePrimitives.EnumOfValue(LEB128.uint source) with
     | Opcode.nop -> Nop
     | Opcode.ret -> Ret(vector source index)
 
-    | Opcode.call -> Call(index source, vector source index, vector source index)
+    | Opcode.call -> callargs Call
+    | Opcode.``call.virt`` -> callargs Call_virt
 
     // Register
-    | Opcode.``reg.copy`` -> Reg_copy(index source, index source)
+    | Opcode.``reg.copy`` -> index2 Reg_copy
 
     // Arithmetic
-    | Opcode.add -> Add(index source, index source, index source)
-    | Opcode.sub -> Sub(index source, index source, index source)
+    | Opcode.add -> index3 Add
+    | Opcode.sub -> index3 Sub
+    | Opcode.mul -> index3 Mul
+    | Opcode.div -> index3 Div
+
+    | Opcode.incr -> index1 Incr
+
+    | Opcode.decr -> index1 Decr
 
     | Opcode.``const.i32`` -> Const_i32(Constant.i32 endianness source, index source)
+    
+    | Opcode.``const.true`` -> index1 Const_true
+    | Opcode.``const.zero`` -> index1 Const_zero
+
+    | Opcode.``and`` -> index3 And
+    | Opcode.``or`` -> index3 Or
+    | Opcode.``not`` -> index3 Not
+    | Opcode.xor -> index3 Xor
+    | Opcode.rem -> index3 Rem
+
+    | Opcode.rotl -> index2 Rotl
+    | Opcode.rotr -> index2 Rotr
+
+    | Opcode.``obj.null`` -> index1 Obj_null
+
+    | Opcode.``call.ret`` -> callargs Call_ret
+    | Opcode.``call.virt.ret`` -> callargs Call_virt_ret
 
     | bad -> failwithf "TODO: Unrecognized opcode 0x08%X" (uint32 bad)
 

@@ -101,7 +101,8 @@ module InstructionSet =
     type Opcode =
         | nop = 0u
         | ret = 1u
-        | call = 0x10u
+        | call = 5u
+        | ``call.virt`` = 6u
         | ``reg.copy`` = 0x17u
         | add = 0x20u
         | sub = 0x21u
@@ -111,6 +112,9 @@ module InstructionSet =
         | ``sub.ovf`` = 0x25u
         | ``mul.ovf`` = 0x26u
         | incr = 0x2Cu
+        | ``incr.ovf`` = 0x2Du
+        | decr = 0x2Eu
+        | ``decr.ovf`` = 0x2Fu
         | ``const.i32`` = 0x30u
         | ``const.i64`` = 0x31u
         | ``const.f32`` = 0x32u
@@ -118,17 +122,49 @@ module InstructionSet =
         | ``const.true`` = 0x34u
         | ``const.zero`` = 0x35u
         | ``const.false`` = 0x35u
-        | br = 0x40u
-        | ``br.eq`` = 0x41u
+        | ``and`` = 0x40u
+        | ``or`` = 0x41u
+        | ``not`` = 0x42u
+        | ``xor`` = 0x43u
+        | rem = 0x44u
+        | rotl = 0x4Cu
+        | rotr = 0x4Du
+        | br = 0x60u
+        | ``br.eq`` = 0x61u
+        | ``obj.new`` = 0x70u
+        | ``obj.null`` = 0x71u
+        | ``obj.ldfd`` = 0x72u
+        | ``obj.stfd`` = 0x73u
+        | ``obj.throw`` = 0x74u
+        | ``call.ret`` = 0x90u
+        | ``call.virt.ret`` = 0x91u
 
     type Instruction =
         | Nop
-        | Ret of vector<RegisterIndex>
+        | Ret of results: vector<RegisterIndex>
         | Call of method: MethodIndex * arguments: ImmutableArray<RegisterIndex> * results: vector<RegisterIndex>
+        | Call_virt of method: MethodIndex * arguments: vector<RegisterIndex> * results: vector<RegisterIndex>
         | Reg_copy of source: RegisterIndex * destination: RegisterIndex
         | Add of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
         | Sub of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
+        | Mul of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
+        | Div of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
+        | Incr of RegisterIndex
+        | Decr of RegisterIndex
         | Const_i32 of value: int32 * destination: RegisterIndex
+        | Const_true of RegisterIndex
+        | Const_false of RegisterIndex
+        | Const_zero of RegisterIndex
+        | And of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
+        | Or of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
+        | Not of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
+        | Xor of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
+        | Rem of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
+        | Rotl of amount: RegisterIndex * RegisterIndex
+        | Rotr of amount: RegisterIndex * RegisterIndex
+        | Obj_null of destination: RegisterIndex
+        | Call_ret of method: MethodIndex * arguments: vector<RegisterIndex> * results: vector<RegisterIndex>
+        | Call_virt_ret of method: MethodIndex * arguments: vector<RegisterIndex> * results: vector<RegisterIndex>
 
 [<RequireQualifiedAccess>]
 type IdentifierSection =
