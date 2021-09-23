@@ -58,64 +58,6 @@ let moduleID id dest =
     name id.ModuleName dest
     versions id.Version dest
 
-let fieldDef f dest =
-    index f.FieldName dest
-    bits1 f.FieldVisibility dest
-    bits1 f.FieldFlags dest
-    index f.FieldType dest
-    if not f.FieldAnnotations.IsDefaultOrEmpty then failwith "TODO: Annotated fields not yet supported"
-    dest.WriteByte 0uy // length of vector
-
-let methodDef m dest =
-    index m.MethodName dest
-    bits1 m.MethodVisibility dest
-    bits1 m.MethodFlags dest
-    if not m.TypeParameters.IsDefaultOrEmpty then failwith "TODO: Generic methods not yet supported"
-    dest.WriteByte 0uy // length of vector
-    index m.Signature dest
-    if not m.MethodAnnotations.IsDefaultOrEmpty then failwith "TODO: Annotated methods not yet supported"
-    dest.WriteByte 0uy // length of vector
-
-    match m.Body with
-    | MethodBody.Defined codei ->
-        bits1 Tag.MethodBody.Defined dest
-        index codei dest
-    | MethodBody.Abstract -> bits1 Tag.MethodBody.Abstract dest
-
-let typeDef t dest =
-    index t.TypeName dest
-    bits1 t.TypeVisibility dest
-
-    match t.TypeKind with
-    | Class(extends, flags) ->
-        match extends with
-        | ValueSome basei ->
-            bits1 Tag.TypeDefinitionKind.Class dest
-            index basei dest
-        | ValueNone -> bits1 Tag.TypeDefinitionKind.BaseClass dest
-
-        bits1 flags dest
-    | Interface ->
-        bits1 Tag.TypeDefinitionKind.Interface dest
-    | Struct ->
-        bits1 Tag.TypeDefinitionKind.Struct dest
-
-    match t.TypeLayout with
-    | TypeDefinitionLayout.Unspecified ->
-        bits1 Tag.TypeDefinitionLayout.Unspecified dest
-    | TypeDefinitionLayout.Sequential ->
-        bits1 Tag.TypeDefinitionLayout.Sequential dest
-
-    if not t.ImplementedInterfaces.IsDefaultOrEmpty then failwith "TODO: Writing of implemented interfaces not yet supported"
-    dest.WriteByte 0uy // length of vector
-    if not t.TypeParameters.IsDefaultOrEmpty then failwith "TODO: Generic types not yet supported"
-    dest.WriteByte 0uy // length of vector
-    if not t.TypeAnnotations.IsDefaultOrEmpty then failwith "TODO: Annotated types not yet supported"
-    dest.WriteByte 0uy // length of vector
-
-    vector index t.Fields dest
-    vector index t.Methods dest
-
 let registerType (struct(count: uvarint, t: RegisterType)) dest =
     LEB128.uint count dest
     index t.RegisterType dest
@@ -209,8 +151,7 @@ let toStream (stream: Stream) (md: Module) =
 
         lengthEncodedVector buffer stream md.Identifiers.Identifiers str
 
-        lengthEncodedVector buffer stream md.Imports <| fun import dest ->
-            failwith "TODO: Imports not supported yet"
+        lengthEncodedVector buffer stream md.Namespaces (vector index)
 
         lengthEncodedVector buffer stream md.TypeSignatures <| fun signature dest ->
             match signature with
@@ -238,23 +179,80 @@ let toStream (stream: Stream) (md: Module) =
             vector index signature.ReturnTypes dest
             vector index signature.ParameterTypes dest
 
-        lengthEncodedVector buffer stream md.Data <| fun data dest ->
-            failwith "TODO: Data not supported yet"
-
         let auxbuf = new MemoryStream()
+
+        lengthEncodedData buffer stream <| fun dest ->
+            vector moduleID md.Imports.ImportedModules dest
+            lengthEncodedVector auxbuf dest md.Imports.ImportedTypes <| fun tdef dest ->
+                index tdef.Module dest
+                index tdef.TypeName dest
+                bits1 tdef.TypeKind dest
+                LEB128.uint tdef.TypeParameters dest
+                if tdef.TypeParameters > 0u then failwith "TODO: Type imports with type parameters are not yet supported"
+
+        lengthEncodedData buffer stream <| fun dest ->
+            lengthEncodedVector auxbuf dest md.Definitions.DefinedTypes <| fun t dest ->
+                index t.TypeName dest
+                bits1 t.TypeVisibility dest
+
+                match t.TypeKind with
+                | Class(extends, flags) ->
+                    match extends with
+                    | ValueSome basei ->
+                        bits1 Tag.TypeDefinitionKind.Class dest
+                        index basei dest
+                    | ValueNone -> bits1 Tag.TypeDefinitionKind.BaseClass dest
+
+                    bits1 flags dest
+                | Interface ->
+                    bits1 Tag.TypeDefinitionKind.Interface dest
+                | Struct ->
+                    bits1 Tag.TypeDefinitionKind.Struct dest
+
+                match t.TypeLayout with
+                | TypeDefinitionLayout.Unspecified ->
+                    bits1 Tag.TypeDefinitionLayout.Unspecified dest
+                | TypeDefinitionLayout.Sequential ->
+                    bits1 Tag.TypeDefinitionLayout.Sequential dest
+
+                if not t.ImplementedInterfaces.IsDefaultOrEmpty then failwith "TODO: Writing of implemented interfaces not yet supported"
+                dest.WriteByte 0uy // length of vector
+                if not t.TypeParameters.IsDefaultOrEmpty then failwith "TODO: Generic types not yet supported"
+                dest.WriteByte 0uy // length of vector
+                if not t.TypeAnnotations.IsDefaultOrEmpty then failwith "TODO: Annotated types not yet supported"
+                dest.WriteByte 0uy // length of vector
+
+            lengthEncodedVector auxbuf dest md.Definitions.DefinedFields <| fun f dest ->
+                index f.FieldOwner dest
+                index f.FieldName dest
+                bits1 f.FieldVisibility dest
+                bits1 f.FieldFlags dest
+                index f.FieldType dest
+                if not f.FieldAnnotations.IsDefaultOrEmpty then failwith "TODO: Annotated fields not yet supported"
+                dest.WriteByte 0uy // length of vector
+
+            lengthEncodedVector auxbuf dest md.Definitions.DefinedMethods <| fun m dest ->
+                index m.MethodOwner dest
+                index m.MethodName dest
+                bits1 m.MethodVisibility dest
+                bits1 m.MethodFlags dest
+                if not m.TypeParameters.IsDefaultOrEmpty then failwith "TODO: Generic methods not yet supported"
+                dest.WriteByte 0uy // length of vector
+                index m.Signature dest
+                if not m.MethodAnnotations.IsDefaultOrEmpty then failwith "TODO: Annotated methods not yet supported"
+                dest.WriteByte 0uy // length of vector
+
+                match m.Body with
+                | MethodBody.Defined codei ->
+                    bits1 Tag.MethodBody.Defined dest
+                    index codei dest
+                | MethodBody.Abstract -> bits1 Tag.MethodBody.Abstract dest
+
+        lengthEncodedVector buffer stream md.Data (fun data dest -> dest.Write(data.AsSpan()))
 
         lengthEncodedVector buffer stream md.Code <| fun code dest ->
             vector registerType code.RegisterTypes dest
             lengthEncodedVector auxbuf dest code.Instructions (instruction md.Endianness)
-
-        lengthEncodedVector buffer stream md.Fields (fun _ _ -> failwith "TODO: Fields not supported yet")
-
-        lengthEncodedVector buffer stream md.Methods methodDef
-
-        lengthEncodedVector buffer stream md.Namespaces <| fun ns dest ->
-            vector index ns.NamespaceName dest
-            lengthEncodedVector auxbuf dest ns.TypeDefinitions typeDef
-            lengthEncodedVector auxbuf dest ns.TypeAliases (fun _ _ -> failwith "TODO: Type aliases not yet supported")
 
         match md.EntryPoint with
         | ValueNone -> LEB128.uint 0u stream

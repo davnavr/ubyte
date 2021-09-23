@@ -31,6 +31,10 @@ type VersionNumbers =
     interface IComparable<VersionNumbers>
 
 val currentFormatVersion : VersionNumbers
+
+[<Literal>]
+val internal MaxDataVectorCount : uvarint = 11u
+
 val currentDataVectorCount : uvarint
 
 /// Represents a length-encoded UTF-8 string.
@@ -55,14 +59,16 @@ type LengthEncoded<'Data> = 'Data
 module IndexKinds =
     type [<AbstractClass>] Kind = class end
     type [<Sealed; Class>] Identifier = inherit Kind
+    type [<Sealed; Class>] Namespace = inherit Kind
     type [<Sealed; Class>] TypeSignature = inherit Kind
     type [<Sealed; Class>] MethodSignature = inherit Kind
-    type [<Sealed; Class>] Data = inherit Kind
-    type [<Sealed; Class>] Code = inherit Kind
-    type [<Sealed; Class>] Register = inherit Kind
+    type [<Sealed; Class>] Module = inherit Kind
     type [<Sealed; Class>] TypeDefinition = inherit Kind
     type [<Sealed; Class>] Method = inherit Kind
     type [<Sealed; Class>] Field = inherit Kind
+    type [<Sealed; Class>] Data = inherit Kind
+    type [<Sealed; Class>] Code = inherit Kind
+    type [<Sealed; Class>] Register = inherit Kind
 
 [<IsReadOnly; Struct; StructuralComparison; StructuralEquality>]
 type Index<'Kind when 'Kind :> IndexKinds.Kind> =
@@ -73,20 +79,19 @@ type Index<'Kind when 'Kind :> IndexKinds.Kind> =
 /// <summary>An index into the module's identifiers. The index of the first identifier is <c>0</c>.</summary>
 type IdentifierIndex = Index<IndexKinds.Identifier>
 
+/// <summary>
+/// An index into the namespaces of the types defined in this module, with the index of the first namespace being <c>0</c>.
+/// </summary>
+type NamespaceIndex = Index<IndexKinds.Namespace>
+
 type TypeSignatureIndex = Index<IndexKinds.TypeSignature>
 
 type MethodSignatureIndex = Index<IndexKinds.MethodSignature>
 
-type DataIndex = Index<IndexKinds.Data>
-
-/// <summary>An index into the module's method bodies. The index of the first method body is <c>0</c>.</summary>
-type CodeIndex = Index<IndexKinds.Code>
-
 /// <summary>
-/// An index to a register. The index of the first register not representing a method parameter is equal to the number
-/// of method parameters. The index of the first method parameter, if any are defined, is <c>0</c>.
+/// <c>0</c> refers to the current module, while the index of the first imported module is <c>1</c>.
 /// </summary>
-type RegisterIndex = Index<IndexKinds.Register>
+type ModuleIndex = Index<IndexKinds.Module>
 
 /// <summary>
 /// An index into the module's imported types or defined types. The index of the first imported type or type alias, if
@@ -105,6 +110,17 @@ type MethodIndex = Index<IndexKinds.Method>
 /// The index of the first field defined in this module is equal to the number of imported fields.
 /// </summary>
 type FieldIndex = Index<IndexKinds.Field>
+
+type DataIndex = Index<IndexKinds.Data>
+
+/// <summary>An index into the module's method bodies. The index of the first method body is <c>0</c>.</summary>
+type CodeIndex = Index<IndexKinds.Code>
+
+/// <summary>
+/// An index to a register. The index of the first register not representing a method parameter is equal to the number
+/// of method parameters. The index of the first method parameter, if any are defined, is <c>0</c>.
+/// </summary>
+type RegisterIndex = Index<IndexKinds.Register>
 
 module InstructionSet =
     /// Opcodes are represented as LEB128 encoded unsigned integers.
@@ -410,22 +426,23 @@ type MethodSignature =
 
 [<NoComparison; NoEquality>]
 type FieldImport =
-    { FieldName: IdentifierIndex
-      FieldType: TypeDefinitionIndex }
+    { FieldOwner: TypeDefinitionIndex
+      FieldName: IdentifierIndex
+      FieldType: TypeSignatureIndex }
 
 [<NoComparison; NoEquality>]
 type MethodImport =
-    { MethodName: IdentifierIndex
+    { MethodOwner: TypeDefinitionIndex
+      MethodName: IdentifierIndex
       TypeParameters: uvarint
       Signature: MethodSignatureIndex }
 
 [<NoComparison; NoEquality>]
 type TypeDefinitionImport =
-    { TypeName: IdentifierIndex
+    { Module: ModuleIndex
+      TypeName: IdentifierIndex
       TypeKind: Tag.TypeDefinitionKind
-      TypeParameters: uvarint
-      Fields: vector<FieldIndex>
-      Methods: vector<MethodIndex> }
+      TypeParameters: uvarint }
 
 /// Used to specify whether or not a type, field, or method can be imported by another module.
 type VisibilityFlags =
@@ -445,16 +462,13 @@ type FieldFlags =
 
 [<NoComparison; NoEquality>]
 type Field =
-    { FieldName: IdentifierIndex
+    { FieldOwner: TypeDefinitionIndex
+      FieldName: IdentifierIndex
       FieldVisibility: VisibilityFlags
       FieldFlags: FieldFlags
       FieldType: TypeSignatureIndex
       /// An array of annotations applied to the field.
-      FieldAnnotations: vector<unit>
-      ///// An array of initializers that must be run before the first time the value of this field is loaded, applies only to static
-      ///// fields.
-      //Initializers: vector<InitializerIndex>
-      }
+      FieldAnnotations: vector<unit> }
 
 [<Flags>]
 type MethodFlags =
@@ -470,23 +484,15 @@ type MethodBody =
 
 [<NoComparison; NoEquality>]
 type Method =
-    { MethodName: IdentifierIndex
+    { MethodOwner: TypeDefinitionIndex
+      MethodName: IdentifierIndex
       MethodVisibility: VisibilityFlags
       MethodFlags: MethodFlags
       TypeParameters: vector<unit>
       Signature: MethodSignatureIndex
       /// An array of annotations applied to the method.
       MethodAnnotations: vector<unit>
-      ///// An array of initializers that must be run before the first time this method is called, applies only to static methods.
-      //Initializers: vector<InitializerIndex>
       Body: MethodBody }
-
-/// Allows renaming of types in the metadata, similar to F#'s type abbreviations.
-[<NoComparison; NoEquality>]
-type TypeAlias =
-    { AliasName: IdentifierIndex
-      AliasVisibility: VisibilityFlags
-      AliasOf: TypeSignatureIndex }
 
 [<Flags>]
 type ClassDefinitionFlags =
@@ -515,6 +521,7 @@ type TypeDefinitionLayout =
 [<NoComparison; NoEquality>]
 type TypeDefinition =
     { TypeName: IdentifierIndex
+      TypeNamespace: NamespaceIndex
       TypeVisibility: VisibilityFlags
       TypeKind: TypeDefinitionKind
       TypeLayout: TypeDefinitionLayout
@@ -522,22 +529,12 @@ type TypeDefinition =
       TypeParameters: vector<unit>
       /// An array of annotations applied to the type.
       TypeAnnotations: vector<unit>
-      Fields: vector<FieldIndex>
-      Methods: vector<MethodIndex> }
-
-[<NoComparison; NoEquality>]
-type NamespaceImport =
-    { NamespaceName: vector<IdentifierIndex>
-      /// An array of the user-defined types imported from this namespace.
-      TypeImports: LengthEncoded<vector<TypeDefinitionImport>>
-      /// An array of the imported type aliases from this namespace.
-      TypeAliases: LengthEncoded<vector<IdentifierIndex>> }
-
-[<NoComparison; NoEquality>]
-type Namespace =
-    { NamespaceName: vector<IdentifierIndex>
-      TypeDefinitions: LengthEncoded<vector<TypeDefinition>>
-      TypeAliases: LengthEncoded<vector<TypeAlias>> }
+      ///// <summary>
+      ///// An array of initializers that must be run before the first time a static field, static method, or constructor defined
+      ///// in this class is used.
+      ///// </summary>
+      //Initializers: vector<InitializerIndex>
+      }
 
 [<Flags>]
 type RegisterFlags =
@@ -572,12 +569,6 @@ type ModuleIdentifier =
 
     interface IEquatable<ModuleIdentifier>
 
-type ModuleImport =
-    { ImportedModule: ModuleIdentifier
-      ImportedFields: vector<FieldImport>
-      ImportedMethods: vector<MethodImport>
-      ImportedNamespaces: vector<NamespaceImport> }
-
 [<Flags>]
 type ModuleHeaderFlags = // TODO: Have endian information be somewhere else, and allow endian-agnostic things.
     | LittleEndian = 0uy
@@ -597,6 +588,7 @@ type Endianness =
     | LittleEndian
     | BigEndian
 
+/// Describes the identity of a module and its properties.
 [<NoComparison; NoEquality>]
 type ModuleHeader =
     { /// Specifies the name and version of this module.
@@ -611,28 +603,37 @@ type ModuleHeader =
     member internal Endianness : Endianness
 
 [<NoComparison; NoEquality>]
+type ModuleImports =
+    { ImportedModules: vector<ModuleIdentifier>
+      ImportedTypes: LengthEncoded<vector<TypeDefinitionImport>>
+      ImportedFields: LengthEncoded<vector<FieldImport>>
+      ImportedMethods: LengthEncoded<vector<MethodImport>> }
+
+[<NoComparison; NoEquality>]
+type ModuleDefinitions =
+    { DefinedTypes: LengthEncoded<vector<TypeDefinition>>
+      DefinedFields: LengthEncoded<vector<Field>>
+      DefinedMethods: LengthEncoded<vector<Method>> }
+
+[<NoComparison; NoEquality>]
 type Module =
     { Magic: Magic
       FormatVersion: VersionNumbers
+      /// The header, which identifies the module and its properties.
       Header: LengthEncoded<ModuleHeader>
-      /// An array containing the names of the types, fields, and methods in this module.
+      /// An array containing the names of the types, fields, and methods.
       Identifiers: LengthEncoded<IdentifierSection>
-      /// An array of structures describes the modules containing the types used by this module.
-      Imports: LengthEncoded<vector<ModuleImport>>
+      /// An array of the namespaces containing the imported and defined types.
+      Namespaces: LengthEncoded<vector<vector<IdentifierIndex>>>
       TypeSignatures: LengthEncoded<vector<AnyType>>
       MethodSignatures: LengthEncoded<vector<MethodSignature>>
+      Imports: LengthEncoded<ModuleImports>
+      Definitions: LengthEncoded<ModuleDefinitions>
       /// An array of byte arrays containing miscellaneous data such as the contents of string literals.
       Data: LengthEncoded<vector<vector<byte>>>
       Code: LengthEncoded<vector<Code>>
-      ////TypeAliases:
-      //TypeDefinitions: // TODO: Should types be out here just like the fields and methods?
-      Fields: LengthEncoded<vector<Field>>
-      Methods: LengthEncoded<vector<Method>>
-      /// An array of the namespaces defined in the module, which contain the module's types.
-      Namespaces: LengthEncoded<vector<Namespace>>
-      /// An optional index specifying the entry point method of the application.
-      /// The entry point method must not have any type parameters. It is up to the compiler or runtime to determine if the
-      /// signature of the entry point method is valid.
+      /// An optional index specifying the entry point method of the application. The entry point method must not have any type
+      /// parameters. It is up to the compiler or runtime to determine if the signature of the entry point method is valid.
       EntryPoint: LengthEncoded<MethodIndex voption>
       Debug: LengthEncoded<Debug> }
 

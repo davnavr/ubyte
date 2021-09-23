@@ -85,6 +85,10 @@ let lengthEncodedData (source: #IByteSequence) =
     if read <> data.Length then failwithf "TODO: Unexpected end of data of length %i" data.Length
     struct(Unsafe.As<_, ImmutableArray<byte>> &data, StreamWrapper(new MemoryStream(data)))
 
+let lengthEncodedVector source parse =
+    let struct(_, data) = lengthEncodedData source
+    vector data parse
+
 let ustring (source: #_) =
     let struct(bytes, _) = lengthEncodedData source
     System.Text.Encoding.UTF8.GetString(bytes.AsSpan())
@@ -110,116 +114,76 @@ let header (source: #_) =
         if psize > PointerSize.Is64Bit then failwithf "TODO: Invalid pointer size 0x%02X (%A)" (uint8 psize) psize
         psize }
 
-let fieldImport source =
-    { FieldImport.FieldName = index source
-      FieldType = index source }
-
-let methodImport source =
-    { MethodImport.MethodName = index source
-      TypeParameters = LEB128.uint source
-      Signature = index source }
-
-let typeDefinitionImport source =
-    { TypeDefinitionImport.TypeName = index source
-      TypeKind =
-        let kind = bits1 source
-        if kind > Tag.TypeDefinitionKind.Struct then failwithf "TODO: Invalid type kind 0x%02X (%A)" (uint8 kind) kind
-        kind
-      TypeParameters = LEB128.uint source
-      Fields = vector source index
-      Methods = vector source index }
-
-let namespaceImport source =
-    { NamespaceImport.NamespaceName = vector source index
-      TypeImports = vector source typeDefinitionImport
-      TypeAliases = vector source index }
-
-let moduleImport source =
-    { ModuleImport.ImportedModule = moduleID source
-      ImportedFields = vector source fieldImport
-      ImportedMethods = vector source methodImport
-      ImportedNamespaces = vector source namespaceImport }
-
-let typeSignature source =
-    match bits1 source with
-    | Tag.Type.Unit -> Primitive PrimitiveType.Unit
-    | Tag.Type.S8 -> Primitive PrimitiveType.S8
-    | Tag.Type.S16 -> Primitive PrimitiveType.S16
-    | Tag.Type.S32 -> Primitive PrimitiveType.S32
-    | Tag.Type.S64 -> Primitive PrimitiveType.S64
-    | Tag.Type.U8 -> Primitive PrimitiveType.U8
-    | Tag.Type.U16 -> Primitive PrimitiveType.U16
-    | Tag.Type.U32 -> Primitive PrimitiveType.U32
-    | Tag.Type.U64 -> Primitive PrimitiveType.U64
-    | Tag.Type.F32 -> Primitive PrimitiveType.F32
-    | Tag.Type.F64 -> Primitive PrimitiveType.F64
-    | Tag.Type.Bool -> Primitive PrimitiveType.Bool
-    | Tag.Type.Char16 -> Primitive PrimitiveType.Char16
-    | Tag.Type.Char32 -> Primitive PrimitiveType.Char32
-    | bad -> failwithf "TODO: Invalid type (0x%02X) %A" (uint8 bad) bad
-
-let methodSignature source =
-    { ReturnTypes = vector source index
-      MethodSignature.ParameterTypes = vector source index }
+let moduleImports source =
+    { ModuleImports.ImportedModules = vector source moduleID
+      ImportedTypes =
+        lengthEncodedVector source <| fun t ->
+            { TypeDefinitionImport.Module = index t
+              TypeName = index t
+              TypeKind =
+                let kind = bits1 t
+                if kind > Tag.TypeDefinitionKind.Struct then failwithf "TODO: Invalid type kind 0x%02X (%A)" (uint8 kind) kind
+                kind
+              TypeParameters = LEB128.uint t }
+      ImportedFields =
+        lengthEncodedVector source <| fun f ->
+            { FieldImport.FieldOwner = index f
+              FieldName = index f
+              FieldType = index f }
+      ImportedMethods =
+        lengthEncodedVector source <| fun m ->
+            { MethodImport.MethodOwner = index m
+              MethodName = index m
+              TypeParameters = LEB128.uint m
+              Signature = index m } }
 
 let annotation _ = failwith "TODO: Annotations not yet supported"
 
-let field source =
-    { Field.FieldName = index source
-      FieldVisibility = bits1 source
-      FieldFlags = bits1 source
-      FieldType = index source
-      FieldAnnotations = vector source annotation }
-
 let genericTypeParam _ = failwith "TODO: Type parameters not yet supported"
 
-let method source =
-    { Method.MethodName = index source
-      MethodVisibility = bits1 source
-      MethodFlags = bits1 source
-      TypeParameters = vector source genericTypeParam
-      Signature = index source
-      MethodAnnotations = vector source annotation
-      Body =
-        match bits1 source with
-        | Tag.MethodBody.Defined -> MethodBody.Defined(index source)
-        | Tag.MethodBody.Abstract -> MethodBody.Abstract
-        | bad -> failwithf "TODO: Bad method body kind 0x%02X" (uint8 bad) }
-
-let typeDefinition source =
-    { TypeDefinition.TypeName = index source
-      TypeVisibility = bits1 source
-      TypeKind =
-        match bits1 source with
-        | Tag.TypeDefinitionKind.Class -> Class(ValueSome(index source), bits1 source)
-        | Tag.TypeDefinitionKind.Interface -> Interface
-        | Tag.TypeDefinitionKind.Struct -> Struct
-        | Tag.TypeDefinitionKind.BaseClass -> Class(ValueNone, bits1 source)
-        | bad -> failwithf "TODO: Bad type definition kind 0x%02X" (uint8 bad)
-      TypeLayout =
-        match bits1 source with
-        | Tag.TypeDefinitionLayout.Unspecified -> TypeDefinitionLayout.Unspecified
-        | Tag.TypeDefinitionLayout.Sequential -> TypeDefinitionLayout.Sequential
-        | bad -> failwithf "TODO: Bad type definition layout kind 0x%02X" (uint8 bad)
-      ImplementedInterfaces = vector source (fun _ -> failwith "TODO: Interfaces not yet supported")
-      TypeParameters = vector source genericTypeParam
-      TypeAnnotations = vector source annotation
-      Fields = vector source index
-      Methods = vector source index }
-
-let typeAlias source =
-    { TypeAlias.AliasName = index source
-      AliasVisibility = bits1 source
-      AliasOf = failwith "TODO: Implement parsing of types" }
-
-let namespace' source =
-    { Namespace.NamespaceName = vector source index
-      TypeDefinitions =
-        let struct(_, tdefs) = lengthEncodedData source
-        vector tdefs typeDefinition
-      TypeAliases =
-        let struct(_, taliases) = lengthEncodedData source
-        vector taliases typeAlias }
+let moduleDefinitions source =
+    { ModuleDefinitions.DefinedTypes =
+        lengthEncodedVector source <| fun t ->
+            { TypeDefinition.TypeName = index t
+              TypeNamespace = index t
+              TypeVisibility = bits1 t
+              TypeKind =
+                match bits1 t with
+                | Tag.TypeDefinitionKind.Class -> Class(ValueSome(index t), bits1 t)
+                | Tag.TypeDefinitionKind.Interface -> Interface
+                | Tag.TypeDefinitionKind.Struct -> Struct
+                | Tag.TypeDefinitionKind.BaseClass -> Class(ValueNone, bits1 t)
+                | bad -> failwithf "TODO: Bad type definition kind 0x%02X" (uint8 bad)
+              TypeLayout =
+                match bits1 t with
+                | Tag.TypeDefinitionLayout.Unspecified -> TypeDefinitionLayout.Unspecified
+                | Tag.TypeDefinitionLayout.Sequential -> TypeDefinitionLayout.Sequential
+                | bad -> failwithf "TODO: Bad type definition layout kind 0x%02X" (uint8 bad)
+              ImplementedInterfaces = vector t (fun _ -> failwith "TODO: Interfaces not yet supported")
+              TypeParameters = vector t genericTypeParam
+              TypeAnnotations = vector t annotation }
+      DefinedFields =
+        lengthEncodedVector source <| fun f ->
+            { Field.FieldOwner = index f
+              FieldName = index f
+              FieldVisibility = bits1 f
+              FieldFlags = bits1 f
+              FieldType = index f
+              FieldAnnotations = vector f annotation }
+      DefinedMethods =
+        lengthEncodedVector source <| fun m ->
+            { Method.MethodOwner = index m
+              MethodName = index m
+              MethodVisibility = bits1 m
+              MethodFlags = bits1 m
+              TypeParameters = vector m genericTypeParam
+              Signature = index m
+              MethodAnnotations = vector m annotation
+              Body =
+                match bits1 m with
+                | Tag.MethodBody.Defined -> MethodBody.Defined(index m)
+                | Tag.MethodBody.Abstract -> MethodBody.Abstract
+                | bad -> failwithf "TODO: Bad method body kind 0x%02X" (uint8 bad) } }
 
 [<RequireQualifiedAccess>]
 module Constant =
@@ -301,45 +265,53 @@ let fromBytes (source: #IByteSequence) =
     { Module.Magic = magic'
       FormatVersion = fversion
       Header = header'
-      Identifiers =
-        let struct(_, identifiers) = lengthEncodedData source
-        { IdentifierSection.Identifiers = vector identifiers ustring }
+      Identifiers = { IdentifierSection.Identifiers = lengthEncodedVector source ustring }
+      Namespaces = lengthEncodedVector source (fun ns -> vector ns index)
+      TypeSignatures =
+        lengthEncodedVector source <| fun tsig ->
+            match bits1 tsig with
+            | Tag.Type.Unit -> Primitive PrimitiveType.Unit
+            | Tag.Type.S8 -> Primitive PrimitiveType.S8
+            | Tag.Type.S16 -> Primitive PrimitiveType.S16
+            | Tag.Type.S32 -> Primitive PrimitiveType.S32
+            | Tag.Type.S64 -> Primitive PrimitiveType.S64
+            | Tag.Type.U8 -> Primitive PrimitiveType.U8
+            | Tag.Type.U16 -> Primitive PrimitiveType.U16
+            | Tag.Type.U32 -> Primitive PrimitiveType.U32
+            | Tag.Type.U64 -> Primitive PrimitiveType.U64
+            | Tag.Type.F32 -> Primitive PrimitiveType.F32
+            | Tag.Type.F64 -> Primitive PrimitiveType.F64
+            | Tag.Type.Bool -> Primitive PrimitiveType.Bool
+            | Tag.Type.Char16 -> Primitive PrimitiveType.Char16
+            | Tag.Type.Char32 -> Primitive PrimitiveType.Char32
+            | bad -> failwithf "TODO: Invalid type (0x%02X) %A" (uint8 bad) bad
+      MethodSignatures =
+        lengthEncodedVector source <| fun msig ->
+            { ReturnTypes = vector msig index
+              MethodSignature.ParameterTypes = vector msig index }
       Imports =
         let struct(_, imports) = lengthEncodedData source
-        vector imports moduleImport
-      TypeSignatures =
-        let struct(_, tsigs) = lengthEncodedData source
-        vector tsigs typeSignature
-      MethodSignatures =
-        let struct(_, msigs) = lengthEncodedData source
-        vector msigs methodSignature
+        moduleImports imports
+      Definitions =
+        let struct(_, definitions) = lengthEncodedData source
+        moduleDefinitions definitions
       Data =
         let struct(_, data) = lengthEncodedData source
         vector data <| fun source ->
             let struct(bytes, _) = lengthEncodedData source
             bytes
       Code =
-        let struct(_, code) = lengthEncodedData source
-        vector code <| fun source ->
+        lengthEncodedVector source  <| fun code ->
             { Code.RegisterTypes =
-                vector source <| fun source ->
-                    let count = LEB128.uint source
+                vector code <| fun body ->
+                    let count = LEB128.uint body
                     let rtype =
-                        { RegisterType = index source
-                          RegisterFlags = bits1 source }
+                        { RegisterType = index body
+                          RegisterFlags = bits1 body }
                     struct(count, rtype)
               Instructions =
-                let struct(_, instructions) = lengthEncodedData source
+                let struct(_, instructions) = lengthEncodedData code
                 vector instructions (instruction header'.Endianness) }
-      Fields =
-        let struct(_, fields) = lengthEncodedData source
-        vector fields field
-      Methods =
-          let struct(_, methods) = lengthEncodedData source
-          vector methods method
-      Namespaces =
-        let struct(_, namespaces) = lengthEncodedData source
-        vector namespaces namespace'
       EntryPoint =
         let struct(epoint, epoint') = lengthEncodedData source
         if epoint.IsDefaultOrEmpty

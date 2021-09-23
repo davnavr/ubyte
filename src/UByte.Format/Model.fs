@@ -58,8 +58,10 @@ type VersionNumbers =
 
     interface IComparable with member this.CompareTo o = Comparison.compare this (o :?> VersionNumbers)
 
+let [<Literal>] MaxDataVectorCount : uvarint = 11u
+
 let currentFormatVersion = ImmutableArray.Create(0u, 0u) |> VersionNumbers
-let currentDataVectorCount = 12u
+let currentDataVectorCount = MaxDataVectorCount
 
 type ustring = string
 
@@ -74,28 +76,32 @@ type LengthEncoded<'Contents> = 'Contents
 module IndexKinds =
     type [<AbstractClass>] Kind = class end
     type [<Sealed; Class>] Identifier = inherit Kind
+    type [<Sealed; Class>] Namespace = inherit Kind
     type [<Sealed; Class>] TypeSignature = inherit Kind
     type [<Sealed; Class>] MethodSignature = inherit Kind
-    type [<Sealed; Class>] Code = inherit Kind
-    type [<Sealed; Class>] Register = inherit Kind
-    type [<Sealed; Class>] Data = inherit Kind
+    type [<Sealed; Class>] Module = inherit Kind
     type [<Sealed; Class>] TypeDefinition = inherit Kind
     type [<Sealed; Class>] Method = inherit Kind
     type [<Sealed; Class>] Field = inherit Kind
+    type [<Sealed; Class>] Data = inherit Kind
+    type [<Sealed; Class>] Code = inherit Kind
+    type [<Sealed; Class>] Register = inherit Kind
 
 [<Struct; StructuralComparison; StructuralEquality>]
 type Index<'Kind when 'Kind :> IndexKinds.Kind> =
     | Index of uvarint
 
 type IdentifierIndex = Index<IndexKinds.Identifier>
+type NamespaceIndex = Index<IndexKinds.Namespace>
 type TypeSignatureIndex = Index<IndexKinds.TypeSignature>
 type MethodSignatureIndex = Index<IndexKinds.MethodSignature>
-type CodeIndex = Index<IndexKinds.Code>
-type RegisterIndex = Index<IndexKinds.Register>
-type DataIndex = Index<IndexKinds.Data>
+type ModuleIndex = Index<IndexKinds.Module>
 type TypeDefinitionIndex = Index<IndexKinds.TypeDefinition>
 type MethodIndex = Index<IndexKinds.Method>
 type FieldIndex = Index<IndexKinds.Field>
+type CodeIndex = Index<IndexKinds.Code>
+type RegisterIndex = Index<IndexKinds.Register>
+type DataIndex = Index<IndexKinds.Data>
 
 module InstructionSet =
     type Opcode =
@@ -241,16 +247,19 @@ and [<NoComparison; StructuralEquality>]  AnyType =
 [<NoComparison; StructuralEquality>]
 type MethodSignature = { ReturnTypes: vector<TypeSignatureIndex>; ParameterTypes: vector<TypeSignatureIndex> }
 
-type FieldImport = { FieldName: IdentifierIndex; FieldType: TypeDefinitionIndex }
+type FieldImport = { FieldOwner: TypeDefinitionIndex; FieldName: IdentifierIndex; FieldType: TypeSignatureIndex }
 
-type MethodImport = { MethodName: IdentifierIndex; TypeParameters: uvarint; Signature: MethodSignatureIndex }
+type MethodImport =
+    { MethodOwner: TypeDefinitionIndex
+      MethodName: IdentifierIndex
+      TypeParameters: uvarint
+      Signature: MethodSignatureIndex }
 
 type TypeDefinitionImport =
-    { TypeName: IdentifierIndex
+    { Module: ModuleIndex
+      TypeName: IdentifierIndex
       TypeKind: Tag.TypeDefinitionKind
-      TypeParameters: uvarint
-      Fields: vector<FieldIndex>
-      Methods: vector<MethodIndex> }
+      TypeParameters: uvarint }
 
 type VisibilityFlags =
     | Unspecified = 0uy
@@ -265,7 +274,8 @@ type FieldFlags =
     | ValidMask = 0b0000_0011uy
 
 type Field =
-    { FieldName: IdentifierIndex
+    { FieldOwner: TypeDefinitionIndex
+      FieldName: IdentifierIndex
       FieldVisibility: VisibilityFlags
       FieldFlags: FieldFlags
       FieldType: TypeSignatureIndex
@@ -283,7 +293,8 @@ type MethodBody =
     | Abstract
 
 type Method =
-    { MethodName: IdentifierIndex
+    { MethodOwner: TypeDefinitionIndex
+      MethodName: IdentifierIndex
       MethodVisibility: VisibilityFlags
       MethodFlags: MethodFlags
       TypeParameters: vector<unit>
@@ -314,24 +325,13 @@ type TypeDefinitionLayout =
 
 type TypeDefinition =
     { TypeName: IdentifierIndex
+      TypeNamespace: NamespaceIndex
       TypeVisibility: VisibilityFlags
       TypeKind: TypeDefinitionKind
       TypeLayout: TypeDefinitionLayout
       ImplementedInterfaces: vector<unit>
       TypeParameters: vector<unit>
-      TypeAnnotations: vector<unit>
-      Fields: vector<FieldIndex>
-      Methods: vector<MethodIndex> }
-
-type NamespaceImport =
-    { NamespaceName: vector<IdentifierIndex>
-      TypeImports: LengthEncoded<vector<TypeDefinitionImport>>
-      TypeAliases: LengthEncoded<vector<IdentifierIndex>> }
-
-type Namespace =
-    { NamespaceName: vector<IdentifierIndex>
-      TypeDefinitions: LengthEncoded<vector<TypeDefinition>>
-      TypeAliases: LengthEncoded<vector<TypeAlias>> }
+      TypeAnnotations: vector<unit> }
 
 [<Flags>]
 type RegisterFlags =
@@ -355,12 +355,6 @@ type Debug = unit
 
 [<NoComparison; StructuralEquality>]
 type ModuleIdentifier = { ModuleName: Name; Version: VersionNumbers }
-
-type ModuleImport =
-    { ImportedModule: ModuleIdentifier
-      ImportedFields: vector<FieldImport>
-      ImportedMethods: vector<MethodImport>
-      ImportedNamespaces: vector<NamespaceImport> }
 
 [<Flags>]
 type ModuleHeaderFlags =
@@ -389,19 +383,29 @@ type ModuleHeader =
         then BigEndian
         else LittleEndian
 
+type ModuleImports =
+    { ImportedModules: vector<ModuleIdentifier>
+      ImportedTypes: LengthEncoded<vector<TypeDefinitionImport>>
+      ImportedFields: LengthEncoded<vector<FieldImport>>
+      ImportedMethods: LengthEncoded<vector<MethodImport>> }
+
+type ModuleDefinitions =
+    { DefinedTypes: LengthEncoded<vector<TypeDefinition>>
+      DefinedFields: LengthEncoded<vector<Field>>
+      DefinedMethods: LengthEncoded<vector<Method>> }
+
 type Module =
     { Magic: Magic
       FormatVersion: VersionNumbers
       Header: LengthEncoded<ModuleHeader>
       Identifiers: LengthEncoded<IdentifierSection>
-      Imports: LengthEncoded<vector<ModuleImport>>
+      Namespaces: LengthEncoded<vector<vector<IdentifierIndex>>>
       TypeSignatures: LengthEncoded<vector<AnyType>>
       MethodSignatures: LengthEncoded<vector<MethodSignature>>
+      Imports: LengthEncoded<ModuleImports>
+      Definitions: LengthEncoded<ModuleDefinitions>
       Data: LengthEncoded<vector<vector<byte>>>
       Code: LengthEncoded<vector<Code>>
-      Fields: LengthEncoded<vector<Field>>
-      Methods: LengthEncoded<vector<Method>>
-      Namespaces: LengthEncoded<vector<Namespace>>
       EntryPoint: LengthEncoded<MethodIndex voption>
       Debug: LengthEncoded<Debug> }
 
