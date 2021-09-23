@@ -418,7 +418,11 @@ and [<NoComparison; StructuralEquality>] AnyType =
 /// Describes the return types and parameter types of a method.
 [<NoComparison; StructuralEquality>]
 type MethodSignature =
-    { /// The types of the values returned by the method.
+    { // TODO: Consider simply using pointers for more than one return type.
+      /// <summary>The types of the values returned by the method.</summary>
+      /// <remarks>
+      /// Methods that return multiple values can easily be translated to a .NET method with <see langword="out"/> parameters.
+      /// </remarks>
       ReturnTypes: vector<TypeSignatureIndex>
       ParameterTypes: vector<TypeSignatureIndex> }
 

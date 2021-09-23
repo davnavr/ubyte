@@ -206,10 +206,11 @@ let createIndexedLookup (count: int32) initializer =
 type MissingEntryPointException (message: string) = inherit RuntimeException(message, ValueNone)
 
 [<Sealed>]
-type RuntimeModule (m: Module, moduleImportResolver: ModuleImport -> RuntimeModule) as rm =
+type RuntimeModule (m: Module, moduleImportResolver: ModuleIdentifier -> RuntimeModule) as rm =
     // TODO: Account for imports
     let methodDefLookup =
-        createIndexedLookup m.Methods.Length <| fun (Index i) -> RuntimeMethod(rm, m.Methods.[Checked.int32 i])
+        let methods = m.Definitions.DefinedMethods
+        createIndexedLookup methods.Length <| fun (Index i) -> RuntimeMethod(rm, methods.[Checked.int32 i])
 
     member _.IdentifierAt(Index i: IdentifierIndex) = m.Identifiers.Identifiers.[Checked.int32 i]
 
@@ -244,13 +245,14 @@ type RuntimeModule (m: Module, moduleImportResolver: ModuleImport -> RuntimeModu
         | ValueNone -> raise(MissingEntryPointException "The entry point method of the module is not defined")
 
 let initialize program moduleImportLoader =
+    /// A cache for the modules created by the import loader.
     let moduleImportResolver =
-        let resolved = Dictionary<ModuleImport, RuntimeModule> program.Imports.Length
+        let resolved = Dictionary<ModuleIdentifier, RuntimeModule> program.Imports.ImportedModules.Length
         let rec resolver import =
             match resolved.TryGetValue import with
             | true, existing -> existing
             | false, _ ->
-                let r = RuntimeModule(moduleImportLoader import.ImportedModule, resolver)
+                let r = RuntimeModule(moduleImportLoader import, resolver)
                 resolved.Add(import, r)
                 r
         resolver
