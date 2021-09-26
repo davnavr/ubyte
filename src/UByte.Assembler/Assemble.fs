@@ -205,8 +205,9 @@ let tsignature =
 let tcode =
     let registers =
         tuple2 identifier identifier
-        |> declaration "register"
+        |> declaration "local"
         |> many
+        |> declaration "registers"
 
     let mapRegisterNames lookup names =
         let rec inner (registers: ImmutableArray<RegisterIndex>.Builder) errors names =
@@ -226,11 +227,13 @@ let tcode =
 
     let body: Parser<UnresolvedInstruction list, _> =
         choice [
-            keyword "ret" >>. preturn (fun _ _ -> Result.Ok(InstructionSet.Ret ImmutableArray.Empty))
+            choice [
+                keyword "ret" >>. many (getPosition .>>. identifier) |>> fun names -> fun registers _ ->
+                    Result.map InstructionSet.Ret (mapRegisterNames registers names)
+            ]
+            |> sexpression
 
-            many (getPosition .>>. identifier)
-            |> declaration "ret"
-            |>> fun names -> fun registers _ -> Result.map InstructionSet.Ret (mapRegisterNames registers names)
+            keyword "ret" >>. preturn (fun _ _ -> Result.Ok(InstructionSet.Ret ImmutableArray.Empty))
         ]
         |> many
 
