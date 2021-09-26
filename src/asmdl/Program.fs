@@ -34,17 +34,16 @@ let main argv =
 
     use input' = input.OpenRead()
 
-    match FParsec.CharParsers.runParserOnStream Parser.sexpression () input.Name input' System.Text.Encoding.UTF8 with
-    | FParsec.CharParsers.Success(contents, (), _) ->
-        match Assembler.assemble contents with
-        | Ok mdle ->
-            output.Directory.Create()
-            use output' = output.Create()
-            UByte.Format.WriteModule.toStream output' mdle
-            0
-        | Error errors ->
-            for err in errors do stderr.WriteLine err
-            -1
-    | FParsec.CharParsers.Failure(err, _, ()) ->
-        stderr.WriteLine err
+    let result =
+        Assemble.fromInput <| fun parser state ->
+            FParsec.CharParsers.runParserOnStream parser state input.Name input' System.Text.Encoding.UTF8
+
+    match result with
+    | Ok mdle ->
+        output.Directory.Create()
+        use output' = output.Create()
+        UByte.Format.WriteModule.toStream output' mdle
+        0
+    | Error errors ->
+        for err in errors do stderr.WriteLine err
         -1

@@ -16,16 +16,17 @@
     (ret $l0)
   )
 
+  (namespace $namespace_example (name $id_namespace))
+
+  (type $class_hello_world (name $id_class) (namespace $namespace_example)
+    (visibility public)
+    (class base)
+  )
+
   (method $method_main (name $id_entry_point) (visibility public)
     (signature $sig_main)
     (defined $code_main)
-  )
-
-  (namespace (name $id_namespace)
-    (type $class_hello_world (name $id_class) (visibility public)
-      (class base abstract)
-      (method $method_main)
-    )
+    (owner $class_hello_world)
   )
 
   (entrypoint $method_main)
