@@ -147,13 +147,17 @@ let declaration name inner =
     |> sexpression
     |> atom
 
-let inline attributes flags =
+let inline attributes (flags: (string * 'Flag) list when 'Flag :> Enum) =
     List.map (fun (name, flag) -> keyword name >>. preturn flag) flags
     |> choice
     |> many
     |>> List.fold (fun flags flag -> flags ||| flag) Unchecked.defaultof<_>
 
-let inline flags name flags = declaration name (attributes flags)
+let inline flags name flags =
+    choice [
+        declaration name (attributes flags) |> attempt
+        preturn Unchecked.defaultof<_>
+    ]
 
 let tidentifier =
     keyword "identifier" >>. tuple3 getPosition identifier stringlit >>= fun (pos, id, name) ->
@@ -209,27 +213,67 @@ let tcode =
         |> many
         |> declaration "registers"
 
-    let mapRegisterNames lookup names =
+    let lookupRegisterName lookup (pos, name) =
+        match lookup name with
+        | ValueSome i -> Result.Ok i
+        | ValueNone -> Result.Error(errorIdentifierUndefined "register" name pos)
+
+    let lookupRegisterList lookup names =
         let rec inner (registers: ImmutableArray<RegisterIndex>.Builder) errors names =
             match errors, names with
             | _ :: _, [] -> Result.Error errors
             | [], [] -> Result.Ok(registers.ToImmutable())
-            | _, (pos, reg) :: remaining ->
+            | _, name :: remaining ->
                 let errors' =
-                    match lookup reg with
-                    | ValueSome i ->
+                    match lookupRegisterName lookup name with
+                    | Result.Ok i ->
                         registers.Add i
                         errors
-                    | ValueNone ->
-                        errorIdentifierUndefined "register" reg pos :: errors
+                    | Result.Error err ->
+                        err :: errors
                 inner registers errors' remaining
         inner (ImmutableArray.CreateBuilder()) List.empty names
+
+    let lookupRegisterArray lookup names =
+        let mutable resolved, errors = Array.zeroCreate(Array.length names), List.empty
+
+        for i = 0 to resolved.Length - 1 do
+            match lookupRegisterName lookup names.[i] with
+            | Result.Ok rindex -> resolved.[i] <- rindex
+            | Result.Error err -> errors <- err :: errors
+
+        match errors with
+        | [] -> Result.Ok(Unsafe.As<RegisterIndex[], ImmutableArray<RegisterIndex>> &resolved)
+        | _ -> Result.Error errors
 
     let body: Parser<UnresolvedInstruction list, _> =
         choice [
             choice [
                 keyword "ret" >>. many (getPosition .>>. identifier) |>> fun names -> fun registers _ ->
-                    Result.map InstructionSet.Ret (mapRegisterNames registers names)
+                    Result.map InstructionSet.Ret (lookupRegisterList registers names)
+
+                keyword "add" >>. parray 3 (getPosition .>>. identifier) |>> fun names -> fun registers _ ->
+                    Result.map
+                        (fun (registers': ImmutableArray<_>) ->
+                            InstructionSet.Add(registers'.[0], registers'.[1], registers'.[2]))
+                        (lookupRegisterArray registers names)
+
+                let inline guardIntegerRange min max convert value =
+                    if value >= int64 min && value <= int64 max
+                    then ValueSome(convert value)
+                    else ValueNone
+
+                keyword "const.i32"
+                >>. (getPosition .>>. integerlit)
+                .>>. (getPosition .>>. identifier)
+                |>> fun (value, name) -> fun registers _ ->
+                    match guardIntegerRange Int32.MinValue Int32.MaxValue int32 (snd value) with
+                    | ValueSome value' ->
+                        lookupRegisterName registers name
+                        |> Result.map (fun i -> InstructionSet.Const_i32(value', i))
+                        |> Result.mapError List.singleton
+                    | ValueNone ->
+                        Result.Error [ ValidationError(string (snd value) + " is not a valid 32-bit integer literal", fst value) ]
             ]
             |> sexpression
 
@@ -346,6 +390,15 @@ let tmodule: Parser<AssemblerResult, State> =
         moduleVersionInfo "format" (fun mdle -> mdle.ModuleFormatVersion) "Duplicate module format version"
         moduleVersionInfo "version" (fun mdle -> mdle.ModuleHeaderVersion) "Duplicate module version"
 
+        tidentifier
+
+        tsignature
+
+        tcode
+
+        // "namespace" also starts with "name", so this parser must go before the module name
+        tnamespace
+
         keyword "name" >>. getPosition .>>. stringlit >>= fun (pos, mname) ->
             updateUserState <| fun state ->
                 match Name.tryOfStr mname, state.Module.ModuleHeaderName with
@@ -356,14 +409,6 @@ let tmodule: Parser<AssemblerResult, State> =
                     { state with Errors = ValidationError("Duplicate module name", pos) :: state.Errors }
                 | ValueNone, _ ->
                     { state with Errors = ValidationError("The module name cannot be empty", pos) :: state.Errors }
-
-        tidentifier
-
-        tsignature
-
-        tcode
-
-        tnamespace
 
         ttypedef
 
