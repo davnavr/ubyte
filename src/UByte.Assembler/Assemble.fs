@@ -134,11 +134,16 @@ let stringlit = let quot = skipChar '\"' in quot >>. manyCharsTill idchar quot |
 let integerlit = atomL "integer literal" pint64
 let keyword = skipString >> atom
 
-let sexpression inner = between (skipChar '(' |> attempt) (skipChar ')') inner
+/// <summary>Parses text nested within parenthesis.</summary>
+/// <remarks>
+/// Do not use <c>choice</c> as the <paramref name="inner"/> parser if the choice parsers also parse s-expressions, as the first
+/// parser will consume the opening parenthesis.
+/// </remarks>
+let sexpression inner = between (skipChar '(') (skipChar ')') inner |> atom
 
 let declaration name inner =
     keyword name
-    >>. inner
+    >>? inner
     |> sexpression
     |> atom
 
@@ -148,16 +153,10 @@ let inline attributes flags =
     |> many
     |>> List.fold (fun flags flag -> flags ||| flag) Unchecked.defaultof<_>
 
-let inline flags name flags = declaration name (attributes flags) 
-
-let versiondir vname: Parser<VersionNumbers, _> =
-    many integerlit
-    |>> (List.map uint32 >> ImmutableArray.CreateRange >> VersionNumbers)
-    |> declaration vname
-    <?> (vname + " version")
+let inline flags name flags = declaration name (attributes flags)
 
 let tidentifier =
-    declaration "identifier" (tuple3 getPosition identifier stringlit) >>= fun (pos, id, name) ->
+    keyword "identifier" >>. tuple3 getPosition identifier stringlit >>= fun (pos, id, name) ->
         updateUserState <| fun state ->
             if state.Module.ModuleIdentifiers.AddNamed(id, name) then
                 state
@@ -165,7 +164,7 @@ let tidentifier =
                 { state with Errors = errorDuplicateIdentifier "identifier" id pos :: state.Errors }
 
 let ttypesig =
-    choice [
+    keyword "type" >>. choice [
         choiceL
             [
                 skipString "s32" >>. preturn PrimitiveType.S32
@@ -173,7 +172,6 @@ let ttypesig =
             "primitive type"
         |>> (fun prim -> fun (_: TypeDefinitionLookup) -> AnyType.Primitive prim)
     ]
-    |> declaration "type"
 
 let tmethodsig =
     let typelist name =
@@ -182,18 +180,14 @@ let tmethodsig =
         |> opt
         |>> Option.defaultValue List.empty
 
-    tuple2
-        (typelist "returns")
-        (typelist "parameters")
-    |> declaration "method"
-    |>> fun (returnt, paramt) -> { UnresolvedMethodSignature.ReturnTypes = returnt; ParameterTypes = paramt }
+    keyword "method" >>. pipe2 (typelist "returns") (typelist "parameters") (fun returnt paramt ->
+        { UnresolvedMethodSignature.ReturnTypes = returnt; ParameterTypes = paramt })
 
 let tsignature =
     tuple3
-        getPosition
+        (keyword "signature" >>. getPosition)
         identifier
-        (choice [ ttypesig |>> Choice1Of2; tmethodsig |>> Choice2Of2 ])
-    |> declaration "signature"
+        (choice [ ttypesig |>> Choice1Of2; tmethodsig |>> Choice2Of2 ] |> sexpression)
     >>= fun(pos, id, signature) ->
         updateUserState <| fun state ->
             match signature with
@@ -240,7 +234,7 @@ let tcode =
         ]
         |> many
 
-    declaration "code" (tuple4 getPosition identifier registers body) >>= fun (pos, id, regs, instrs) ->
+    keyword "code" >>. tuple4 getPosition identifier registers body >>= fun (pos, id, regs, instrs) ->
         updateUserState <| fun state ->
             if state.Module.ModuleCode.AddNamed(id, { UnresolvedCode.Registers = regs; Instructions = instrs }) then
                 state
@@ -248,10 +242,7 @@ let tcode =
                 { state with Errors = errorDuplicateIdentifier "code block" id pos :: state.Errors }
 
 let tnamespace =
-    declaration "name" (many identifier)
-    |> tuple3 getPosition identifier
-    |> declaration "namespace"
-    >>= fun (pos, id, name) ->
+    tuple3 (keyword "namespace" >>. getPosition) identifier (declaration "name" (many identifier)) >>= fun (pos, id, name) ->
         updateUserState <| fun state ->
             if state.Module.ModuleNamespaces.AddNamed(id, name) then
                 state
@@ -279,12 +270,11 @@ let ttypedef =
     ]
 
     tuple5
-        (getPosition .>>. identifier)
+        (keyword "type" >>. getPosition .>>. identifier)
         tnamedecl
         (declaration "namespace" identifier)
         tvisibility
         kind
-    |> declaration "type"
     >>= fun ((pos, id), name, ns, vis, tkind) ->
         updateUserState <| fun state ->
             let tdef =
@@ -313,12 +303,11 @@ let tmethoddef =
     ]
 
     tuple5
-        (tuple3 getPosition identifier tnamedecl)
+        (tuple3 (keyword "method" >>. getPosition) identifier tnamedecl)
         tvisibility
         (declaration "signature" identifier)
         (kind .>>. mflags)
         (declaration "owner" identifier)
-    |> declaration "method"
     >>= fun ((pos, id, name), vis, signature, (mkind, mflags), owner) ->
         updateUserState <| fun state ->
             let mdef =
@@ -338,7 +327,10 @@ type AssemblerResult = Result<Module, AssemblerError list>
 
 let tmodule: Parser<AssemblerResult, State> =
     let moduleVersionInfo vname version err =
-        getPosition .>>. versiondir vname >>= fun (pos, numbers) ->
+        getPosition
+        .>> keyword vname
+        .>>. (many integerlit |>> (List.map uint32 >> ImmutableArray.CreateRange >> VersionNumbers))
+        >>= fun (pos, numbers) ->
             updateUserState <| fun state ->
                 match version state.Module with
                 | { contents = ValueNone } as ver ->
@@ -351,7 +343,7 @@ let tmodule: Parser<AssemblerResult, State> =
         moduleVersionInfo "format" (fun mdle -> mdle.ModuleFormatVersion) "Duplicate module format version"
         moduleVersionInfo "version" (fun mdle -> mdle.ModuleHeaderVersion) "Duplicate module version"
 
-        declaration "name" (getPosition .>>. stringlit) >>= fun (pos, mname) ->
+        keyword "name" >>. getPosition .>>. stringlit >>= fun (pos, mname) ->
             updateUserState <| fun state ->
                 match Name.tryOfStr mname, state.Module.ModuleHeaderName with
                 | ValueSome mname', ValueNone ->
@@ -374,7 +366,7 @@ let tmodule: Parser<AssemblerResult, State> =
 
         tmethoddef
 
-        declaration "entrypoint" (getPosition .>>. identifier) >>= fun (pos, ename) ->
+        keyword "entrypoint" >>. getPosition .>>. identifier >>= fun (pos, ename) ->
             updateUserState <| fun state ->
                 match state.Module.ModuleEntryPoint with
                 | ValueNone ->
@@ -383,6 +375,7 @@ let tmodule: Parser<AssemblerResult, State> =
                 | ValueSome _ ->
                     { state with Errors = ValidationError("Duplicate module entry point", pos) :: state.Errors }
     ]
+    |> sexpression
     |> skipMany
     |> declaration "module"
     >>. eof
