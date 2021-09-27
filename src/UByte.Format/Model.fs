@@ -204,6 +204,8 @@ module Tag =
         | U8 = 0x10uy
         | U16 = 0x20uy
         | U32 = 0x40uy
+        | SNative = 0x49uy
+        | UNative = 0x55uy
         | U64 = 0x80uy
         | ValueType = 0xA1uy
         | RefAny = 0xAAuy
@@ -226,6 +228,8 @@ type PrimitiveType =
     | S32
     | U64
     | S64
+    | UNative
+    | SNative
     | Char16
     | Char32
     | F32
@@ -235,8 +239,7 @@ type PrimitiveType =
 [<RequireQualifiedAccess>]
 type ReferenceType =
     | Defined of TypeDefinitionIndex
-    | Any of AnyType
-    | Vector of AnyType
+    | Any
 
 and [<NoComparison; StructuralEquality>]  AnyType =
     | Primitive of PrimitiveType

@@ -10,13 +10,13 @@ open UByte.Format.Model
 
 [<RequireQualifiedAccess>]
 type RuntimeRegister =
-    | R1 of uint8 ref // TODO: Have signed variants?
+    | R1 of uint8 ref
     | R2 of uint16 ref
     | R4 of uint32 ref
     | R8 of uint64 ref
-    //| RNative of nativeint
+    | RNative of unativeint ref
     //| RStruct of byte[]
-    | RPtr of obj ref
+    | RRef of obj ref
 
     member source.CopyValueTo destination =
         match source, destination with
@@ -30,15 +30,16 @@ type RuntimeRegister =
         | R4 { contents = value }, R4 dest -> dest.contents <- value
         | R4 { contents = value }, R8 dest -> dest.contents <- uint64 value
         | R8 { contents = value }, R8 dest -> dest.contents <- value
+        | RNative { contents = value }, RNative dest -> dest.contents <- value
         | R2 _, R1 _
         | R4 _, R2 _
         | R4 _, R1 _
         | R8 _, R4 _
         | R8 _, R2 _
         | R8 _, R1 _ -> failwith "TODO: Truncating not yet supported"
-        | RPtr { contents = value }, RPtr dest -> dest.contents <- value
-        | RPtr _, _
-        | _, RPtr _ -> failwith "TODO: Error for cannot mix integers and reference types"
+        | RRef { contents = value }, RRef dest -> dest.contents <- value
+        | RRef _, _
+        | _, RRef _ -> failwith "TODO: Error for cannot mix integers and reference types"
 
 [<Sealed>]
 type RuntimeStackFrame
@@ -170,7 +171,9 @@ type RuntimeMethod (rmodule: RuntimeModule, method: Method) =
             | PrimitiveType.Char32 -> fun() -> RuntimeRegister.R4(ref 0u)
             | PrimitiveType.S64
             | PrimitiveType.U64
-            | PrimitiveType.F64 -> fun() -> RuntimeRegister.R4(ref 0u)
+            | PrimitiveType.F64 -> fun() -> RuntimeRegister.R8(ref 0UL)
+            | PrimitiveType.SNative
+            | PrimitiveType.UNative -> fun() -> RuntimeRegister.RNative(ref 0un)
             | PrimitiveType.Unit -> fun() -> failwith "TODO: Prevent usage of Unit in register types."
         | _ -> failwith "TODO: Unsupported type for register"
 

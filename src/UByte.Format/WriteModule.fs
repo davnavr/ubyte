@@ -166,6 +166,8 @@ let toStream (stream: Stream) (md: Module) =
                     | PrimitiveType.U16 -> Tag.Type.U16
                     | PrimitiveType.U32 -> Tag.Type.U32
                     | PrimitiveType.U64 -> Tag.Type.U64
+                    | PrimitiveType.UNative -> Tag.Type.UNative
+                    | PrimitiveType.SNative -> Tag.Type.UNative
                     | PrimitiveType.F32 -> Tag.Type.F32
                     | PrimitiveType.F64 -> Tag.Type.F64
                     | PrimitiveType.Char16 -> Tag.Type.Char16
@@ -173,6 +175,8 @@ let toStream (stream: Stream) (md: Module) =
                     | PrimitiveType.Bool -> Tag.Type.Bool
                     | PrimitiveType.Unit -> Tag.Type.Unit
                 bits1 tag dest
+            | ObjectReference ReferenceType.Any ->
+                bits1 Tag.Type.RefAny dest
             | _ -> failwithf "TODO: Unsupported type %A" signature
 
         lengthEncodedVector buffer stream md.MethodSignatures <| fun signature dest ->

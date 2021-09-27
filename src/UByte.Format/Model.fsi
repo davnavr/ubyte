@@ -142,7 +142,7 @@ module InstructionSet =
         | sub = 0x21u
         | mul = 0x22u
         | div = 0x23u
-        | ``add.ovf`` = 0x24u
+        | ``add.ovf`` = 0x24u // TOOD: Move ovf instructions to multi-byte area.
         | ``sub.ovf`` = 0x25u
         | ``mul.ovf`` = 0x26u
         //|  = 27u
@@ -359,8 +359,8 @@ module Tag =
         | U8 = 0x10uy
         | U16 = 0x20uy
         | U32 = 0x40uy
-        //| SNative = 0x49uy
-        //| UNative = 0x55uy
+        | SNative = 0x49uy
+        | UNative = 0x55uy
         | U64 = 0x80uy
         /// Precedes a type index, represents a user-defined struct.
         | ValueType = 0xA1uy
@@ -387,6 +387,8 @@ type PrimitiveType =
     | S32
     | U64
     | S64
+    | UNative
+    | SNative
     | Char16
     | Char32
     | F32
@@ -398,9 +400,14 @@ type PrimitiveType =
 [<RequireQualifiedAccess; NoComparison; StructuralEquality>]
 type ReferenceType =
     | Defined of TypeDefinitionIndex
-    | Any of AnyType // TODO: Remove this, and add BoxedPrimitive and BoxedValueType
-    /// One-dimensional array whose first element is at index zero.
-    | Vector of AnyType
+    //| BoxedValueType of TypeDefinitionIndex
+    //| BoxedPrimitive of PrimitiveType
+    /// <summary>
+    /// Represents an untyped object reference, similar to <see cref="T:System.Object"/> in the Common Language Runtime.
+    /// </summary>
+    | Any
+    ///// One-dimensional array whose first element is at index zero.
+    //| Vector of AnyType // TODO: Define a union of reference types and "safe" value types, will also be used in Boxed case
 
     interface IEquatable<ReferenceType>
 
