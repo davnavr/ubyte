@@ -27,6 +27,8 @@ type SymbolDictionary<'IndexKind, 'T when 'IndexKind :> IndexKinds.Kind> () =
 
     member _.Count = items.Count
 
+    member _.Values = items :> IReadOnlyCollection<'T>
+
     member _.AddAnonymous item: Index<'IndexKind> =
         let i = items.Count
         items.Add item
@@ -51,28 +53,38 @@ type SymbolDictionary<'IndexKind, 'T when 'IndexKind :> IndexKinds.Kind> () =
 
     member _.ToVector(): vector<'T> = items.ToImmutable()
 
-    member _.GetEnumerator() = items.GetEnumerator()
+    member _.ValueAt i = items.[i]
+
+type IdentifierLookup = SymbolDictionary<IndexKinds.Identifier, string>
+
+type TypeSignatureLookup =
+    SymbolDictionary<IndexKinds.TypeSignature, (Name -> TypeDefinitionIndex voption) -> Result<AnyType, AssemblerError>>
 
 [<NoComparison; NoEquality>]
 type UnresolvedTypeDefinition =
-    { TypeName: Name
-      TypeNamespace: Name
+    { TypeName: Position * Name
+      TypeNamespace: Position * Name
       TypeVisibility: VisibilityFlags
-      TypeKind: TypeDefinitionLookup -> TypeDefinitionKind }
+      TypeKind: (Name -> TypeDefinitionIndex voption) -> Result<TypeDefinitionKind, AssemblerError> }
 
-and [<Sealed>] TypeDefinitionLookup () =
+[<Sealed>]
+type TypeDefinitionLookup () =
     let defined = SymbolDictionary<IndexKinds.TypeDefinition, UnresolvedTypeDefinition>()
     //let imported = SymbolDictionary<IndexKinds.TypeDefinition, TypeDefinitionImport>()
 
     member _.AddDefinition(name, item) = defined.Add(name, item)
+    member _.FindDefinition name = defined.FromIdentifier name
+    member this.FindType name: TypeDefinitionIndex voption = this.FindDefinition name
+
+    member _.Definitions = defined.Values
 
 [<NoComparison; NoEquality>]
 type UnresolvedMethod =
-    { MethodOwner: Name
-      MethodName: Name
+    { MethodOwner: Position * Name
+      MethodName: Position * Name
       MethodVisibility: VisibilityFlags
       MethodFlags: MethodFlags
-      MethodSignature: Name
+      MethodSignature: Position * Name
       MethodBody: (Name -> CodeIndex voption) -> Result<MethodBody, AssemblerError> }
 
 [<Sealed>]
@@ -80,36 +92,38 @@ type MethodLookup () =
     let defined = SymbolDictionary<IndexKinds.Method, UnresolvedMethod>()
     //let imported
 
+    member _.Definitions = defined.Values
     member _.AddDefinition(name, item) = defined.Add(name, item)
     member _.FindDefinition name = defined.FromIdentifier name
+    member this.FindMethod name = this.FindDefinition name
     member _.ToVector() = defined.ToVector()
 
-type TypeSignatureLookup = SymbolDictionary<IndexKinds.TypeSignature, TypeDefinitionLookup -> AnyType>
+[<NoComparison; NoEquality; IsReadOnly; Struct>]
+type UnresolvedMethodSignature = { ReturnTypes: (Position * Name) list; ParameterTypes: (Position * Name) list }
+
+type UnresolvedInstruction =
+    (Name -> RegisterIndex voption) -> MethodLookup -> Result<InstructionSet.Instruction, AssemblerError list>
 
 [<NoComparison; NoEquality; IsReadOnly; Struct>]
-type UnresolvedMethodSignature = { ReturnTypes: Name list; ParameterTypes: Name list }
-
-type UnresolvedInstruction = (Name -> RegisterIndex voption) -> MethodLookup -> Result<InstructionSet.Instruction, AssemblerError list>
+type UnresolvedCodeRegister = { RegisterName: Position * Name; RegisterType: Position * Name }
 
 [<NoComparison; NoEquality; IsReadOnly; Struct>]
-type UnresolvedCode =
-    { Registers: (Name * Name) list
-      Instructions: UnresolvedInstruction list }
+type UnresolvedCode = { Registers: UnresolvedCodeRegister list; Instructions: UnresolvedInstruction list }
 
 [<NoComparison; NoEquality>]
 type IncompleteModule =
     { ModuleFormatVersion: VersionNumbers voption ref
       mutable ModuleHeaderName: Name voption
       ModuleHeaderVersion: VersionNumbers voption ref
-      ModuleIdentifiers: SymbolDictionary<IndexKinds.Identifier, string>
-      ModuleNamespaces: SymbolDictionary<IndexKinds.Namespace, Name list>
+      ModuleIdentifiers: IdentifierLookup
+      ModuleNamespaces: SymbolDictionary<IndexKinds.Namespace, (Position * Name) list>
       ModuleTypeSignatures: TypeSignatureLookup
       ModuleMethodSignatures: SymbolDictionary<IndexKinds.MethodSignature, UnresolvedMethodSignature>
       ModuleTypes: TypeDefinitionLookup
       //ModuleFields: 
       ModuleMethods: MethodLookup
       ModuleCode: SymbolDictionary<IndexKinds.Code, UnresolvedCode>
-      mutable ModuleEntryPoint: Name voption }
+      mutable ModuleEntryPoint: (Position * Name) voption }
 
 [<Struct>]
 type State = { Module: IncompleteModule; Errors: AssemblerError list }
@@ -174,12 +188,12 @@ let ttypesig =
                 skipString "s32" >>. preturn PrimitiveType.S32
             ]
             "primitive type"
-        |>> (fun prim -> fun (_: TypeDefinitionLookup) -> AnyType.Primitive prim)
+        |>> (fun prim -> fun _ -> Result.Ok(AnyType.Primitive prim))
     ]
 
 let tmethodsig =
     let typelist name =
-        many identifier
+        many (getPosition .>>. identifier)
         |> declaration name
         |> opt
         |>> Option.defaultValue List.empty
@@ -208,8 +222,9 @@ let tsignature =
 
 let tcode =
     let registers =
-        tuple2 identifier identifier
+        tuple2 (getPosition .>>. identifier) (getPosition .>>. identifier)
         |> declaration "local"
+        |>> fun (rname, rtype) -> { UnresolvedCodeRegister.RegisterName = rname; RegisterType = rtype }
         |> many
         |> declaration "registers"
 
@@ -289,14 +304,18 @@ let tcode =
                 { state with Errors = errorDuplicateIdentifier "code block" id pos :: state.Errors }
 
 let tnamespace =
-    tuple3 (keyword "namespace" >>. getPosition) identifier (declaration "name" (many identifier)) >>= fun (pos, id, name) ->
+    tuple3
+        (keyword "namespace" >>. getPosition)
+        identifier
+        (declaration "name" (many (getPosition .>>. identifier)))
+    >>= fun (pos, id, name) ->
         updateUserState <| fun state ->
             if state.Module.ModuleNamespaces.AddNamed(id, name) then
                 state
             else
                 { state with Errors = errorDuplicateIdentifier "method signature" id pos :: state.Errors }
 
-let tnamedecl = declaration "name" identifier
+let tnamedecl = getPosition .>>. declaration "name" identifier
 
 let tvisibility =
     flags "visibility" [
@@ -307,19 +326,19 @@ let tvisibility =
 let ttypedef =
     let kind: Parser<_, _> = choice [
         choice [
-            keyword "base" >>. preturn (fun (_: TypeDefinitionLookup) -> ValueNone)
+            keyword "base" >>. preturn (fun _ -> ValueNone)
 
             //declaration "extends"
         ]
         .>>. attributes List.empty //[ "abstract", ClassDefinitionFlags.Abstract ]
         |> declaration "class"
-        |>> fun (extends, flags) -> fun lookup -> TypeDefinitionKind.Class(extends lookup, flags)
+        |>> fun (extends, flags) -> fun lookup -> TypeDefinitionKind.Class(extends lookup, flags) |> Result.Ok
     ]
 
     tuple5
         (keyword "type" >>. getPosition .>>. identifier)
         tnamedecl
-        (declaration "namespace" identifier)
+        (getPosition .>>. declaration "namespace" identifier)
         tvisibility
         kind
     >>= fun ((pos, id), name, ns, vis, tkind) ->
@@ -352,9 +371,9 @@ let tmethoddef =
     tuple5
         (tuple3 (keyword "method" >>. getPosition) identifier tnamedecl)
         tvisibility
-        (declaration "signature" identifier)
+        (getPosition .>>. declaration "signature" identifier)
         (kind .>>. mflags)
-        (declaration "owner" identifier)
+        (getPosition .>>. declaration "owner" identifier)
     >>= fun ((pos, id, name), vis, signature, (mkind, mflags), owner) ->
         updateUserState <| fun state ->
             let mdef =
@@ -371,6 +390,219 @@ let tmethoddef =
                 { state with Errors = errorDuplicateIdentifier "method definition" id pos :: state.Errors }
 
 type AssemblerResult = Result<Module, AssemblerError list>
+
+[<Sealed>]
+type AssemblerResultBuilder () =
+    member inline _.Bind(result: Result<_, AssemblerError list>, body: 'T -> Result<'U, _>) =
+        match result with
+        | Result.Ok result' -> body result'
+        | Result.Error err -> Result.Error err
+
+    member inline _.ReturnFrom(result: Result<_, AssemblerError list>) = result
+
+let validated = AssemblerResultBuilder()
+
+let tryMapLookup (lookup: SymbolDictionary<_, 'T>) (mapping: 'T -> Result<'U, AssemblerError list>) =
+    let mutable items = Array.zeroCreate lookup.Count
+    let rec inner i errors =
+        if i < lookup.Count then
+            let errors' =
+                match mapping(lookup.ValueAt i) with
+                | Result.Ok result ->
+                    items.[i] <- result
+                    errors
+                | Result.Error err ->
+                    err @ errors
+            inner (i + 1) errors'
+        else
+            match errors with
+            | [] -> Result.Ok(Unsafe.As<'U[], ImmutableArray<'U>> &items)
+            | _ -> Result.Error errors
+    inner 0 List.empty
+
+let buildLookupValues (lookup: SymbolDictionary<_, _>) =
+    let builder = ImmutableArray.CreateBuilder()
+    let rec inner names errors =
+        match names, errors with
+        | [], [] -> Result.Ok(builder.ToImmutable())
+        | [], _ -> Result.Error errors
+        | (pos, name) :: remaining, _ ->
+            let errors' =
+                match lookup.FromIdentifier name with
+                | ValueSome i ->
+                    builder.Add i
+                    errors
+                | ValueNone ->
+                    errorIdentifierUndefined "string" name pos :: errors
+            inner remaining errors'
+    fun names ->
+        builder.Clear()
+        inner names List.empty
+
+let buildTypeDefinitions (identifiers: IdentifierLookup) (namespaces: SymbolDictionary<_, _>) (types: TypeDefinitionLookup) =
+    let builder = ImmutableArray.CreateBuilder()
+    let mutable errors = List.empty
+
+    for t in types.Definitions do
+        let result =
+            validated {
+                let! tname =
+                    let (pos, name) = t.TypeName
+                    match identifiers.FromIdentifier name with
+                    | ValueSome namei -> Result.Ok namei
+                    | ValueNone -> Result.Error [ errorIdentifierUndefined "type name" name pos ]
+
+                // TODO: Reduce code duplication with lookups involving Names
+                let! tnamespace =
+                    let (pos, name) = t.TypeNamespace
+                    match namespaces.FromIdentifier name with
+                    | ValueSome nsi -> Result.Ok nsi
+                    | ValueNone -> Result.Error [ errorIdentifierUndefined "type namespace" name pos ]
+
+                let! tkind = Result.mapError List.singleton (t.TypeKind types.FindType)
+
+                return! Result.Ok
+                    { TypeDefinition.TypeName = tname
+                      TypeNamespace = tnamespace
+                      TypeVisibility = t.TypeVisibility
+                      TypeKind = tkind
+                      TypeLayout = TypeDefinitionLayout.Unspecified // TODO: Allow setting of type layout
+                      ImplementedInterfaces = ImmutableArray.Empty
+                      TypeParameters = ImmutableArray.Empty
+                      TypeAnnotations = ImmutableArray.Empty }
+            }
+
+        match result with
+        | Result.Ok t' -> builder.Add t'
+        | Result.Error errors' -> errors <- errors' @ errors
+
+    match errors with
+    | [] -> Result.Ok(builder.ToImmutable())
+    | _ -> Result.Error errors
+
+let buildMethodDefinitions
+    (identifiers: IdentifierLookup)
+    (signatures: SymbolDictionary<_, _>)
+    (code: SymbolDictionary<_, _>)
+    (types: TypeDefinitionLookup)
+    (methods: MethodLookup)
+    =
+    let builder = ImmutableArray.CreateBuilder()
+    let mutable errors = List.empty
+
+    for m in methods.Definitions do
+        let result =
+            validated {
+                let! mowner =
+                    let (pos, owner) = m.MethodOwner
+                    match types.FindDefinition owner with
+                    | ValueSome namei -> Result.Ok namei
+                    | ValueNone -> Result.Error [ errorIdentifierUndefined "method owner type definition" owner pos ]
+
+                let! mname =
+                    let (pos, name) = m.MethodName
+                    match identifiers.FromIdentifier name with
+                    | ValueSome namei -> Result.Ok namei
+                    | ValueNone -> Result.Error [ errorIdentifierUndefined "method name" name pos ]
+
+                let! msig =
+                    let (pos, signature) = m.MethodSignature
+                    match signatures.FromIdentifier signature with
+                    | ValueSome namei -> Result.Ok namei
+                    | ValueNone -> Result.Error [ errorIdentifierUndefined "method signature" signature pos ]
+
+                let! mbody = Result.mapError List.singleton (m.MethodBody code.FromIdentifier)
+
+                return! Result.Ok
+                    { Method.MethodOwner = mowner
+                      MethodName = mname
+                      MethodVisibility = m.MethodVisibility
+                      MethodFlags = m.MethodFlags
+                      TypeParameters = ImmutableArray.Empty
+                      Signature = msig
+                      MethodAnnotations = ImmutableArray.Empty
+                      Body = mbody }
+            }
+
+        match result with
+        | Result.Ok m' -> builder.Add m'
+        | Result.Error errors' -> errors <- errors' @ errors
+
+    match errors with
+    | [] -> Result.Ok(builder.ToImmutable())
+    | _ -> Result.Error errors
+
+let buildCodeRegisters (types: TypeSignatureLookup) =
+    let builder = ImmutableArray.CreateBuilder<struct(uvarint * RegisterType)>()
+
+    let addCodeRegister typei flags =
+        let rtype =
+            { RegisterType.RegisterType = typei
+              RegisterFlags = flags }
+
+        let inline addNewRegister() = builder.Add(struct(1u, rtype))
+
+        if builder.Count > 0 then
+            let currenti = builder.Count - 1
+            let struct(prevc, prevt) = builder.[currenti]
+            if prevt.RegisterType = rtype.RegisterType && prevt.RegisterFlags = rtype.RegisterFlags
+            then builder.[currenti] <- struct(Checked.(+) prevc 1u, prevt)
+            else addNewRegister()
+        else addNewRegister()
+
+    let errorUnresolvedType rname (pos, t) =
+        ValidationError (
+            "Unable to find register type of the register $" + string rname +
+            ", the type signature corresponding to the identifier $" + string t + " could not be found",
+            pos
+        )
+
+    let rec inner (lookup: Dictionary<Name, RegisterIndex>) (registers: UnresolvedCodeRegister list) errors =
+        match registers, errors with
+        | [], [] -> Result.Ok(lookup :> IReadOnlyDictionary<_, _>, builder.ToImmutable())
+        | [], _ -> Result.Error errors
+        | { RegisterName = _, rname } as reg :: remaining, _ ->
+            let errors' =
+                match types.FromIdentifier(snd reg.RegisterType) with
+                | ValueSome typei ->
+                    // TODO: Take into account number of registers corresponding to method parameters.
+                    if lookup.TryAdd(rname, Index(uint32 builder.Count)) then
+                        addCodeRegister typei RegisterFlags.None
+                        errors
+                    else errorDuplicateIdentifier "register" rname (fst reg.RegisterName) :: errors
+                | ValueNone ->
+                    errorUnresolvedType rname reg.RegisterType :: errors
+            inner lookup remaining errors'
+
+    fun registers ->
+        builder.Clear()
+        inner (Dictionary()) registers List.empty
+
+let buildCodeInstructions methods =
+    let builder = ImmutableArray.CreateBuilder()
+
+    fun (registers: IReadOnlyDictionary<_, _>) ->
+        let lookupRegisterName name =
+            match registers.TryGetValue name with
+            | true, rindex -> ValueSome rindex
+            | false, _ -> ValueNone
+
+        let rec inner instrs errors =
+            match instrs, errors with
+            | [], [] -> Result.Ok(builder.ToImmutable())
+            | [], _ -> Result.Error errors
+            | (instr: UnresolvedInstruction) :: remaining, _ ->
+                let errors' =
+                    match instr lookupRegisterName methods with
+                    | Result.Ok instr' ->
+                        builder.Add instr'
+                        errors
+                    | Result.Error err -> err @ errors
+                inner remaining errors'
+
+        fun instrs ->
+            builder.Clear()
+            inner instrs List.empty
 
 let tmodule: Parser<AssemblerResult, State> =
     let moduleVersionInfo vname version err =
@@ -414,7 +646,7 @@ let tmodule: Parser<AssemblerResult, State> =
 
         tmethoddef
 
-        keyword "entrypoint" >>. getPosition .>>. identifier >>= fun (pos, ename) ->
+        keyword "entrypoint" >>. getPosition .>>. identifier >>= fun ((pos, _) as ename) ->
             updateUserState <| fun state ->
                 match state.Module.ModuleEntryPoint with
                 | ValueNone ->
@@ -431,9 +663,84 @@ let tmodule: Parser<AssemblerResult, State> =
     |>> fun { Module = state; Errors = errors } ->
         match state.ModuleHeaderName, errors with
         | ValueSome mname, [] ->
-            
+            validated {
+                let! namespaces = tryMapLookup state.ModuleNamespaces (buildLookupValues state.ModuleIdentifiers)
 
-            failwith "bad"
+                let! tsignatures =
+                    let tryFindType = state.ModuleTypes.FindType
+                    tryMapLookup state.ModuleTypeSignatures (fun t -> t tryFindType |> Result.mapError List.singleton)
+
+                let! msignatures =
+                    let getTypeList = buildLookupValues state.ModuleTypeSignatures
+                    tryMapLookup state.ModuleMethodSignatures <| fun m ->
+                        validated {
+                            let! rtypes = getTypeList m.ReturnTypes
+                            let! ptypes = getTypeList m.ParameterTypes
+                            return! Result.Ok { MethodSignature.ReturnTypes = rtypes; ParameterTypes = ptypes }
+                        }
+
+                let! tdefinitions = buildTypeDefinitions state.ModuleIdentifiers state.ModuleNamespaces state.ModuleTypes
+
+                let! mdefinitions =
+                    buildMethodDefinitions
+                        state.ModuleIdentifiers
+                        state.ModuleMethodSignatures
+                        state.ModuleCode
+                        state.ModuleTypes
+                        state.ModuleMethods
+
+                let! codes =
+                    let getCodeRegisters = buildCodeRegisters state.ModuleTypeSignatures
+                    let getCodeInstructions = buildCodeInstructions state.ModuleMethods
+                    tryMapLookup state.ModuleCode <| fun code ->
+                        validated {
+                            let! (rlookup, registers) = getCodeRegisters code.Registers
+                            let! instructions = getCodeInstructions rlookup code.Instructions
+                            return! Result.Ok { Code.RegisterTypes = registers; Instructions = instructions }
+                        }
+
+                let! entrypoint =
+                    match state.ModuleEntryPoint with
+                    | ValueSome(pos, ename) ->
+                        match state.ModuleMethods.FindDefinition ename with
+                        | ValueSome _ as eindex ->
+                            Result.Ok eindex
+                        | ValueNone ->
+                            Result.Error [ ValidationError("Unable to find entry point method $" + string ename, pos) ]
+                    | ValueNone -> Result.Ok ValueNone
+
+                return! Result.Ok
+                    { Module.Magic = magic
+                      FormatVersion = ValueOption.defaultValue currentFormatVersion state.ModuleFormatVersion.contents
+                      Header =
+                        { ModuleHeader.Module =
+                            { ModuleIdentifier.ModuleName = mname
+                              Version = ValueOption.defaultValue VersionNumbers.empty state.ModuleHeaderVersion.contents }
+                          // TODO: Allow setting of module header flags.
+                          Flags = ModuleHeaderFlags.LittleEndian
+                          // TODO: Allow setting of pointer size in module header.
+                          PointerSize = PointerSize.Unspecified }
+                      Identifiers = { IdentifierSection.Identifiers = ImmutableArray.CreateRange state.ModuleIdentifiers.Values }
+                      Namespaces = namespaces
+                      TypeSignatures = tsignatures
+                      MethodSignatures = msignatures
+                      Imports =
+                        // TODO: Implement generation of module imports
+                        { ModuleImports.ImportedModules = ImmutableArray.Empty
+                          ImportedTypes = ImmutableArray.Empty
+                          ImportedFields = ImmutableArray.Empty
+                          ImportedMethods = ImmutableArray.Empty }
+                      Definitions =
+                        { ModuleDefinitions.DefinedTypes = tdefinitions
+                          ModuleDefinitions.DefinedFields = ImmutableArray.Empty
+                          ModuleDefinitions.DefinedMethods = mdefinitions }
+                      // TODO: Implement generation of data
+                      Data = ImmutableArray.Empty
+                      Code = codes
+                      EntryPoint = entrypoint
+                      Debug = () }
+            }
+        | ValueSome _, _ :: _ -> Result.Error errors
 
 let fromInput (input: _ -> _ -> ParserResult<AssemblerResult, State>) =
     let result =
