@@ -205,6 +205,7 @@ let toStream (stream: Stream) (md: Module) =
         lengthEncodedData buffer stream <| fun dest ->
             lengthEncodedVector auxbuf dest md.Definitions.DefinedTypes <| fun t dest ->
                 index t.TypeName dest
+                index t.TypeNamespace dest
                 bits1 t.TypeVisibility dest
 
                 match t.TypeKind with
