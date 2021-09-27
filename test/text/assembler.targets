@@ -3,11 +3,16 @@
   <Import Project="..\..\Directory.Build.props" />
 
   <PropertyGroup>
-    <OutputFile Condition="'$(OutputFile)'==''">$(MSBuildProjectDirectory)\out\$(MSBuildProjectName).binmdl</OutputFile>
+    <InterpreterExecutable>$(RootDirectory)\src\runmdl\runmdl.fsproj</InterpreterExecutable>
+
+    <!-- NOTE: Due to the ordering of things, the default value might always end up being used. -->
+    <OutputDirectory Condition="'$(OutputDirectory)'==''">$(MSBuildProjectDirectory)\out\</OutputDirectory>
+    <OutputFile Condition="'$(OutputFile)'==''">$(OutputDirectory)\$(MSBuildProjectName).binmdl</OutputFile>
+    <PowerShellRunScript Condition="'$(PowerShellRunScript)'==''">$(OutputDirectory)\$(MSBuildProjectName).ps1</PowerShellRunScript>
   </PropertyGroup>
 
   <Target Name="Clean">
-    <Delete Files="$(OutputFile)" />
+    <Delete Files="$(OutputFile);$(PowerShellRunScript)" />
   </Target>
 
   <Target Name="Build" AfterTargets="Clean" Inputs="$(InputFile)" Outputs="$(OutputFile)">
@@ -23,18 +28,28 @@
 
   </Target>
 
-  <Target Name="Rebuild" DependsOnTargets="Clean; Build" />
+  <Target Name="GeneratePowerShellRunScript" AfterTargets="Clean;Build" Inputs="$(InputFile)" Outputs="$(PowerShellRunScript)">
 
-  <Target Name="Run" DependsOnTargets="Build">
     <PropertyGroup>
-      <InterpreterArguments>--input &quot;$(InputFile)&quot; --output &quot;$(OutputFile)&quot;</InterpreterArguments>
+      <PowerShellRunScriptContents>
+        <![CDATA[
+param (
+    [switch]$LaunchInterpreterDebugger
+)
+
+$arguments = @("run", "--project", "$(InterpreterExecutable)", "--", "--program", "$(OutputFile)")
+
+if ($LaunchInterpreterDebugger) { $arguments += "--launch-interpreter-debugger" }
+
+& "dotnet" $arguments
+]]>
+      </PowerShellRunScriptContents>
     </PropertyGroup>
 
-    <Exec
-      Command="dotnet run -p &quot;$(RootDirectory)\src\asmdl\asmdl.fsproj&quot; -- $(InterpreterArguments)"
-      ConsoleToMsBuild="true"
-      LogStandardErrorAsError="true" />
+    <WriteLinesToFile File="$(PowerShellRunScript)" Lines="$(PowerShellRunScriptContents)" Overwrite="true" />
 
   </Target>
+
+  <Target Name="Rebuild" DependsOnTargets="Clean;Build" />
 
 </Project>
