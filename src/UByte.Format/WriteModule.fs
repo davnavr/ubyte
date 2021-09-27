@@ -183,12 +183,24 @@ let toStream (stream: Stream) (md: Module) =
 
         lengthEncodedData buffer stream <| fun dest ->
             vector moduleID md.Imports.ImportedModules dest
+
             lengthEncodedVector auxbuf dest md.Imports.ImportedTypes <| fun tdef dest ->
                 index tdef.Module dest
                 index tdef.TypeName dest
                 bits1 tdef.TypeKind dest
                 LEB128.uint tdef.TypeParameters dest
                 if tdef.TypeParameters > 0u then failwith "TODO: Type imports with type parameters are not yet supported"
+
+            lengthEncodedVector auxbuf dest md.Imports.ImportedFields <| fun fimport dest ->
+                index fimport.FieldOwner dest
+                index fimport.FieldName dest
+                index fimport.FieldType dest
+
+            lengthEncodedVector auxbuf dest md.Imports.ImportedMethods <| fun mimport dest ->
+                index mimport.MethodOwner dest
+                index mimport.MethodName dest
+                LEB128.uint mimport.TypeParameters dest
+                index mimport.Signature dest
 
         lengthEncodedData buffer stream <| fun dest ->
             lengthEncodedVector auxbuf dest md.Definitions.DefinedTypes <| fun t dest ->
