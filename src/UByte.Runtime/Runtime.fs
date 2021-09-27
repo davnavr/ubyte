@@ -124,6 +124,28 @@ module Interpreter =
         // NOTE: Can do an explicit stack of Stack<struct(RuntimeStackFrame * ImmutableArray<Instruction> * int32)>
         loop current instructions methodIndexResolver 0
 
+        (*
+        // TODO: Maybe store current offset to instruction inside of the stack frame to help with error messages.
+        let mutable frame, i, ex = ValueSome current, 0, ValueNone
+        while something do
+            match ex with
+            | ValueSome e ->
+                lookup exception handlers
+                i <- offset to exception handler
+            | ValueNone -> ()
+
+            try
+                interpret instruction
+            catch
+            | e -> ex <- ValueSome e
+
+        match frame with
+        | ValueSome bad ->
+            failwith "TODO: Error for method did not have Ret instruction"
+        | ValueNone ->
+            go return the return registers to allow retrieval of exit code
+        *)
+
 [<Sealed>]
 type RuntimeMethod (rmodule: RuntimeModule, method: Method) =
     member _.Module = rmodule
