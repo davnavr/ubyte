@@ -224,11 +224,24 @@ type RuntimeMethod (rmodule: RuntimeModule, method: Method) =
 
 [<Sealed>]
 type RuntimeField (rmodule: RuntimeModule, field: Field, n: int32) =
+    let ftype = lazy rmodule.TypeSignatureAt field.FieldType
+
     member _.Module = rmodule
+
+    member _.Name = rmodule.IdentifierAt field.FieldName
+
+    member _.FieldType = ftype.Value
 
 [<Sealed>]
 type RuntimeTypeDefinition (rm: RuntimeModule, t: TypeDefinition) =
     let name = lazy rm.IdentifierAt t.TypeName
+
+    let fields =
+        let fields = Array.zeroCreate t.Fields.Length
+        for i = 0 to fields.Length - 1 do
+            fields.[i] <- rm.InitializeField t.Fields.[i]
+        fields
+
     // TODO: Cache length of RawData and References arrays for RuntimeObject and RuntimeStruct
 
     member _.Module = rm
@@ -254,21 +267,20 @@ type MissingEntryPointException (message: string) = inherit RuntimeException(mes
 
 [<Sealed>]
 type RuntimeModule (m: Module, moduleImportResolver: ModuleIdentifier -> RuntimeModule) as rm =
-    // TODO: Account for imports
-    let methodDefLookup =
+    // TODO: Account for imported methods when resolving indices.
+    let definedMethodLookup =
         let methods = m.Definitions.DefinedMethods
         createIndexedLookup methods.Length <| fun (Index i) -> RuntimeMethod(rm, methods.[Checked.int32 i])
 
-    let fieldOwnerMap =
+    // TODO: Account for imported fields when resolving indices.
+    let definedFieldLookup =
+        let owners = m.Definitions.DefinedTypes
         let fields = m.Definitions.DefinedFields
-        lazy
-            let builder = ImmutableArray.CreateBuilder fields.Length
-            let lookup = Dictionary fields.Length
-
-            for f in fields do
-                ()
-
-            ()
+        createIndexedLookup fields.Length <| fun (Index i as i') ->
+            let f = fields.[Checked.int32 i]
+            let (Index owner) = f.FieldOwner
+            let n = owners.[Checked.int32 owner].Fields.IndexOf i'
+            RuntimeField(rm, f, n)
 
     member _.IdentifierAt(Index i: IdentifierIndex) = m.Identifiers.Identifiers.[Checked.int32 i]
 
@@ -278,7 +290,9 @@ type RuntimeModule (m: Module, moduleImportResolver: ModuleIdentifier -> Runtime
 
     member _.CodeAt(Index i: CodeIndex) = m.Code.[Checked.int32 i]
 
-    member _.InitializeMethod i = methodDefLookup i
+    member _.InitializeMethod i = definedMethodLookup i
+
+    member _.InitializeField i = definedFieldLookup i
 
     member _.InitializeType (i: TypeDefinitionIndex) = failwith "TODO: Implement loading of types": RuntimeTypeDefinition
 

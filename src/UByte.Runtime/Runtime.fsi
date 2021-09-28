@@ -34,6 +34,10 @@ type RuntimeMethod =
 
     member Invoke : previous: RuntimeStackFrame * arguments: (ImmutableArray<RuntimeRegister> -> unit) -> MethodInvocationResult
 
+[<Sealed>]
+type RuntimeField =
+    member Name : string
+
 [<RequireQualifiedAccess>]
 module Interpreter =
     val interpret :
@@ -61,6 +65,8 @@ type RuntimeModule =
     member InitializeType : Model.TypeDefinitionIndex -> RuntimeTypeDefinition
 
     member InitializeMethod : Model.MethodIndex -> RuntimeMethod
+
+    member InitializeField : Model.FieldIndex -> RuntimeField
 
     /// <summary>Invokes the entry point of the program, supplying the specified arguments.</summary>
     /// <exception cref="T:UByte.Interpreter.Runtime.MissingEntryPointException" />
