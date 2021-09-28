@@ -540,6 +540,9 @@ type TypeDefinition =
       TypeParameters: vector<unit>
       /// An array of annotations applied to the type.
       TypeAnnotations: vector<unit>
+      Fields: vector<FieldIndex>
+      Methods: vector<MethodIndex>
+      //Constructors
       ///// <summary>
       ///// An array of initializers that must be run before the first time a static field, static method, or constructor defined
       ///// in this class is used.
@@ -550,9 +553,6 @@ type TypeDefinition =
 [<Flags>]
 type RegisterFlags =
     | None = 0uy
-    /// Indicates that the pointer stored in the register points to an object that is tracked by the garbage collector.
-    | Pinned = 0b0000_0010uy
-    // TODO: Have flag to allow using of registers before they are assigned to?
     | ValidMask = 0b0000_0000uy
 
 [<IsReadOnly; Struct; NoComparison; NoEquality>]
@@ -620,10 +620,17 @@ type ModuleImports =
       ImportedFields: LengthEncoded<vector<FieldImport>>
       ImportedMethods: LengthEncoded<vector<MethodImport>> }
 
+/// <summary>Contains the types, fields, and methods defined in the module.</summary>
+/// <remarks>
+/// Each type contains a list indices refering to the fields and methods that it defines, and each field or method contains the
+/// index of the type that defines it. These indices must match in order for the module to be valid.
+/// </remarks>
 [<NoComparison; NoEquality>]
 type ModuleDefinitions =
     { DefinedTypes: LengthEncoded<vector<TypeDefinition>>
       DefinedFields: LengthEncoded<vector<Field>>
+      /// The methods defined in the module, all methods are stored in an array for efficient retrieval of method information,
+      /// which is needed when invoking the entrypoint of a module.
       DefinedMethods: LengthEncoded<vector<Method>> }
 
 [<NoComparison; NoEquality>]

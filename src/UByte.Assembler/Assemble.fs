@@ -439,9 +439,14 @@ let buildLookupValues (lookup: SymbolDictionary<_, _>) =
         builder.Clear()
         inner names List.empty
 
-let buildTypeDefinitions (identifiers: IdentifierLookup) (namespaces: SymbolDictionary<_, _>) (types: TypeDefinitionLookup) =
+let buildTypeDefinitions
+    (identifiers: IdentifierLookup)
+    (namespaces: SymbolDictionary<_, _>)
+    (types: TypeDefinitionLookup)
+    (methodOwnerLookup: IReadOnlyDictionary<_, ImmutableArray<_>.Builder>)
+    =
     let builder = ImmutableArray.CreateBuilder()
-    let mutable errors = List.empty
+    let mutable errors, i = List.empty, 0u // TODO: Start at count of type imports when building type definitions.
 
     for t in types.Definitions do
         let result =
@@ -461,6 +466,8 @@ let buildTypeDefinitions (identifiers: IdentifierLookup) (namespaces: SymbolDict
 
                 let! tkind = Result.mapError List.singleton (t.TypeKind types.FindType)
 
+                let tindex = TypeDefinitionIndex.Index i
+
                 return! Result.Ok
                     { TypeDefinition.TypeName = tname
                       TypeNamespace = tnamespace
@@ -469,12 +476,19 @@ let buildTypeDefinitions (identifiers: IdentifierLookup) (namespaces: SymbolDict
                       TypeLayout = TypeDefinitionLayout.Unspecified // TODO: Allow setting of type layout
                       ImplementedInterfaces = ImmutableArray.Empty
                       TypeParameters = ImmutableArray.Empty
-                      TypeAnnotations = ImmutableArray.Empty }
+                      TypeAnnotations = ImmutableArray.Empty
+                      Fields = ImmutableArray.Empty
+                      Methods =
+                        match methodOwnerLookup.TryGetValue tindex with
+                        | true, existing -> existing.ToImmutable()
+                        | false, _ -> ImmutableArray.Empty }
             }
 
         match result with
         | Result.Ok t' -> builder.Add t'
         | Result.Error errors' -> errors <- errors' @ errors
+
+        i <- Checked.(+) i 1u
 
     match errors with
     | [] -> Result.Ok(builder.ToImmutable())
@@ -486,9 +500,10 @@ let buildMethodDefinitions
     (code: SymbolDictionary<_, _>)
     (types: TypeDefinitionLookup)
     (methods: MethodLookup)
+    (methodOwnerLookup: IDictionary<_, _>)
     =
     let builder = ImmutableArray.CreateBuilder()
-    let mutable errors = List.empty
+    let mutable errors, i = List.empty, 0u // TODO: Start at # of method imports when building method definitions.
 
     for m in methods.Definitions do
         let result =
@@ -498,6 +513,16 @@ let buildMethodDefinitions
                     match types.FindDefinition owner with
                     | ValueSome namei -> Result.Ok namei
                     | ValueNone -> Result.Error [ errorIdentifierUndefined "method owner type definition" owner pos ]
+
+                let others =
+                    match methodOwnerLookup.TryGetValue mowner with
+                    | true, existing -> existing
+                    | false, _ ->
+                        let m = ImmutableArray.CreateBuilder()
+                        methodOwnerLookup.Add(mowner, m)
+                        m
+
+                others.Add(MethodIndex.Index i)
 
                 let! mname =
                     let (pos, name) = m.MethodName
@@ -527,6 +552,8 @@ let buildMethodDefinitions
         match result with
         | Result.Ok m' -> builder.Add m'
         | Result.Error errors' -> errors <- errors' @ errors
+
+        i <- Checked.(+) i 1u
 
     match errors with
     | [] -> Result.Ok(builder.ToImmutable())
@@ -679,7 +706,7 @@ let tmodule: Parser<AssemblerResult, State> =
                             return! Result.Ok { MethodSignature.ReturnTypes = rtypes; ParameterTypes = ptypes }
                         }
 
-                let! tdefinitions = buildTypeDefinitions state.ModuleIdentifiers state.ModuleNamespaces state.ModuleTypes
+                let methodOwnerLookup = Dictionary state.ModuleTypes.Definitions.Count
 
                 let! mdefinitions =
                     buildMethodDefinitions
@@ -688,6 +715,9 @@ let tmodule: Parser<AssemblerResult, State> =
                         state.ModuleCode
                         state.ModuleTypes
                         state.ModuleMethods
+                        methodOwnerLookup
+
+                let! tdefinitions = buildTypeDefinitions state.ModuleIdentifiers state.ModuleNamespaces state.ModuleTypes methodOwnerLookup
 
                 let! codes =
                     let getCodeRegisters = buildCodeRegisters state.ModuleTypeSignatures

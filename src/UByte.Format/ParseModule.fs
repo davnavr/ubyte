@@ -161,7 +161,9 @@ let moduleDefinitions source =
                 | bad -> failwithf "TODO: Bad type definition layout kind 0x%02X" (uint8 bad)
               ImplementedInterfaces = vector t (fun _ -> failwith "TODO: Interfaces not yet supported")
               TypeParameters = vector t genericTypeParam
-              TypeAnnotations = vector t annotation }
+              TypeAnnotations = vector t annotation
+              Fields = vector t index
+              Methods = vector t index }
       DefinedFields =
         lengthEncodedVector source <| fun f ->
             { Field.FieldOwner = index f

@@ -334,12 +334,13 @@ type TypeDefinition =
       TypeLayout: TypeDefinitionLayout
       ImplementedInterfaces: vector<unit>
       TypeParameters: vector<unit>
-      TypeAnnotations: vector<unit> }
+      TypeAnnotations: vector<unit>
+      Fields: vector<FieldIndex>
+      Methods: vector<MethodIndex> }
 
 [<Flags>]
 type RegisterFlags =
     | None = 0uy
-    | Pinned = 0b0000_0010uy
     | ValidMask = 0b0000_0000uy
 
 [<Struct>]

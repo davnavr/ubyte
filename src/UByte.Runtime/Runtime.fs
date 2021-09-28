@@ -5,6 +5,7 @@ open System.Collections.Generic
 open System.Collections.Immutable
 open System.IO
 open System.Runtime.CompilerServices
+open System.Runtime.InteropServices
 
 open UByte.Format.Model
 
@@ -15,7 +16,7 @@ type RuntimeRegister =
     | R4 of uint32 ref
     | R8 of uint64 ref
     | RNative of unativeint ref
-    //| RStruct of byte[]
+    | RStruct of RuntimeStruct ref
     | RRef of obj ref
 
     member source.CopyValueTo destination =
@@ -116,6 +117,11 @@ module Interpreter =
                 | RuntimeRegister.R8 dest' -> dest'.contents <- uint64 value
                 | _ -> failwith "TODO: Error for cannot store 32 bit integer into register"
                 loop current instructions methodIndexResolver (i + 1)
+            | Instruction.Obj_null dest ->
+                match current.RegisterAt dest with
+                | RuntimeRegister.RRef dest' -> dest'.contents <- null
+                | _ -> failwith "TODO: Error for cannot store null reference into register"
+                loop current instructions methodIndexResolver (i + 1)
             | bad -> failwithf "TODO: Implement interpretation of %A instruction" bad
         else
             failwith "TODO: error for method did not return"
@@ -147,13 +153,20 @@ module Interpreter =
             go return the return registers to allow retrieval of exit code
         *)
 
+[<IsReadOnly; Struct; NoComparison; NoEquality>]
+type RuntimeStruct = { RawData: byte[]; References: RuntimeObject[] }
+
+[<Sealed; AllowNullLiteral>]
+type RuntimeObject (otype: RuntimeTypeDefinition) =
+    let fields = Unchecked.defaultof<RuntimeStruct>
+
 [<Sealed>]
 type RuntimeMethod (rmodule: RuntimeModule, method: Method) =
     member _.Module = rmodule
 
     member _.Name = rmodule.IdentifierAt method.MethodName
 
-    member _.HasThis = false // TODO: Check method.Flags
+    member _.IsInstance = false // TODO: Check method.Flags
 
     member private _.CreateRegister rtype =
         match rmodule.TypeSignatureAt rtype with
@@ -181,10 +194,10 @@ type RuntimeMethod (rmodule: RuntimeModule, method: Method) =
         let args = rmodule.MethodSignatureAt method.Signature
         let mutable registers =
             let mutable length = args.ParameterTypes.Length
-            if this.HasThis then length <- length + 1
+            if this.IsInstance then length <- length + 1
             Array.zeroCreate length
         for i = 0 to registers.Length - 1 do
-            if i = 0 && this.HasThis then failwith "TODO: Add this pointer"
+            if i = 0 && this.IsInstance then failwith "TODO: Add this pointer"
             registers.[0] <- this.CreateRegister args.ParameterTypes.[i] ()
         Unsafe.As<RuntimeRegister[], ImmutableArray<RuntimeRegister>> &registers
 
@@ -210,12 +223,21 @@ type RuntimeMethod (rmodule: RuntimeModule, method: Method) =
         | MethodBody.Abstract -> failwith "TODO: Handle virtual calls"
 
 [<Sealed>]
+type RuntimeField (rmodule: RuntimeModule, field: Field, n: int32) =
+    member _.Module = rmodule
+
+[<Sealed>]
 type RuntimeTypeDefinition (rm: RuntimeModule, t: TypeDefinition) =
     let name = lazy rm.IdentifierAt t.TypeName
+    // TODO: Cache length of RawData and References arrays for RuntimeObject and RuntimeStruct
 
     member _.Module = rm
 
     member _.Name = name.Value
+
+    member _.InitializeObjectFields(): RuntimeStruct =
+        // TODO: Get fields
+        failwith "bad"
 
 let createIndexedLookup (count: int32) initializer =
     let lookup = Dictionary<Index<_>, _> count
@@ -236,6 +258,17 @@ type RuntimeModule (m: Module, moduleImportResolver: ModuleIdentifier -> Runtime
     let methodDefLookup =
         let methods = m.Definitions.DefinedMethods
         createIndexedLookup methods.Length <| fun (Index i) -> RuntimeMethod(rm, methods.[Checked.int32 i])
+
+    let fieldOwnerMap =
+        let fields = m.Definitions.DefinedFields
+        lazy
+            let builder = ImmutableArray.CreateBuilder fields.Length
+            let lookup = Dictionary fields.Length
+
+            for f in fields do
+                ()
+
+            ()
 
     member _.IdentifierAt(Index i: IdentifierIndex) = m.Identifiers.Identifiers.[Checked.int32 i]
 

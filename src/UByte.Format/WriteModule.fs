@@ -239,6 +239,9 @@ let toStream (stream: Stream) (md: Module) =
                 if not t.TypeAnnotations.IsDefaultOrEmpty then failwith "TODO: Annotated types not yet supported"
                 dest.WriteByte 0uy // length of vector
 
+                vector index t.Fields dest
+                vector index t.Methods dest
+
             lengthEncodedVector auxbuf dest md.Definitions.DefinedFields <| fun f dest ->
                 index f.FieldOwner dest
                 index f.FieldName dest
