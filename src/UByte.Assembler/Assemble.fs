@@ -180,6 +180,21 @@ let inline flags name flags =
         preturn Unchecked.defaultof<_>
     ]
 
+type AssemblerResult = Result<Module, AssemblerError list>
+
+[<Sealed>]
+type AssemblerResultBuilder () =
+    member inline _.Bind(result: Result<_, AssemblerError list>, body: 'T -> Result<'U, _>) =
+        match result with
+        | Result.Ok result' -> body result'
+        | Result.Error err -> Result.Error err
+
+    member inline _.Return value = Result<_, AssemblerError list>.Ok value
+
+    member inline _.ReturnFrom(result: Result<_, AssemblerError list>) = result
+
+let validated = AssemblerResultBuilder()
+
 let tidentifier =
     keyword "identifier" >>. tuple3 getPosition identifier stringlit >>= fun (pos, id, name) ->
         updateUserState <| fun state ->
@@ -321,6 +336,31 @@ let tcode =
                         |> Result.mapError List.singleton
                     | ValueNone ->
                         Result.Error [ ValidationError(string (snd value) + " is not a valid 32-bit integer literal", fst value) ]
+
+                let callLikeInstruction =
+                    let registers = many (getPosition .>>. identifier)
+
+                    fun name instr ->
+                        keyword name >>. tuple3
+                            (getPosition .>>. identifier)
+                            (declaration "arguments" registers)
+                            (declaration "returns" registers)
+                        |>> fun ((mpos, mname), args, rets) -> fun registers (mlookup: MethodLookup) ->
+                            validated {
+                                let! args' = lookupRegisterList registers args
+                                let! rets' = lookupRegisterList registers rets
+                                let! method =
+                                    match mlookup.FindMethod mname with
+                                    | ValueSome mindex -> Result.Ok mindex
+                                    | ValueNone -> Result.Error [ errorIdentifierUndefined "method" mname mpos ]
+
+                                return InstructionSet.Call(method, args', rets')
+                            }
+
+                callLikeInstruction "call" InstructionSet.Call
+                callLikeInstruction "call.virt" InstructionSet.Call_virt
+                callLikeInstruction "call.ret" InstructionSet.Call_ret
+                callLikeInstruction "call.virt.ret" InstructionSet.Call_virt_ret
             ]
             |> sexpression
 
@@ -443,19 +483,6 @@ let tctordef =
                 state
             else
                 { state with Errors = errorDuplicateIdentifier "method definition" id pos :: state.Errors }
-
-type AssemblerResult = Result<Module, AssemblerError list>
-
-[<Sealed>]
-type AssemblerResultBuilder () =
-    member inline _.Bind(result: Result<_, AssemblerError list>, body: 'T -> Result<'U, _>) =
-        match result with
-        | Result.Ok result' -> body result'
-        | Result.Error err -> Result.Error err
-
-    member inline _.ReturnFrom(result: Result<_, AssemblerError list>) = result
-
-let validated = AssemblerResultBuilder()
 
 let tryMapLookup (lookup: SymbolDictionary<_, 'T>) (mapping: 'T -> Result<'U, AssemblerError list>) =
     let mutable items = Array.zeroCreate lookup.Count
@@ -647,6 +674,7 @@ let buildCodeRegisters (types: TypeSignatureLookup) =
             (names: HashSet<_>)
             (locals: List<_>)
             (registers: UnresolvedCodeRegister list)
+            argi
             errors
             =
             match registers, errors with
@@ -656,7 +684,7 @@ let buildCodeRegisters (types: TypeSignatureLookup) =
                 let errors' =
                     if names.Add rname then
                         match rtype with
-                        | UnresolvedRegisterType.Argument(Index i as rindex) when i < uint32 lookup.Count ->
+                        | UnresolvedRegisterType.Argument rindex when argi < lookup.Count ->
                             lookup.Add(rname, rindex)
                             errors
                         | UnresolvedRegisterType.Argument(Index i) ->
@@ -666,8 +694,8 @@ let buildCodeRegisters (types: TypeSignatureLookup) =
                             errors
                     else
                         errorDuplicateIdentifier "register" rname rpos :: errors
-                inner lookup names locals remaining errors'
-        fun registers -> inner (Dictionary()) (HashSet()) (List()) registers List.empty
+                inner lookup names locals remaining (argi + 1) errors'
+        fun registers -> inner (Dictionary()) (HashSet()) (List()) registers 0 List.empty
 
     let rec inner i (lookup: Dictionary<Name, RegisterIndex>) (locals: List<_>) errors =
         if i < locals.Count then
