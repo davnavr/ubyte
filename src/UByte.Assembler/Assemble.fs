@@ -190,7 +190,23 @@ let ttypesig =
                 skipString "s32" >>. preturn PrimitiveType.S32
             ]
             "primitive type"
-        |>> (fun prim -> fun _ -> Result.Ok(AnyType.Primitive prim))
+        |>> fun prim -> fun _ -> Result.Ok(AnyType.Primitive prim)
+
+        choice [
+            keyword "ref" >>. choice [
+                keyword "any" >>. preturn (fun _ -> Result.Ok ReferenceType.Any)
+
+                keyword "def" >>. getPosition .>>. identifier |>> fun (pos, id) -> fun lookup ->
+                    match lookup id with
+                    | ValueSome tindex ->
+                        Result.Ok(ReferenceType.Defined tindex)
+                    | ValueNone ->
+                        Result.Error(errorIdentifierUndefined "type definition" id pos)
+            ]
+            <?> "reference type"
+            |>> fun o -> fun lookup -> Result.map AnyType.ObjectReference (o lookup)
+        ]
+        |> sexpression
     ]
 
 let tmethodsig =
@@ -297,6 +313,7 @@ let tcode =
             |> sexpression
 
             keyword "ret" >>. preturn (fun _ _ -> Result.Ok(InstructionSet.Ret ImmutableArray.Empty))
+            keyword "nop" >>. preturn (fun _ _ -> Result.Ok InstructionSet.Nop)
         ]
         |> many
 

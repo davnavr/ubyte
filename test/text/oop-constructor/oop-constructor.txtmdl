@@ -5,6 +5,9 @@
 
   (signature $sig_int (type s32))
 
+  ; An object reference to an instance of MyClass
+  (signature $sig_myclass (type (ref def $class_my)))
+
   ; Method that takes no parameters and returns a 32-bit integer
   (signature $sig_main (method (returns $sig_int)))
 
@@ -13,9 +16,15 @@
   (code $code_main
     (registers
       (local $l0 $sig_int)
-      (local $l1 $sig_obj))
+      (local $l1 $sig_myclass))
 
-    (const.i32 9 $l0)
+    (const.i32 21 $l0)
+
+    ; (obj.new $method_constructor (arguments $l0))
+    nop
+
+    ; return 0
+    (const.i32 0 $l0)
     (ret $l0)
   )
 
