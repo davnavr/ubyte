@@ -136,8 +136,11 @@ module Interpreter =
     let interpret returns arguments (entrypoint: RuntimeMethod) =
         let mutable frame: RuntimeStackFrame voption = ValueNone
 
-        entrypoint.SetupStackFrame(returns, &frame)
-        copyRegisterValues arguments frame.Value.ArgumentRegisters
+        let inline invoke returns arguments (method: RuntimeMethod) =
+            method.SetupStackFrame(returns, &frame)
+            copyRegisterValues arguments frame.Value.ArgumentRegisters
+
+        invoke returns arguments entrypoint
 
         let inline cont() =
             match frame with
@@ -169,8 +172,12 @@ module Interpreter =
                     copyRegisterValues registers frame'.ReturnRegisters
                     frame <- frame'.Previous
                 | Call(Method method, Registers frame' aregs, Registers frame' rregs) ->
-                    method.SetupStackFrame(rregs, &frame)
-                    copyRegisterValues aregs frame.Value.ArgumentRegisters
+                    invoke rregs aregs method
+                | Call_ret(Method method, Registers frame' aregs, Registers frame' rregs) ->
+                    // TODO: Test that tail calls work as intended.
+                    frame <- frame'.Previous
+                    invoke rregs aregs method
+                    copyRegisterValues rregs frame'.ReturnRegisters
                 | Obj_null(Register destination) ->
                     match destination with
                     | RuntimeRegister.RRef destination' -> destination'.contents <- null
