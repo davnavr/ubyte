@@ -11,7 +11,7 @@
   ; Method that takes no parameters and returns a 32-bit integer
   (signature $sig_main (method (returns $sig_int)))
 
-  (signature $sig_constructor (method (parameters $sig_int)))
+  (signature $sig_constructor (method (parameters $sig_myclass $sig_int)))
 
   (code $code_main
     (registers
@@ -28,8 +28,9 @@
 
   (code $code_constructor
     (registers
-        ; (parameter $a_value) ; TODO: Give names to parameters
-        )
+        (argument $this 0)
+        (argument $a_value 1))
+    ; (obj.stfd )
     ret
   )
 
