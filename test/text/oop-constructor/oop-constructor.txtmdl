@@ -19,9 +19,7 @@
       (local $l1 $sig_myclass))
 
     (const.i32 21 $l0)
-
-    ; (obj.new $method_constructor (arguments $l0))
-    nop
+    (obj.new $method_constructor (arguments $l0) (returns $l1))
 
     ; return 0
     (const.i32 0 $l0)

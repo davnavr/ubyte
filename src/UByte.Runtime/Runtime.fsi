@@ -16,6 +16,7 @@ type RuntimeRegister with
 type RuntimeStackFrame =
     member ArgumentRegisters : ImmutableArray<RuntimeRegister>
     member LocalRegisters : ImmutableArray<RuntimeRegister>
+    /// Contains the registers that the return values will be stored to.
     member ReturnRegisters : ImmutableArray<RuntimeRegister>
     member Previous : RuntimeStackFrame voption
     member InstructionIndex : int32
@@ -34,7 +35,6 @@ type InvalidConstructorException = inherit RuntimeException
 [<Sealed>]
 type RuntimeMethod =
     member Name : string
-
 
     member IsInstance : bool
 
@@ -74,6 +74,8 @@ type RuntimeTypeDefinition =
     member Name : string
 
     //member InvokeInitializer: unit -> 
+
+type RuntimeMethod with member DeclaringType : RuntimeTypeDefinition
 
 /// Thrown when the entry point of a module could not be found.
 [<Sealed; Class>]

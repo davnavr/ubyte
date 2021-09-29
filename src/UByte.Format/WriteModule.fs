@@ -131,6 +131,7 @@ let instruction endianness i dest =
         opcode op dest
         index reg dest
     | Instruction.Obj_new(constructor, aregs, rreg) ->
+        opcode Opcode.``obj.new`` dest
         index constructor dest
         vector index aregs dest
         index rreg dest

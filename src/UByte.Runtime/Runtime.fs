@@ -184,7 +184,12 @@ module Interpreter =
                     | RuntimeRegister.RNative destination' -> destination'.contents <- 0un
                     | _ -> raise(RuntimeException(frame, "Unable to store null reference into register"))
                 | Obj_new(Method constructor, Registers frame' arguments, Register destination) ->
-                    failwith "TODO: Implement allocation of objects and calling constructors"
+                    match destination with
+                    | RuntimeRegister.RRef o ->
+                        o.contents <- new RuntimeObject(constructor.DeclaringType)
+                        invoke ImmutableArray.Empty (arguments.Insert(0, destination)) constructor
+                    | bad ->
+                        failwithf "TODO: Error for cannot store object reference here after calling constructor %A" bad
                 | Nop -> ()
                 | bad -> failwithf "TODO: Unsupported instruction %A" bad
 
@@ -206,7 +211,7 @@ type RuntimeStruct = { RawData: byte[]; References: RuntimeObject[] }
 
 [<Sealed; AllowNullLiteral>]
 type RuntimeObject (otype: RuntimeTypeDefinition) =
-    let fields = Unchecked.defaultof<RuntimeStruct>
+    let fields = otype.InitializeObjectFields()
 
 [<Sealed>]
 type InvalidConstructorException (method: RuntimeMethod, frame, message) =
@@ -221,6 +226,8 @@ type RuntimeMethod (rmodule: RuntimeModule, method: Method) =
     member _.Module: RuntimeModule = rmodule
 
     member val Name = rmodule.IdentifierAt name
+
+    member val DeclaringType = rmodule.InitializeType method.MethodOwner
 
     member _.IsInstance = flagIsSet MethodFlags.Instance flags
 
@@ -284,13 +291,30 @@ type RuntimeField (rmodule: RuntimeModule, field: Field, n: int32) =
 
     member val FieldType = rmodule.TypeSignatureAt field.FieldType
 
+[<IsReadOnly; Struct; NoComparison; NoEquality>]
+type RuntimeTypeLayout = { Fields: RuntimeField[]; RawDataSize: int32; ObjectReferencesLength: int32 }
+
+let emptyTypeLayout = lazy { RuntimeTypeLayout.Fields = Array.empty; RawDataSize = 0; ObjectReferencesLength = 0 }
+
 [<Sealed>]
 type RuntimeTypeDefinition (rm: RuntimeModule, t: TypeDefinition) =
-    let fields =
-        let fields = Array.zeroCreate t.Fields.Length
-        for i = 0 to fields.Length - 1 do
-            fields.[i] <- rm.InitializeField t.Fields.[i]
-        fields
+    let layout =
+        let { TypeDefinition.Fields = fields } = t
+        if fields.Length > 0 then
+            lazy
+                let fields' = Array.zeroCreate fields.Length
+                let mutable sumDataSize, sumReferencesLength = 0, 0
+
+                for i = 0 to fields'.Length - 1 do
+                    let mutable dsize, rlen = 0, 0
+                    fields'.[i] <- rm.ComputeFieldSize(fields.[i], &dsize, &rlen)
+                    sumDataSize <- sumDataSize + dsize
+                    sumReferencesLength <- sumReferencesLength + dsize
+
+                { RuntimeTypeLayout.Fields = fields'
+                  RawDataSize = sumDataSize
+                  ObjectReferencesLength = sumReferencesLength }
+        else emptyTypeLayout
 
     // TODO: Cache length of RawData and References arrays for RuntimeObject and RuntimeStruct
 
@@ -299,8 +323,9 @@ type RuntimeTypeDefinition (rm: RuntimeModule, t: TypeDefinition) =
     member val Name = rm.IdentifierAt t.TypeName
 
     member _.InitializeObjectFields(): RuntimeStruct =
-        // TODO: Get fields
-        failwith "bad"
+        let layout' = layout.Value
+        { RuntimeStruct.RawData = Array.zeroCreate layout'.RawDataSize
+          References = Array.zeroCreate layout'.ObjectReferencesLength }
 
 let createIndexedLookup (count: int32) initializer =
     let lookup = Dictionary<Index<_>, _> count
@@ -323,6 +348,11 @@ type MissingEntryPointException (m: RuntimeModule, message: string) =
 [<Sealed>]
 type RuntimeModule (m: Module, moduleImportResolver: ModuleIdentifier -> RuntimeModule) as rm =
     // TODO: Check if the runtime version matches the module's format version.
+
+    // TODO: Account for imported type defs when resolving indices.
+    let definedTypeLookup =
+        let types = m.Definitions.DefinedTypes
+        createIndexedLookup types.Length <| fun (Index i) -> RuntimeTypeDefinition(rm, types.[Checked.int32 i])
 
     // TODO: Account for imported methods when resolving indices.
     let definedMethodLookup =
@@ -347,11 +377,21 @@ type RuntimeModule (m: Module, moduleImportResolver: ModuleIdentifier -> Runtime
 
     member _.CodeAt(Index i: CodeIndex) = m.Code.[Checked.int32 i]
 
-    member this.InitializeMethod i = definedMethodLookup i
+    member _.InitializeMethod i = definedMethodLookup i
 
     member _.InitializeField i = definedFieldLookup i
 
-    member _.InitializeType (i: TypeDefinitionIndex) = failwith "TODO: Implement loading of types": RuntimeTypeDefinition
+    member _.InitializeType i = definedTypeLookup i
+
+    member _.ComputeFieldSize(index, rawDataSize: outref<_>, objectReferencesLength: outref<_>) =
+        let field = definedFieldLookup index
+
+        match field.FieldType with
+        | Primitive PrimitiveType.S32 -> rawDataSize <- 4
+        | ObjectReference _ -> objectReferencesLength <- 1
+        | bad -> failwithf "TODO: Unsupported field type %A" bad
+
+        field
 
     member this.InvokeEntryPoint(argv: string[]) =
         match m.EntryPoint with

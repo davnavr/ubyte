@@ -350,7 +350,7 @@ let tcode =
                 keyword "obj.new" >>. tuple3
                     (getPosition .>>. identifier)
                     (declaration "arguments" (many (getPosition .>>. identifier)))
-                    (declaration "return" (getPosition .>>. identifier))
+                    (declaration "returns" (getPosition .>>. identifier))
                 |>> fun (mname, args, ret) -> fun registers mlookup ->
                     validated {
                         let! args' = lookupRegisterList registers args
