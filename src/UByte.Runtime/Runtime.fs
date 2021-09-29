@@ -9,6 +9,8 @@ open System.Runtime.InteropServices
 
 open UByte.Format.Model
 
+let inline flagIsSet flag value = value &&& flag = flag
+
 [<RequireQualifiedAccess>]
 type RuntimeRegister =
     | R1 of uint8 ref
@@ -65,9 +67,9 @@ type RuntimeException =
 
     val private frame: RuntimeStackFrame voption
 
-    new (message, frame) = { inherit Exception(message = message); frame = frame }
+    new (frame, message, inner: Exception) = { inherit Exception(message, inner); frame = frame }
 
-    new (frame, inner: Exception) = { inherit Exception(inner.Message, inner); frame = frame }
+    new (frame, message) = RuntimeException(frame, message, null)
 
     member this.CurrentFrame = this.frame
 
@@ -161,12 +163,22 @@ type RuntimeObject (otype: RuntimeTypeDefinition) =
     let fields = Unchecked.defaultof<RuntimeStruct>
 
 [<Sealed>]
+type InvalidConstructorException (method: RuntimeMethod, frame, message) =
+    inherit RuntimeException(frame, message)
+
+    member _.Method = method
+
+[<Sealed>]
 type RuntimeMethod (rmodule: RuntimeModule, method: Method) =
+    let { Method.MethodName = name; MethodFlags = flags; Body = body } = method
+
     member _.Module = rmodule
 
-    member _.Name = rmodule.IdentifierAt method.MethodName
+    member _.Name = rmodule.IdentifierAt name
 
-    member _.IsInstance = false // TODO: Check method.Flags
+    member _.IsInstance = flagIsSet MethodFlags.Instance flags
+
+    member _.IsConstructor = flagIsSet MethodFlags.ConstructorMask flags
 
     member private _.CreateRegister rtype =
         match rmodule.TypeSignatureAt rtype with
@@ -202,7 +214,7 @@ type RuntimeMethod (rmodule: RuntimeModule, method: Method) =
         Unsafe.As<RuntimeRegister[], ImmutableArray<RuntimeRegister>> &registers
 
     member this.Invoke(previous: RuntimeStackFrame, arguments: _ -> unit): MethodInvocationResult = 
-        match method.Body with
+        match body with
         | MethodBody.Defined codei ->
             let code = rmodule.CodeAt codei
 
@@ -263,10 +275,17 @@ let createIndexedLookup (count: int32) initializer =
             value
 
 [<Sealed>]
-type MissingEntryPointException (message: string) = inherit RuntimeException(message, ValueNone)
+type MissingEntryPointException (m: RuntimeModule, message: string) =
+    inherit RuntimeException(ValueNone, message)
+
+    member _.Module = m
+
+//type State // TODO: Keep track of format version supported by the runtime.
 
 [<Sealed>]
 type RuntimeModule (m: Module, moduleImportResolver: ModuleIdentifier -> RuntimeModule) as rm =
+    // TODO: Check if the runtime version matches the module's format version.
+
     // TODO: Account for imported methods when resolving indices.
     let definedMethodLookup =
         let methods = m.Definitions.DefinedMethods
@@ -314,7 +333,7 @@ type RuntimeModule (m: Module, moduleImportResolver: ModuleIdentifier -> Runtime
                 | RuntimeRegister.R4 { contents = ecode } -> int32 ecode
                 | _ -> failwith "TODO: Either check signature for s32 or u32 before hand or automatically convert return register to int32"
             | _ -> failwith "TODO: Multiple exit codes on entry point not supported"
-        | ValueNone -> raise(MissingEntryPointException "The entry point method of the module is not defined")
+        | ValueNone -> raise(MissingEntryPointException(this, "The entry point method of the module is not defined"))
 
 let initialize program moduleImportLoader =
     /// A cache for the modules created by the import loader.

@@ -28,11 +28,24 @@ type RuntimeException =
 
 type MethodInvocationResult = ImmutableArray<RuntimeRegister>
 
+[<Sealed; Class>]
+type InvalidConstructorException = inherit RuntimeException
+
 [<Sealed>]
 type RuntimeMethod =
     member Name : string
 
+
+    member IsInstance : bool
+
+    /// Indicates whether the specified method is a constructor.
+    member IsConstructor : bool
+
     member Invoke : previous: RuntimeStackFrame * arguments: (ImmutableArray<RuntimeRegister> -> unit) -> MethodInvocationResult
+
+type InvalidConstructorException with
+    /// The method that is not a valid constructor.
+    member Method : RuntimeMethod
 
 [<Sealed>]
 type RuntimeField =
@@ -71,6 +84,10 @@ type RuntimeModule =
     /// <summary>Invokes the entry point of the program, supplying the specified arguments.</summary>
     /// <exception cref="T:UByte.Interpreter.Runtime.MissingEntryPointException" />
     member InvokeEntryPoint : argv: string[] -> int32
+
+type MissingEntryPointException with
+    /// The module that is missing an entry point.
+    member Module : RuntimeModule
 
 type RuntimeMethod with member Module : RuntimeModule
 type RuntimeTypeDefinition with member Module : RuntimeModule
