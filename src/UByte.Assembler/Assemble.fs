@@ -671,10 +671,10 @@ let buildCodeRegisters (types: TypeSignatureLookup) =
     let buildArgumentRegisters =
         let rec inner
             (lookup: Dictionary<Name, _>)
+            (indices: HashSet<_>)
             (names: HashSet<_>)
             (locals: List<_>)
             (registers: UnresolvedCodeRegister list)
-            argi
             errors
             =
             match registers, errors with
@@ -684,18 +684,24 @@ let buildCodeRegisters (types: TypeSignatureLookup) =
                 let errors' =
                     if names.Add rname then
                         match rtype with
-                        | UnresolvedRegisterType.Argument rindex when argi < lookup.Count ->
-                            lookup.Add(rname, rindex)
-                            errors
-                        | UnresolvedRegisterType.Argument(Index i) ->
-                            ValidationError("An identifier corresponding to argument register #" + string i + " already exists", rpos) :: errors
+                        | UnresolvedRegisterType.Argument(Index i as rindex) ->
+                            if indices.Add rindex then
+                                lookup.Add(rname, rindex)
+                                errors
+                            else
+                                let e =
+                                    ValidationError (
+                                        "An identifier corresponding to argument register #" + string i + " already exists",
+                                        rpos
+                                    )
+                                e :: errors
                         | UnresolvedRegisterType.Local(lpos, lname) ->
                             locals.Add(struct(rname', (lpos, lname)))
                             errors
                     else
                         errorDuplicateIdentifier "register" rname rpos :: errors
-                inner lookup names locals remaining (argi + 1) errors'
-        fun registers -> inner (Dictionary()) (HashSet()) (List()) registers 0 List.empty
+                inner lookup indices names locals remaining errors'
+        fun registers -> inner (Dictionary()) (HashSet()) (HashSet()) (List()) registers List.empty
 
     let rec inner i (lookup: Dictionary<Name, RegisterIndex>) (locals: List<_>) errors =
         if i < locals.Count then
