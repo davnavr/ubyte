@@ -106,8 +106,13 @@ type UnresolvedMethodSignature = { ReturnTypes: (Position * Name) list; Paramete
 type UnresolvedInstruction =
     (Name -> RegisterIndex voption) -> MethodLookup -> Result<InstructionSet.Instruction, AssemblerError list>
 
+[<RequireQualifiedAccess; NoComparison; NoEquality>]
+type UnresolvedRegisterType =
+    | Local of Position * Name
+    | Argument of RegisterIndex
+
 [<NoComparison; NoEquality; IsReadOnly; Struct>]
-type UnresolvedCodeRegister = { RegisterName: Position * Name; RegisterType: Position * Name }
+type UnresolvedCodeRegister = { RegisterName: Position * Name; RegisterType: UnresolvedRegisterType }
 
 [<NoComparison; NoEquality; IsReadOnly; Struct>]
 type UnresolvedCode = { Registers: UnresolvedCodeRegister list; Instructions: UnresolvedInstruction list }
@@ -241,9 +246,16 @@ let tsignature =
 
 let tcode =
     let registers =
-        tuple2 (getPosition .>>. identifier) (getPosition .>>. identifier)
-        |> declaration "local"
-        |>> fun (rname, rtype) -> { UnresolvedCodeRegister.RegisterName = rname; RegisterType = rtype }
+        choice [
+            keyword "local" >>. (getPosition .>>. identifier) .>>. (getPosition .>>. identifier) |>> fun (rname, rtype) ->
+                { UnresolvedCodeRegister.RegisterName = rname
+                  RegisterType = UnresolvedRegisterType.Local rtype }
+
+            keyword "argument" >>. (getPosition .>>. identifier) .>>. integerlit |>> fun (rname, rindex) ->
+                { UnresolvedCodeRegister.RegisterName = rname
+                  RegisterType = UnresolvedRegisterType.Argument(Index(Checked.uint32 rindex)) }
+        ]
+        |> sexpression
         |> many
         |> declaration "registers"
         // TODO: Registers should be optional
@@ -605,20 +617,20 @@ let buildMethodDefinitions
     | _ -> Result.Error errors
 
 let buildCodeRegisters (types: TypeSignatureLookup) =
-    let builder = ImmutableArray.CreateBuilder<struct(uvarint * RegisterType)>()
+    let localRegisterBuilder = ImmutableArray.CreateBuilder<struct(uvarint * RegisterType)>()
 
     let addCodeRegister typei flags =
         let rtype =
             { RegisterType.RegisterType = typei
               RegisterFlags = flags }
 
-        let inline addNewRegister() = builder.Add(struct(1u, rtype))
+        let inline addNewRegister() = localRegisterBuilder.Add(struct(1u, rtype))
 
-        if builder.Count > 0 then
-            let currenti = builder.Count - 1
-            let struct(prevc, prevt) = builder.[currenti]
+        if localRegisterBuilder.Count > 0 then
+            let currenti = localRegisterBuilder.Count - 1
+            let struct(prevc, prevt) = localRegisterBuilder.[currenti]
             if prevt.RegisterType = rtype.RegisterType && prevt.RegisterFlags = rtype.RegisterFlags
-            then builder.[currenti] <- struct(Checked.(+) prevc 1u, prevt)
+            then localRegisterBuilder.[currenti] <- struct(Checked.(+) prevc 1u, prevt)
             else addNewRegister()
         else addNewRegister()
 
@@ -629,26 +641,59 @@ let buildCodeRegisters (types: TypeSignatureLookup) =
             pos
         )
 
-    let rec inner (lookup: Dictionary<Name, RegisterIndex>) (registers: UnresolvedCodeRegister list) errors =
-        match registers, errors with
-        | [], [] -> Result.Ok(lookup :> IReadOnlyDictionary<_, _>, builder.ToImmutable())
-        | [], _ -> Result.Error errors
-        | { RegisterName = _, rname } as reg :: remaining, _ ->
+    let buildArgumentRegisters =
+        let rec inner
+            (lookup: Dictionary<Name, _>)
+            (names: HashSet<_>)
+            (locals: List<_>)
+            (registers: UnresolvedCodeRegister list)
+            errors
+            =
+            match registers, errors with
+            | [], [] -> Result.Ok(lookup, locals)
+            | [], _ -> Result.Error errors
+            | { RegisterName = rpos, rname as rname'; RegisterType = rtype } :: remaining, _ ->
+                let errors' =
+                    if names.Add rname then
+                        match rtype with
+                        | UnresolvedRegisterType.Argument(Index i as rindex) when i < uint32 lookup.Count ->
+                            lookup.Add(rname, rindex)
+                            errors
+                        | UnresolvedRegisterType.Argument(Index i) ->
+                            ValidationError("An identifier corresponding to argument register #" + string i + " already exists", rpos) :: errors
+                        | UnresolvedRegisterType.Local(lpos, lname) ->
+                            locals.Add(struct(rname', (lpos, lname)))
+                            errors
+                    else
+                        errorDuplicateIdentifier "register" rname rpos :: errors
+                inner lookup names locals remaining errors'
+        fun registers -> inner (Dictionary()) (HashSet()) (List()) registers List.empty
+
+    let rec inner i (lookup: Dictionary<Name, RegisterIndex>) (locals: List<_>) errors =
+        if i < locals.Count then
             let errors' =
-                match types.FromIdentifier(snd reg.RegisterType) with
+                let struct((rpos, rname), (tpos, tname)) = locals.[i]
+                match types.FromIdentifier tname with
                 | ValueSome typei ->
-                    // TODO: Take into account number of registers corresponding to method parameters.
-                    if lookup.TryAdd(rname, Index(uint32 builder.Count)) then
+                    if lookup.TryAdd(rname, Index(uint32 lookup.Count)) then
                         addCodeRegister typei RegisterFlags.None
                         errors
-                    else errorDuplicateIdentifier "register" rname (fst reg.RegisterName) :: errors
+                    else errorDuplicateIdentifier "register" rname rpos :: errors
                 | ValueNone ->
-                    errorUnresolvedType rname reg.RegisterType :: errors
-            inner lookup remaining errors'
+                    errorUnresolvedType rname (tpos, tname) :: errors
+            inner (i + 1) lookup locals errors'
+        else
+            match errors with
+            | [] -> Result.Ok(lookup :> IReadOnlyDictionary<_, _>, localRegisterBuilder.ToImmutable())
+            | _ -> Result.Error errors
 
     fun registers ->
-        builder.Clear()
-        inner (Dictionary()) registers List.empty
+        localRegisterBuilder.Clear()
+
+        match buildArgumentRegisters registers with
+        | Result.Ok(lookup, locals) ->
+            inner 0 lookup locals List.empty
+        | Result.Error errors -> Result.Error errors
 
 let buildCodeInstructions methods =
     let builder = ImmutableArray.CreateBuilder()
