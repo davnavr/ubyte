@@ -187,6 +187,7 @@ module Interpreter =
                     match destination with
                     | RuntimeRegister.RRef o ->
                         o.contents <- new RuntimeObject(constructor.DeclaringType)
+                        // TODO: Check that first argument is an object reference.
                         invoke ImmutableArray.Empty (arguments.Insert(0, destination)) constructor
                     | bad ->
                         failwithf "TODO: Error for cannot store object reference here after calling constructor %A" bad
@@ -257,13 +258,12 @@ type RuntimeMethod (rmodule: RuntimeModule, method: Method) =
         | bad -> failwithf "TODO: Unsupported type for register %A" bad
 
     member this.CreateArgumentRegisters() =
-        let args = rmodule.MethodSignatureAt method.Signature
-        let mutable registers =
-            let mutable length = args.ParameterTypes.Length
-            if this.IsInstance then length <- length + 1
-            Array.zeroCreate length
+        let { MethodSignature.ParameterTypes = atypes } = rmodule.MethodSignatureAt method.Signature
+        let mutable registers = Array.zeroCreate atypes.Length
+
         for i = 0 to registers.Length - 1 do
-            registers.[0] <- this.CreateRegister args.ParameterTypes.[i] ()
+            registers.[i] <- this.CreateRegister atypes.[i] ()
+
         Unsafe.As<RuntimeRegister[], ImmutableArray<RuntimeRegister>> &registers
 
     member this.SetupStackFrame(returns, frame: byref<_>) =
