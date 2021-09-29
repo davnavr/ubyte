@@ -308,6 +308,11 @@ let tcode =
         | [] -> Result.Ok(Unsafe.As<RegisterIndex[], ImmutableArray<RegisterIndex>> &resolved)
         | _ -> Result.Error errors
 
+    let lookupMethodName (mlookup: MethodLookup) (pos, name) =
+        match mlookup.FindMethod name with
+        | ValueSome mindex -> Result.Ok mindex
+        | ValueNone -> Result.Error [ errorIdentifierUndefined "method" name pos ]
+
     let body: Parser<UnresolvedInstruction list, _> =
         choice [
             choice [
@@ -337,6 +342,23 @@ let tcode =
                     | ValueNone ->
                         Result.Error [ ValidationError(string (snd value) + " is not a valid 32-bit integer literal", fst value) ]
 
+                keyword "obj.null" >>. getPosition .>>. identifier |>> fun r -> fun registers _ ->
+                    lookupRegisterName registers r
+                    |> Result.map InstructionSet.Obj_null
+                    |> Result.mapError List.singleton
+
+                keyword "obj.new" >>. tuple3
+                    (getPosition .>>. identifier)
+                    (declaration "arguments" (many (getPosition .>>. identifier)))
+                    (declaration "return" (getPosition .>>. identifier))
+                |>> fun (mname, args, ret) -> fun registers mlookup ->
+                    validated {
+                        let! args' = lookupRegisterList registers args
+                        let! ret' = lookupRegisterName registers ret |> Result.mapError List.singleton
+                        let! constructor = lookupMethodName mlookup mname
+                        return InstructionSet.Obj_new(constructor, args', ret')
+                    }
+
                 let callLikeInstruction =
                     let registers = many (getPosition .>>. identifier)
 
@@ -345,16 +367,12 @@ let tcode =
                             (getPosition .>>. identifier)
                             (declaration "arguments" registers)
                             (declaration "returns" registers)
-                        |>> fun ((mpos, mname), args, rets) -> fun registers (mlookup: MethodLookup) ->
+                        |>> fun (mname, args, rets) -> fun registers mlookup ->
                             validated {
                                 let! args' = lookupRegisterList registers args
                                 let! rets' = lookupRegisterList registers rets
-                                let! method =
-                                    match mlookup.FindMethod mname with
-                                    | ValueSome mindex -> Result.Ok mindex
-                                    | ValueNone -> Result.Error [ errorIdentifierUndefined "method" mname mpos ]
-
-                                return InstructionSet.Call(method, args', rets')
+                                let! method = lookupMethodName mlookup mname
+                                return instr(method, args', rets')
                             }
 
                 callLikeInstruction "call" InstructionSet.Call
@@ -364,8 +382,11 @@ let tcode =
             ]
             |> sexpression
 
-            keyword "ret" >>. preturn (fun _ _ -> Result.Ok(InstructionSet.Ret ImmutableArray.Empty))
-            keyword "nop" >>. preturn (fun _ _ -> Result.Ok InstructionSet.Nop)
+            let noOperandInstruction name instr =
+                keyword name >>. preturn (fun _ _ -> Result.Ok instr)
+
+            noOperandInstruction "ret" (InstructionSet.Ret ImmutableArray.Empty)
+            noOperandInstruction "nop" InstructionSet.Nop
         ]
         |> many
 

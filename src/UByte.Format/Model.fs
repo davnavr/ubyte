@@ -168,6 +168,7 @@ module InstructionSet =
         | Rem of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
         | Rotl of amount: RegisterIndex * RegisterIndex
         | Rotr of amount: RegisterIndex * RegisterIndex
+        | Obj_new of constructor: MethodIndex * arguments: vector<RegisterIndex> * result: RegisterIndex
         | Obj_null of destination: RegisterIndex
         | Call_ret of method: MethodIndex * arguments: vector<RegisterIndex> * results: vector<RegisterIndex>
         | Call_virt_ret of method: MethodIndex * arguments: vector<RegisterIndex> * results: vector<RegisterIndex>

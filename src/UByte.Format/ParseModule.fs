@@ -249,6 +249,7 @@ let instruction endianness source =
     | Opcode.rotr -> index2 Rotr
 
     | Opcode.``obj.null`` -> index1 Obj_null
+    | Opcode.``obj.new`` -> Obj_new(index source, vector source index, index source)
 
     | Opcode.``call.ret`` -> callargs Call_ret
     | Opcode.``call.virt.ret`` -> callargs Call_virt_ret

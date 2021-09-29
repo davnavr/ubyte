@@ -318,6 +318,12 @@ module InstructionSet =
         | Rotr of amount: RegisterIndex * RegisterIndex
 
         /// <summary>
+        /// Allocates a new object and calls the specified <paramref name="constructor"/> with the specified
+        /// <paramref name="arguments"/> and stores an object reference to the object into the <paramref name="result"/>
+        /// register.
+        /// </summary>
+        | Obj_new of constructor: MethodIndex * arguments: vector<RegisterIndex> * result: RegisterIndex
+        /// <summary>
         /// Stores a <see langword="null"/> object reference into the specified <paramref name="destination"/> register.
         /// </summary>
         | Obj_null of destination: RegisterIndex

@@ -183,7 +183,10 @@ module Interpreter =
                     | RuntimeRegister.RRef destination' -> destination'.contents <- null
                     | RuntimeRegister.RNative destination' -> destination'.contents <- 0un
                     | _ -> raise(RuntimeException(frame, "Unable to store null reference into register"))
+                | Obj_new(Method constructor, Registers frame' arguments, Register destination) ->
+                    failwith "TODO: Implement allocation of objects and calling constructors"
                 | Nop -> ()
+                | bad -> failwithf "TODO: Unsupported instruction %A" bad
 
                 frame'.IncrementInstructionIndex()
             with

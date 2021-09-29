@@ -130,6 +130,10 @@ let instruction endianness i dest =
     | (Instruction.Obj_null reg & Opcode Opcode.``obj.null`` op) ->
         opcode op dest
         index reg dest
+    | Instruction.Obj_new(constructor, aregs, rreg) ->
+        index constructor dest
+        vector index aregs dest
+        index rreg dest
     | _ -> failwithf "TODO: Cannot write unsupported instruction %A" i
 
 let toStream (stream: Stream) (md: Module) =
