@@ -64,8 +64,8 @@ module IndexKinds =
     type [<Sealed; Class>] MethodSignature = inherit Kind
     type [<Sealed; Class>] Module = inherit Kind
     type [<Sealed; Class>] TypeDefinition = inherit Kind
-    type [<Sealed; Class>] Method = inherit Kind
     type [<Sealed; Class>] Field = inherit Kind
+    type [<Sealed; Class>] Method = inherit Kind
     type [<Sealed; Class>] Data = inherit Kind
     type [<Sealed; Class>] Code = inherit Kind
     type [<Sealed; Class>] Register = inherit Kind
@@ -100,16 +100,16 @@ type ModuleIndex = Index<IndexKinds.Module>
 type TypeDefinitionIndex = Index<IndexKinds.TypeDefinition>
 
 /// <summary>
-/// An index into the module's imported or defined methods. An index of <c>0</c> refers to the index of the first imported
-/// method. The index of the first method defined in this module is equal to the number of imported methods.
-/// </summary>
-type MethodIndex = Index<IndexKinds.Method>
-
-/// <summary>
 /// An index into the module's imported or defined fields. An index of <c>0</c> refers to the index of the first imported field.
 /// The index of the first field defined in this module is equal to the number of imported fields.
 /// </summary>
 type FieldIndex = Index<IndexKinds.Field>
+
+/// <summary>
+/// An index into the module's imported or defined methods. An index of <c>0</c> refers to the index of the first imported
+/// method. The index of the first method defined in this module is equal to the number of imported methods.
+/// </summary>
+type MethodIndex = Index<IndexKinds.Method>
 
 type DataIndex = Index<IndexKinds.Data>
 
@@ -485,7 +485,9 @@ type Field =
 type MethodFlags =
     | Final = 0uy
     | Instance = 0b0000_0001uy
-    | ValidMask = 0b0000_0001uy
+    | Constructor = 0b0000_0010uy
+    | ConstructorMask = 0b0000_0011uy
+    | ValidMask = 0b0000_0011uy
 
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
 type MethodBody =
@@ -493,6 +495,13 @@ type MethodBody =
     | Abstract
     //| External of
 
+/// <summary>
+/// Represents a method or constructor.
+/// </summary>
+/// <remarks>
+/// Valid constructors must have the <c>Instance</c> and <c>Constructor</c> flags set, must have no type parameters, and must
+/// have not have any return values.
+/// </remarks>
 [<NoComparison; NoEquality>]
 type Method =
     { MethodOwner: TypeDefinitionIndex
@@ -542,12 +551,14 @@ type TypeDefinition =
       TypeAnnotations: vector<unit>
       Fields: vector<FieldIndex>
       Methods: vector<MethodIndex>
-      //Constructors
       ///// <summary>
-      ///// An array of initializers that must be run before the first time a static field, static method, or constructor defined
+      ///// The initializer that must be run before the first time a static field, static method, or constructor defined
       ///// in this class is used.
       ///// </summary>
-      //Initializers: vector<InitializerIndex>
+      ///// <remarks>
+      ///// Type definition initializers are analagous to <c>static</c> constructors in C#.
+      ///// </remarks>
+      //Initializers: vector<InitializerIndex voption>
       }
 
 [<Flags>]
@@ -631,7 +642,9 @@ type ModuleDefinitions =
       DefinedFields: LengthEncoded<vector<Field>>
       /// The methods defined in the module, all methods are stored in an array for efficient retrieval of method information,
       /// which is needed when invoking the entrypoint of a module.
-      DefinedMethods: LengthEncoded<vector<Method>> }
+      DefinedMethods: LengthEncoded<vector<Method>>
+      //DefinedInitializers: LengthEncoded<vector<TypeInitializer>>
+      }
 
 [<NoComparison; NoEquality>]
 type Module =

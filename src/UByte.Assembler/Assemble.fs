@@ -11,6 +11,8 @@ open UByte.Format.Model
 
 // TODO: Use |>> and FParsec to make assembler easier
 
+let emptyIdentifierIndex = IdentifierIndex.Index 0u
+
 type AssemblerError =
     | ParserError of string * ParserError
     | ValidationError of string * Position
@@ -81,7 +83,7 @@ type TypeDefinitionLookup () =
 [<NoComparison; NoEquality>]
 type UnresolvedMethod =
     { MethodOwner: Position * Name
-      MethodName: Position * Name
+      MethodName: (Position * Name) voption
       MethodVisibility: VisibilityFlags
       MethodFlags: MethodFlags
       MethodSignature: Position * Name
@@ -195,6 +197,7 @@ let tmethodsig =
     let typelist name =
         many (getPosition .>>. identifier)
         |> declaration name
+        |> attempt // TODO: Parse an open paren then check if keyword is returns or parameters.
         |> opt
         |>> Option.defaultValue List.empty
 
@@ -227,6 +230,7 @@ let tcode =
         |>> fun (rname, rtype) -> { UnresolvedCodeRegister.RegisterName = rname; RegisterType = rtype }
         |> many
         |> declaration "registers"
+        // TODO: Registers should be optional
 
     let lookupRegisterName lookup (pos, name) =
         match lookup name with
@@ -354,16 +358,16 @@ let ttypedef =
             else
                 { state with Errors = errorDuplicateIdentifier "type definition" id pos :: state.Errors }
 
-let tmethoddef =
-    let kind: Parser<_, _> = choice [
-        getPosition .>>. identifier
-        |>> fun (pos, name) -> fun lookup ->
-            match lookup name with
-            | ValueSome i -> Result.Ok(MethodBody.Defined i)
-            | ValueNone -> Result.Error(errorIdentifierUndefined "code block" name pos)
-        |> declaration "defined"
-    ]
+let tmethodkind: Parser<_, _> = choice [
+    getPosition .>>. identifier
+    |>> fun (pos, name) -> fun lookup ->
+        match lookup name with
+        | ValueSome i -> Result.Ok(MethodBody.Defined i)
+        | ValueNone -> Result.Error(errorIdentifierUndefined "code block" name pos)
+    |> declaration "defined"
+]
 
+let tmethoddef =
     let mflags: Parser<_, _> = flags "flags" [
         "instance", MethodFlags.Instance
     ]
@@ -372,15 +376,37 @@ let tmethoddef =
         (tuple3 (keyword "method" >>. getPosition) identifier tnamedecl)
         tvisibility
         (getPosition .>>. declaration "signature" identifier)
-        (kind .>>. mflags)
+        (tmethodkind .>>. mflags)
         (getPosition .>>. declaration "owner" identifier)
     >>= fun ((pos, id, name), vis, signature, (mkind, mflags), owner) ->
         updateUserState <| fun state ->
             let mdef =
                 { UnresolvedMethod.MethodOwner = owner
-                  MethodName = name
+                  MethodName = ValueSome name
                   MethodVisibility = vis
                   MethodFlags = mflags
+                  MethodSignature = signature
+                  MethodBody = mkind }
+
+            if state.Module.ModuleMethods.AddDefinition(ValueSome id, mdef) then
+                state
+            else
+                { state with Errors = errorDuplicateIdentifier "method definition" id pos :: state.Errors }
+
+let tctordef =
+    tuple5
+        (keyword "constructor" >>. getPosition)
+        (identifier .>>. tvisibility)
+        (getPosition .>>. declaration "signature" identifier)
+        tmethodkind
+        (getPosition .>>. declaration "owner" identifier)
+    >>= fun (pos, (id, vis), signature, mkind, owner) ->
+        updateUserState <| fun state ->
+            let mdef =
+                { UnresolvedMethod.MethodOwner = owner
+                  MethodName = ValueNone
+                  MethodVisibility = vis
+                  MethodFlags = MethodFlags.ConstructorMask
                   MethodSignature = signature
                   MethodBody = mkind }
 
@@ -525,10 +551,12 @@ let buildMethodDefinitions
                 others.Add(MethodIndex.Index i)
 
                 let! mname =
-                    let (pos, name) = m.MethodName
-                    match identifiers.FromIdentifier name with
-                    | ValueSome namei -> Result.Ok namei
-                    | ValueNone -> Result.Error [ errorIdentifierUndefined "method name" name pos ]
+                    match m.MethodName with
+                    | ValueSome(pos, name) ->
+                        match identifiers.FromIdentifier name with
+                        | ValueSome namei -> Result.Ok namei
+                        | ValueNone -> Result.Error [ errorIdentifierUndefined "method name" name pos ]
+                    | ValueNone -> Result.Ok emptyIdentifierIndex
 
                 let! msig =
                     let (pos, signature) = m.MethodSignature
@@ -673,6 +701,8 @@ let tmodule: Parser<AssemblerResult, State> =
 
         tmethoddef
 
+        tctordef
+
         keyword "entrypoint" >>. getPosition .>>. identifier >>= fun ((pos, _) as ename) ->
             updateUserState <| fun state ->
                 match state.Module.ModuleEntryPoint with
@@ -770,7 +800,10 @@ let tmodule: Parser<AssemblerResult, State> =
                       EntryPoint = entrypoint
                       Debug = () }
             }
-        | ValueSome _, _ :: _ -> Result.Error errors
+        | ValueSome _, _ ->
+            Result.Error errors
+        | ValueNone, _ ->
+            failwith "TODO: Error for module must have a name"
 
 let fromInput (input: _ -> _ -> ParserResult<AssemblerResult, State>) =
     let result =
@@ -778,7 +811,10 @@ let fromInput (input: _ -> _ -> ParserResult<AssemblerResult, State>) =
             { IncompleteModule.ModuleFormatVersion = ref ValueNone
               ModuleHeaderName = ValueNone
               ModuleHeaderVersion = ref ValueNone
-              ModuleIdentifiers = SymbolDictionary()
+              ModuleIdentifiers =
+                let identifiers = SymbolDictionary()
+                identifiers.AddAnonymous String.Empty |> ignore
+                identifiers
               ModuleNamespaces = SymbolDictionary()
               ModuleTypeSignatures = TypeSignatureLookup()
               ModuleMethodSignatures = SymbolDictionary()

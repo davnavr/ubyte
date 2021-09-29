@@ -1,0 +1,49 @@
+﻿(module (format 0 0) (name "Constructor") (version 0 1 0)
+  (identifier $id_namespace "Example")
+  (identifier $id_class "MyClass")
+  (identifier $id_entry_point "main")
+
+  (signature $sig_int (type s32))
+
+  ; Method that takes no parameters and returns a 32-bit integer
+  (signature $sig_main (method (returns $sig_int)))
+
+  (signature $sig_constructor (method (parameters $sig_int)))
+
+  (code $code_main
+    (registers
+      (local $l0 $sig_int)
+      (local $l1 $sig_obj))
+
+    (const.i32 9 $l0)
+    (ret $l0)
+  )
+
+  (code $code_constructor
+    (registers
+        ; (parameter $a_value) ; TODO: Give names to parameters
+        )
+    ret
+  )
+
+  (namespace $namespace_example (name $id_namespace))
+
+  (type $class_my (name $id_class) (namespace $namespace_example)
+    (visibility public)
+    (class base)
+  )
+
+  (constructor $method_constructor (visibility public)
+    (signature $sig_constructor)
+    (defined $code_constructor)
+    (owner $class_my)
+  )
+
+  (method $method_main (name $id_entry_point) (visibility public)
+    (signature $sig_main)
+    (defined $code_main)
+    (owner $class_my)
+  )
+
+  (entrypoint $method_main)
+)

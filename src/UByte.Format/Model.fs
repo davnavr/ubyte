@@ -288,7 +288,9 @@ type Field =
 type MethodFlags =
     | Final = 0uy
     | Instance = 0b0000_0001uy
-    | ValidMask = 0b0000_0001uy
+    | Constructor = 0b0000_0010uy
+    | ConstructorMask = 0b0000_0011uy
+    | ValidMask = 0b0000_0011uy
 
 [<RequireQualifiedAccess>]
 type MethodBody =

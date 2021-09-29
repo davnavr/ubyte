@@ -1,0 +1,9 @@
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+
+  <PropertyGroup>
+    <InputFile>$(MSBuildThisFileDirectory)\oop-constructor.txtmdl</InputFile>
+  </PropertyGroup>
+
+  <Import Project="..\assembler.targets" />
+
+</Project>
