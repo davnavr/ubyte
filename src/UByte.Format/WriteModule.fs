@@ -154,29 +154,33 @@ let toStream (stream: Stream) (md: Module) =
         lengthEncodedVector buffer stream md.Namespaces (vector index)
 
         lengthEncodedVector buffer stream md.TypeSignatures <| fun signature dest ->
+            let inline ttag (t: Tag.Type) = dest.WriteByte(uint8 t)
+
             match signature with
             | Primitive prim ->
-                let tag =
-                    match prim with
-                    | PrimitiveType.S8 -> Tag.Type.S8
-                    | PrimitiveType.S16 -> Tag.Type.S16
-                    | PrimitiveType.S32 -> Tag.Type.S32
-                    | PrimitiveType.S64 -> Tag.Type.S64
-                    | PrimitiveType.U8 -> Tag.Type.U8
-                    | PrimitiveType.U16 -> Tag.Type.U16
-                    | PrimitiveType.U32 -> Tag.Type.U32
-                    | PrimitiveType.U64 -> Tag.Type.U64
-                    | PrimitiveType.UNative -> Tag.Type.UNative
-                    | PrimitiveType.SNative -> Tag.Type.UNative
-                    | PrimitiveType.F32 -> Tag.Type.F32
-                    | PrimitiveType.F64 -> Tag.Type.F64
-                    | PrimitiveType.Char16 -> Tag.Type.Char16
-                    | PrimitiveType.Char32 -> Tag.Type.Char32
-                    | PrimitiveType.Bool -> Tag.Type.Bool
-                    | PrimitiveType.Unit -> Tag.Type.Unit
-                bits1 tag dest
+                match prim with
+                | PrimitiveType.S8 -> Tag.Type.S8
+                | PrimitiveType.S16 -> Tag.Type.S16
+                | PrimitiveType.S32 -> Tag.Type.S32
+                | PrimitiveType.S64 -> Tag.Type.S64
+                | PrimitiveType.U8 -> Tag.Type.U8
+                | PrimitiveType.U16 -> Tag.Type.U16
+                | PrimitiveType.U32 -> Tag.Type.U32
+                | PrimitiveType.U64 -> Tag.Type.U64
+                | PrimitiveType.UNative -> Tag.Type.UNative
+                | PrimitiveType.SNative -> Tag.Type.UNative
+                | PrimitiveType.F32 -> Tag.Type.F32
+                | PrimitiveType.F64 -> Tag.Type.F64
+                | PrimitiveType.Char16 -> Tag.Type.Char16
+                | PrimitiveType.Char32 -> Tag.Type.Char32
+                | PrimitiveType.Bool -> Tag.Type.Bool
+                | PrimitiveType.Unit -> Tag.Type.Unit
+                |> ttag
             | ObjectReference ReferenceType.Any ->
-                bits1 Tag.Type.RefAny dest
+                ttag Tag.Type.RefAny
+            | ObjectReference(ReferenceType.Defined tindex) ->
+                ttag Tag.Type.RefDefinedType
+                index tindex dest
             | _ -> failwithf "TODO: Unsupported type %A" signature
 
         lengthEncodedVector buffer stream md.MethodSignatures <| fun signature dest ->

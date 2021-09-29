@@ -286,6 +286,8 @@ let fromBytes (source: #IByteSequence) =
             | Tag.Type.Bool -> Primitive PrimitiveType.Bool
             | Tag.Type.Char16 -> Primitive PrimitiveType.Char16
             | Tag.Type.Char32 -> Primitive PrimitiveType.Char32
+            | Tag.Type.RefAny -> ObjectReference ReferenceType.Any
+            | Tag.Type.RefDefinedType -> ObjectReference(ReferenceType.Defined(index tsig))
             | bad -> failwithf "TODO: Invalid type (0x%02X) %A" (uint8 bad) bad
       MethodSignatures =
         lengthEncodedVector source <| fun msig ->
