@@ -14,9 +14,11 @@ type RuntimeRegister with
 
 [<Sealed>]
 type RuntimeStackFrame =
-    member MethodArguments : ImmutableArray<RuntimeRegister>
-    member Registers : ImmutableArray<RuntimeRegister>
+    member ArgumentRegisters : ImmutableArray<RuntimeRegister>
+    member LocalRegisters : ImmutableArray<RuntimeRegister>
+    member ReturnRegisters : ImmutableArray<RuntimeRegister>
     member Previous : RuntimeStackFrame voption
+    member InstructionIndex : int32
 
     member RegisterAt : Model.RegisterIndex -> RuntimeRegister
 
@@ -25,8 +27,6 @@ type RuntimeException =
     inherit Exception
 
     member CurrentFrame : RuntimeStackFrame voption
-
-type MethodInvocationResult = ImmutableArray<RuntimeRegister>
 
 [<Sealed; Class>]
 type InvalidConstructorException = inherit RuntimeException
@@ -41,8 +41,6 @@ type RuntimeMethod =
     /// Indicates whether the specified method is a constructor.
     member IsConstructor : bool
 
-    member Invoke : previous: RuntimeStackFrame * arguments: (ImmutableArray<RuntimeRegister> -> unit) -> MethodInvocationResult
-
 type InvalidConstructorException with
     /// The method that is not a valid constructor.
     member Method : RuntimeMethod
@@ -53,13 +51,21 @@ type RuntimeField =
 
 [<RequireQualifiedAccess>]
 module Interpreter =
+    /// <summary>Interprets a method.</summary>
+    /// <param name="returns">
+    /// An array of registers that will contain the return values after the <paramref name="entrypoint"/> method is interpreted.
+    /// </param>
+    /// <param name="arguments">
+    /// An array of registers containing the arguments to pass to the <paramref name="entrypoint"/> method.
+    /// </param>
+    /// <param name="entrypoint">The method to call and interpret.</param>
     val interpret :
-        current: RuntimeStackFrame ->
-        instructions: ImmutableArray<Model.InstructionSet.Instruction> ->
-        methodIndexResolver: (Model.MethodIndex -> RuntimeMethod) ->
-        MethodInvocationResult
+        returns: ImmutableArray<RuntimeRegister> ->
+        arguments: ImmutableArray<RuntimeRegister> ->
+        entrypoint: RuntimeMethod ->
+        unit
 
-type RuntimeStackFrame with member CurrentMethod : RuntimeMethod voption
+type RuntimeStackFrame with member CurrentMethod : RuntimeMethod
 
 [<Sealed>]
 type RuntimeTypeDefinition =

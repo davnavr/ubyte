@@ -49,18 +49,27 @@ type RuntimeStackFrame
     (
         prev: RuntimeStackFrame voption,
         args: ImmutableArray<RuntimeRegister>,
-        registers: ImmutableArray<RuntimeRegister>,
-        method: RuntimeMethod voption
+        locals: ImmutableArray<RuntimeRegister>,
+        returns: ImmutableArray<RuntimeRegister>,
+        instructions: ImmutableArray<InstructionSet.Instruction>,
+        method: RuntimeMethod // TODO: Should be Choice<RuntimeMethod, RuntimeTypeInitializer>.
     )
     =
-    member _.MethodArguments = args
-    member _.Registers = registers
+    let mutable iindex = 0
+
+    member _.ArgumentRegisters = args
+    member _.InstructionIndex = iindex
+    member _.LocalRegisters = locals
+    member _.ReturnRegisters = returns
+    member _.Instructions = instructions
     member _.CurrentMethod = method
     member _.Previous = prev
 
     member this.RegisterAt (Index i: RegisterIndex) =
         let i' = Checked.int32 i
-        if i' >= args.Length then this.Registers.[i' - args.Length] else args.[i']
+        if i' >= args.Length then this.LocalRegisters.[i' - args.Length] else args.[i']
+
+    member _.IncrementInstructionIndex() = iindex <- Checked.(+) 1 iindex
 
 type RuntimeException =
     inherit Exception
@@ -79,81 +88,108 @@ type MethodInvocationResult = ImmutableArray<RuntimeRegister>
 module Interpreter =
     open UByte.Format.Model.InstructionSet
 
-    let copyRegisterValues (source: ImmutableArray<RuntimeRegister>) (dest: ImmutableArray<RuntimeRegister>) =
-        if source.Length <> dest.Length then failwith "TODO: Error, register count mismatch"
-        for i = 0 to source.Length - 1 do source.[i].CopyValueTo dest.[i]
+    let private copyRegisterValues (source: ImmutableArray<RuntimeRegister>) (dest: ImmutableArray<RuntimeRegister>) =
+        if source.Length > dest.Length then failwith "TODO: Error, more source registers than destination registers"
+        for i = 0 to dest.Length - 1 do source.[i].CopyValueTo dest.[i]
 
-    let rec private loop
-        (current: RuntimeStackFrame)
-        (instructions: ImmutableArray<_>)
-        (methodIndexResolver: _ -> RuntimeMethod)
-        i
-        =
-        if i < instructions.Length then
-            let inline getIndexedRegisters (registers: ImmutableArray<RegisterIndex>) =
-                let mutable registers' = Array.zeroCreate registers.Length
-                for i = 0 to registers.Length - 1 do registers'.[i] <- current.RegisterAt registers.[i]
-                Unsafe.As<RuntimeRegister[], ImmutableArray<RuntimeRegister>> &registers'
+    [<RequireQualifiedAccess>]
+    module private Arithmetic =
+        let inline private binaryOp opu8 opu16 opu32 opu64 opunative xreg yreg rreg =
+            match xreg, yreg, rreg with
+            | RuntimeRegister.R1 { contents = x }, RuntimeRegister.R1 { contents = y }, RuntimeRegister.R1 result ->
+                result.contents <- opu8 x y
+            | RuntimeRegister.R2 { contents = x }, RuntimeRegister.R2 { contents = y }, RuntimeRegister.R2 result ->
+                result.contents <- opu16 x y
+            | RuntimeRegister.R4 { contents = x }, RuntimeRegister.R4 { contents = y }, RuntimeRegister.R4 result ->
+                result.contents <- opu32 x y
+            | RuntimeRegister.R8 { contents = x }, RuntimeRegister.R8 { contents = y }, RuntimeRegister.R8 result ->
+                result.contents <- opu64 x y
+            | RuntimeRegister.RNative { contents = x }, RuntimeRegister.RNative { contents = y }, RuntimeRegister.RNative result ->
+                result.contents <- opunative x y
 
-            match instructions.[i] with
-            | Instruction.Nop -> loop current instructions methodIndexResolver (i + 1)
-            | Instruction.Ret rregisters -> getIndexedRegisters rregisters
-            | Instruction.Call(methodi, aregisters, rregisters) ->
-                // NOTE: Can optimize by avoiding allocation of new register instances in CreateArgumentRegisters IFF no arg registers in the method are mutated
-                let returned = (methodIndexResolver methodi).Invoke(current, copyRegisterValues (getIndexedRegisters aregisters))
-                for i = 0 to returned.Length - 1 do returned.[i].CopyValueTo(current.RegisterAt rregisters.[i])
-                loop current instructions methodIndexResolver (i + 1)
-            | Instruction.Reg_copy(source, dest) ->
-                (current.RegisterAt source).CopyValueTo(current.RegisterAt dest)
-                loop current instructions methodIndexResolver (i + 1)
-            | Instruction.Add(xreg, yreg, dest) ->
-                match current.RegisterAt xreg, current.RegisterAt yreg, current.RegisterAt dest with
-                | RuntimeRegister.R4 { contents = x }, RuntimeRegister.R4 { contents = y }, RuntimeRegister.R4 dest' ->
-                    dest'.contents <- x + y
-                | _ -> failwith "TODO: Allow adding of other integers"
+        let add xreg yreg rreg = binaryOp (+) (+) (+) (+) (+) xreg yreg rreg
+        let sub xreg yreg rreg = binaryOp (-) (-) (-) (-) (-) yreg xreg rreg // Reversed since x must be subtracted from y
 
-                loop current instructions methodIndexResolver (i + 1)
-            | Instruction.Const_i32(value, dest) ->
-                match current.RegisterAt dest with
-                | RuntimeRegister.R4 dest' -> dest'.contents <- uint32 value
-                | RuntimeRegister.R8 dest' -> dest'.contents <- uint64 value
-                | _ -> failwith "TODO: Error for cannot store 32 bit integer into register"
-                loop current instructions methodIndexResolver (i + 1)
-            | Instruction.Obj_null dest ->
-                match current.RegisterAt dest with
-                | RuntimeRegister.RRef dest' -> dest'.contents <- null
-                | _ -> failwith "TODO: Error for cannot store null reference into register"
-                loop current instructions methodIndexResolver (i + 1)
-            | bad -> failwithf "TODO: Implement interpretation of %A instruction" bad
-        else
-            failwith "TODO: error for method did not return"
+        let ``and`` xreg yreg rreg = binaryOp (&&&) (&&&) (&&&) (&&&) (&&&) xreg yreg rreg
+        let ``or`` xreg yreg rreg = binaryOp (|||) (|||) (|||) (|||) (|||) xreg yreg rreg
+        //let ``not`` xreg yreg rreg = unaryOp (~~~) (~~~) (~~~) (~~~) (~~~) xreg yreg rreg
+        let xor xreg yreg rreg = binaryOp (^^^) (^^^) (^^^) (^^^) (^^^) xreg yreg rreg
 
-    let interpret current instructions methodIndexResolver =
-        //let current = ref current
-        // NOTE: Can do an explicit stack of Stack<struct(RuntimeStackFrame * ImmutableArray<Instruction> * int32)>
-        loop current instructions methodIndexResolver 0
+    [<RequireQualifiedAccess>]
+    module private Const =
+        let inline private store value destination =
+            match destination with
+            | RuntimeRegister.R1 dest' -> dest'.contents <- uint8 value
+            | RuntimeRegister.R2 dest' -> dest'.contents <- uint16 value
+            | RuntimeRegister.R4 dest' -> dest'.contents <- uint32 value
+            | RuntimeRegister.R8 dest' -> dest'.contents <- uint64 value
+            | RuntimeRegister.RNative dest' -> dest'.contents <- unativeint value
+            //"Cannot store integer into a register containing an object reference"
 
-        (*
-        // TODO: Maybe store current offset to instruction inside of the stack frame to help with error messages.
-        let mutable frame, i, ex = ValueSome current, 0, ValueNone
-        while something do
+        let i32 (value: int32) destination = store value destination
+
+    let private (|Registers|) (frame: RuntimeStackFrame) (registers: ImmutableArray<RegisterIndex>) =
+        let mutable registers' = Array.zeroCreate registers.Length
+        for i = 0 to registers.Length - 1 do registers'.[i] <- frame.RegisterAt registers.[i]
+        Unsafe.As<RuntimeRegister[], ImmutableArray<RuntimeRegister>> &registers'
+
+    let interpret returns arguments (entrypoint: RuntimeMethod) =
+        let mutable frame: RuntimeStackFrame voption = ValueNone
+
+        entrypoint.SetupStackFrame(returns, &frame)
+        copyRegisterValues arguments frame.Value.ArgumentRegisters
+
+        let inline cont() =
+            match frame with
+            | ValueSome frame'-> frame'.InstructionIndex < frame'.Instructions.Length
+            | ValueNone -> false
+
+        while cont() do
+            let frame' = frame.Value
+            let inline (|Register|) rindex = frame'.RegisterAt rindex
+            let inline (|Method|) mindex: RuntimeMethod = frame'.CurrentMethod.Module.InitializeMethod mindex
+
+            (*
             match ex with
             | ValueSome e ->
-                lookup exception handlers
-                i <- offset to exception handler
+                failwith "TODO: Lookup exception handlers"
             | ValueNone -> ()
+            *)
 
             try
-                interpret instruction
-            catch
-            | e -> ex <- ValueSome e
+                match frame'.Instructions.[frame'.InstructionIndex] with
+                | Reg_copy(source, dest) -> (frame'.RegisterAt source).CopyValueTo(frame'.RegisterAt dest)
+                | Add(Register x, Register y, Register r) -> Arithmetic.add x y r
+                | Sub(Register x, Register y, Register r) -> Arithmetic.sub x y r
+                | And(Register x, Register y, Register r) -> Arithmetic.``and`` x y r
+                | Or(Register x, Register y, Register r) -> Arithmetic.``or`` x y r
+                | Xor(Register x, Register y, Register r) -> Arithmetic.xor x y r
+                | Const_i32(value, Register dest) -> Const.i32 value dest
+                | Ret(Registers frame' registers) ->
+                    copyRegisterValues registers frame'.ReturnRegisters
+                    frame <- frame'.Previous
+                | Call(Method method, Registers frame' aregs, Registers frame' rregs) ->
+                    method.SetupStackFrame(rregs, &frame)
+                    copyRegisterValues aregs frame.Value.ArgumentRegisters
+                | Obj_null(Register destination) ->
+                    match destination with
+                    | RuntimeRegister.RRef destination' -> destination'.contents <- null
+                    | RuntimeRegister.RNative destination' -> destination'.contents <- 0un
+                    | _ -> raise(RuntimeException(frame, "Unable to store null reference into register"))
+                | Nop -> ()
+
+                frame'.IncrementInstructionIndex()
+            with
+            | e ->
+                //ex <- ValueSome e
+                raise(System.NotImplementedException("TODO: Implement exception handling, " + e.Message, e))
+
+            ()
 
         match frame with
+        | ValueNone -> ()
         | ValueSome bad ->
             failwith "TODO: Error for method did not have Ret instruction"
-        | ValueNone ->
-            go return the return registers to allow retrieval of exit code
-        *)
 
 [<IsReadOnly; Struct; NoComparison; NoEquality>]
 type RuntimeStruct = { RawData: byte[]; References: RuntimeObject[] }
@@ -172,9 +208,9 @@ type InvalidConstructorException (method: RuntimeMethod, frame, message) =
 type RuntimeMethod (rmodule: RuntimeModule, method: Method) =
     let { Method.MethodName = name; MethodFlags = flags; Body = body } = method
 
-    member _.Module = rmodule
+    member _.Module: RuntimeModule = rmodule
 
-    member _.Name = rmodule.IdentifierAt name
+    member val Name = rmodule.IdentifierAt name
 
     member _.IsInstance = flagIsSet MethodFlags.Instance flags
 
@@ -200,7 +236,8 @@ type RuntimeMethod (rmodule: RuntimeModule, method: Method) =
             | PrimitiveType.SNative
             | PrimitiveType.UNative -> fun() -> RuntimeRegister.RNative(ref 0un)
             | PrimitiveType.Unit -> fun() -> failwith "TODO: Prevent usage of Unit in register types."
-        | _ -> failwith "TODO: Unsupported type for register"
+        | AnyType.ObjectReference _ -> fun() -> RuntimeRegister.RRef(ref null)
+        | bad -> failwithf "TODO: Unsupported type for register %A" bad
 
     member this.CreateArgumentRegisters() =
         let args = rmodule.MethodSignatureAt method.Signature
@@ -209,11 +246,10 @@ type RuntimeMethod (rmodule: RuntimeModule, method: Method) =
             if this.IsInstance then length <- length + 1
             Array.zeroCreate length
         for i = 0 to registers.Length - 1 do
-            if i = 0 && this.IsInstance then failwith "TODO: Add this pointer"
             registers.[0] <- this.CreateRegister args.ParameterTypes.[i] ()
         Unsafe.As<RuntimeRegister[], ImmutableArray<RuntimeRegister>> &registers
 
-    member this.Invoke(previous: RuntimeStackFrame, arguments: _ -> unit): MethodInvocationResult = 
+    member this.SetupStackFrame(returns, frame: byref<_>) =
         match body with
         | MethodBody.Defined codei ->
             let code = rmodule.CodeAt codei
@@ -227,27 +263,19 @@ type RuntimeMethod (rmodule: RuntimeModule, method: Method) =
                     for _ = 1 to Checked.int32 count do create() |> registers.Add
                 registers.ToImmutable()
 
-            let current = RuntimeStackFrame(ValueSome previous, args, registers, ValueSome this)
-
-            arguments args
-
-            Interpreter.interpret current code.Instructions rmodule.InitializeMethod
+            frame <- ValueSome(RuntimeStackFrame(frame, args, registers, returns, code.Instructions, this))
         | MethodBody.Abstract -> failwith "TODO: Handle virtual calls"
 
 [<Sealed>]
 type RuntimeField (rmodule: RuntimeModule, field: Field, n: int32) =
-    let ftype = lazy rmodule.TypeSignatureAt field.FieldType
-
     member _.Module = rmodule
 
     member _.Name = rmodule.IdentifierAt field.FieldName
 
-    member _.FieldType = ftype.Value
+    member val FieldType = rmodule.TypeSignatureAt field.FieldType
 
 [<Sealed>]
 type RuntimeTypeDefinition (rm: RuntimeModule, t: TypeDefinition) =
-    let name = lazy rm.IdentifierAt t.TypeName
-
     let fields =
         let fields = Array.zeroCreate t.Fields.Length
         for i = 0 to fields.Length - 1 do
@@ -258,7 +286,7 @@ type RuntimeTypeDefinition (rm: RuntimeModule, t: TypeDefinition) =
 
     member _.Module = rm
 
-    member _.Name = name.Value
+    member val Name = rm.IdentifierAt t.TypeName
 
     member _.InitializeObjectFields(): RuntimeStruct =
         // TODO: Get fields
@@ -309,7 +337,7 @@ type RuntimeModule (m: Module, moduleImportResolver: ModuleIdentifier -> Runtime
 
     member _.CodeAt(Index i: CodeIndex) = m.Code.[Checked.int32 i]
 
-    member _.InitializeMethod i = definedMethodLookup i
+    member this.InitializeMethod i = definedMethodLookup i
 
     member _.InitializeField i = definedFieldLookup i
 
@@ -318,21 +346,12 @@ type RuntimeModule (m: Module, moduleImportResolver: ModuleIdentifier -> Runtime
     member this.InvokeEntryPoint(argv: string[]) =
         match m.EntryPoint with
         | ValueSome ei ->
-            // TODO: Pass argv to method somehow.
             let main = this.InitializeMethod ei
-            // TODO: Check signature of method to determine if argv should be passed.
-            let arguments (args: ImmutableArray<_>) = if not args.IsDefaultOrEmpty then invalidOp "TODO: Passing of arguments for main not supported"
+            let arguments = ImmutableArray.Empty // TODO: Check signature of method to determine if argv should be passed.
+            let result = ref 0u // TODO: Check that entry point does not return more than 1 value.
 
-            let start = RuntimeStackFrame(ValueNone, ImmutableArray.Empty, ImmutableArray.Empty, ValueNone)
-            let result = main.Invoke(start, arguments)
-
-            match result.Length with
-            | 0 -> 0
-            | 1 -> // TODO: Check signature of method to determine if a 32bit integer exit code is returned
-                match result.[0] with
-                | RuntimeRegister.R4 { contents = ecode } -> int32 ecode
-                | _ -> failwith "TODO: Either check signature for s32 or u32 before hand or automatically convert return register to int32"
-            | _ -> failwith "TODO: Multiple exit codes on entry point not supported"
+            Interpreter.interpret (ImmutableArray.Create(RuntimeRegister.R4 result)) arguments main
+            int32 result.contents
         | ValueNone -> raise(MissingEntryPointException(this, "The entry point method of the module is not defined"))
 
 let initialize program moduleImportLoader =
