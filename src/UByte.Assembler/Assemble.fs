@@ -23,7 +23,7 @@ type AssemblerError =
         | ValidationError(msg, _) -> msg
 
 [<Sealed>]
-type SymbolDictionary<'IndexKind, 'T when 'IndexKind :> IndexKinds.Kind> () =
+type SymbolDictionary<'IndexKind, 'T when 'IndexKind :> IndexKinds.Kind> () = // TODO: Rename to Identifier lookup
     let items = ImmutableArray.CreateBuilder<'T>()
     let symbols = Dictionary<Name, int32>()
 
@@ -69,6 +69,19 @@ type UnresolvedTypeDefinition =
       TypeVisibility: VisibilityFlags
       TypeKind: (Name -> TypeDefinitionIndex voption) -> Result<TypeDefinitionKind, AssemblerError> }
 
+// TODO: Use these to replace TypeDefinitionLookup, MethodLookup, and FieldLookup
+//type SharedIdentifierLookup<'IndexKind, 'Imported, 'Defined when 'IndexKind :> IndexKinds.Kind> () =
+//    let imported = SymbolDictionary<'IndexKind, 'Imported>()
+//    let defined = SymbolDictionary<'IndexKind, 'Defined>()
+
+//    member _.Definitions = defined.Values
+
+//    member _.AddDefinition(name, definition) = defined.Add(name, definition)
+//    member _.FindDefinition name = defined.FromIdentifier name
+
+//    member this.Find name: Index<'IndexKind> voption =
+//        this.FindDefinition name
+
 [<Sealed>]
 type TypeDefinitionLookup () =
     let defined = SymbolDictionary<IndexKinds.TypeDefinition, UnresolvedTypeDefinition>()
@@ -76,9 +89,17 @@ type TypeDefinitionLookup () =
 
     member _.AddDefinition(name, item) = defined.Add(name, item)
     member _.FindDefinition name = defined.FromIdentifier name
-    member this.FindType name: TypeDefinitionIndex voption = this.FindDefinition name
+    member this.Find name: TypeDefinitionIndex voption = this.FindDefinition name
 
     member _.Definitions = defined.Values
+
+[<NoComparison; NoEquality>]
+type UnresolvedField =
+    { FieldOwner: Position * Name
+      FieldName: Position * Name
+      FieldVisibility: VisibilityFlags
+      FieldFlags: FieldFlags
+      FieldType: Position * Name }
 
 [<NoComparison; NoEquality>]
 type UnresolvedMethod =
@@ -90,6 +111,15 @@ type UnresolvedMethod =
       MethodBody: (Name -> CodeIndex voption) -> Result<MethodBody, AssemblerError> }
 
 [<Sealed>]
+type FieldLookup () =
+    let defined = SymbolDictionary<IndexKinds.Field, UnresolvedField>()
+
+    member _.Definitions = defined.Values
+    member _.AddDefinition(name, item) = defined.Add(name, item)
+    member _.FindDefinition name = defined.FromIdentifier name
+    member this.Find name = this.FindDefinition name
+
+[<Sealed>]
 type MethodLookup () =
     let defined = SymbolDictionary<IndexKinds.Method, UnresolvedMethod>()
     //let imported
@@ -97,8 +127,7 @@ type MethodLookup () =
     member _.Definitions = defined.Values
     member _.AddDefinition(name, item) = defined.Add(name, item)
     member _.FindDefinition name = defined.FromIdentifier name
-    member this.FindMethod name = this.FindDefinition name
-    member _.ToVector() = defined.ToVector()
+    member this.Find name = this.FindDefinition name
 
 [<NoComparison; NoEquality; IsReadOnly; Struct>]
 type UnresolvedMethodSignature = { ReturnTypes: (Position * Name) list; ParameterTypes: (Position * Name) list }
@@ -127,7 +156,7 @@ type IncompleteModule =
       ModuleTypeSignatures: TypeSignatureLookup
       ModuleMethodSignatures: SymbolDictionary<IndexKinds.MethodSignature, UnresolvedMethodSignature>
       ModuleTypes: TypeDefinitionLookup
-      //ModuleFields: 
+      ModuleFields: FieldLookup
       ModuleMethods: MethodLookup
       ModuleCode: SymbolDictionary<IndexKinds.Code, UnresolvedCode>
       mutable ModuleEntryPoint: (Position * Name) voption }
@@ -309,7 +338,7 @@ let tcode =
         | _ -> Result.Error errors
 
     let lookupMethodName (mlookup: MethodLookup) (pos, name) =
-        match mlookup.FindMethod name with
+        match mlookup.Find name with
         | ValueSome mindex -> Result.Ok mindex
         | ValueNone -> Result.Error [ errorIdentifierUndefined "method" name pos ]
 
@@ -505,6 +534,33 @@ let tctordef =
             else
                 { state with Errors = errorDuplicateIdentifier "method definition" id pos :: state.Errors }
 
+let tfielddef =
+    let fflags =
+        flags "flags" [
+            "mutable", FieldFlags.Mutable
+            "static", FieldFlags.Static
+        ]
+
+    keyword "field" >>. tuple5
+        (getPosition .>>. identifier)
+        tvisibility
+        (getPosition .>>. declaration "type" identifier)
+        fflags
+        (getPosition .>>. declaration "owner" identifier)
+    >>= fun ((pos, id) as id', vis, t, flags, owner) ->
+        updateUserState <| fun state ->
+            let field =
+                { UnresolvedField.FieldOwner = owner
+                  FieldName = id'
+                  FieldVisibility = vis
+                  FieldFlags = flags
+                  FieldType = t }
+
+            if state.Module.ModuleFields.AddDefinition(ValueSome id, field) then
+                state
+            else
+                { state with Errors = errorDuplicateIdentifier "field definition" id pos :: state.Errors }
+
 let tryMapLookup (lookup: SymbolDictionary<_, 'T>) (mapping: 'T -> Result<'U, AssemblerError list>) =
     let mutable items = Array.zeroCreate lookup.Count
     let rec inner i errors =
@@ -567,7 +623,7 @@ let buildTypeDefinitions
                     | ValueSome nsi -> Result.Ok nsi
                     | ValueNone -> Result.Error [ errorIdentifierUndefined "type namespace" name pos ]
 
-                let! tkind = Result.mapError List.singleton (t.TypeKind types.FindType)
+                let! tkind = Result.mapError List.singleton (t.TypeKind types.Find)
 
                 let tindex = TypeDefinitionIndex.Index i
 
@@ -597,9 +653,57 @@ let buildTypeDefinitions
     | [] -> Result.Ok(builder.ToImmutable())
     | _ -> Result.Error errors
 
+let buildFieldDefinitions
+    (identifiers: IdentifierLookup)
+    (signatures: TypeSignatureLookup)
+    (types: TypeDefinitionLookup)
+    (fields: FieldLookup)
+    (fieldOwnerLookup: IDictionary<_, _>)
+    =
+    let builder = ImmutableArray.CreateBuilder()
+    let mutable errors, i = List.empty, 0u // TODO: Start at # of field imports when building field definitions.
+
+    for f in fields.Definitions do
+        let result =
+            validated {
+                let! fowner =
+                    let (pos, owner) = f.FieldOwner
+                    match types.FindDefinition owner with
+                    | ValueSome namei -> Result.Ok namei
+                    | ValueNone -> Result.Error [ errorIdentifierUndefined "field owner type definition" owner pos ]
+
+                let! fname =
+                    let (pos, name) = f.FieldName
+                    match identifiers.FromIdentifier name with
+                    | ValueSome namei -> Result.Ok namei
+                    | ValueNone -> Result.Error [ errorIdentifierUndefined "field name" name pos ]
+
+                let! ftype =
+                    let (pos, name) = f.FieldType
+                    match signatures.FromIdentifier name with
+                    | ValueSome typei -> Result.Ok typei
+                    | ValueNone -> Result.Error [ errorIdentifierUndefined "field type" name pos ]
+
+                return! Result.Ok
+                    { Field.FieldOwner = fowner
+                      FieldName = fname
+                      FieldVisibility = f.FieldVisibility
+                      FieldFlags = f.FieldFlags
+                      FieldType = ftype
+                      FieldAnnotations = ImmutableArray.Empty }
+            }
+
+        match result with
+        | Result.Ok m' -> builder.Add m'
+        | Result.Error errors' -> errors <- errors' @ errors
+
+    match errors with
+    | [] -> Result.Ok(builder.ToImmutable())
+    | _ -> Result.Error errors
+
 let buildMethodDefinitions
     (identifiers: IdentifierLookup)
-    (signatures: SymbolDictionary<_, _>)
+    (signatures: SymbolDictionary<_, UnresolvedMethodSignature>)
     (code: SymbolDictionary<_, _>)
     (types: TypeDefinitionLookup)
     (methods: MethodLookup)
@@ -816,6 +920,8 @@ let tmodule: Parser<AssemblerResult, State> =
 
         ttypedef
 
+        tfielddef
+
         tmethoddef
 
         tctordef
@@ -841,7 +947,7 @@ let tmodule: Parser<AssemblerResult, State> =
                 let! namespaces = tryMapLookup state.ModuleNamespaces (buildLookupValues state.ModuleIdentifiers)
 
                 let! tsignatures =
-                    let tryFindType = state.ModuleTypes.FindType
+                    let tryFindType = state.ModuleTypes.Find
                     tryMapLookup state.ModuleTypeSignatures (fun t -> t tryFindType |> Result.mapError List.singleton)
 
                 let! msignatures =
@@ -852,6 +958,10 @@ let tmodule: Parser<AssemblerResult, State> =
                             let! ptypes = getTypeList m.ParameterTypes
                             return! Result.Ok { MethodSignature.ReturnTypes = rtypes; ParameterTypes = ptypes }
                         }
+
+                let fieldOwnerLookup = Dictionary state.ModuleTypes.Definitions.Count
+
+
 
                 let methodOwnerLookup = Dictionary state.ModuleTypes.Definitions.Count
 
@@ -936,6 +1046,7 @@ let fromInput (input: _ -> _ -> ParserResult<AssemblerResult, State>) =
               ModuleTypeSignatures = TypeSignatureLookup()
               ModuleMethodSignatures = SymbolDictionary()
               ModuleTypes = TypeDefinitionLookup()
+              ModuleFields = FieldLookup()
               ModuleMethods = MethodLookup()
               ModuleCode = SymbolDictionary()
               ModuleEntryPoint = ValueNone }

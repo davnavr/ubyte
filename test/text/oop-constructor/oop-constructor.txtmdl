@@ -30,7 +30,8 @@
     (registers
         (argument $this 0)
         (argument $a_value 1))
-    ; (obj.stfd )
+
+    ; (obj.stfd $field_value $this $a_value)
     ret
   )
 
@@ -50,6 +51,12 @@
   (method $method_main (name $id_entry_point) (visibility public)
     (signature $sig_main)
     (defined $code_main)
+    (owner $class_my)
+  )
+
+  (field $field_value (visibility public)
+    (type $sig_int)
+    (flags mutable)
     (owner $class_my)
   )
 
