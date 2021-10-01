@@ -170,6 +170,8 @@ module InstructionSet =
         | Rotr of amount: RegisterIndex * RegisterIndex
         | Obj_new of constructor: MethodIndex * arguments: vector<RegisterIndex> * result: RegisterIndex
         | Obj_null of destination: RegisterIndex
+        | Obj_ldfd of field: FieldIndex * object: RegisterIndex * destination: RegisterIndex
+        | Obj_stfd of field: FieldIndex * object: RegisterIndex * source: RegisterIndex
         | Call_ret of method: MethodIndex * arguments: vector<RegisterIndex> * results: vector<RegisterIndex>
         | Call_virt_ret of method: MethodIndex * arguments: vector<RegisterIndex> * results: vector<RegisterIndex>
 

@@ -250,6 +250,8 @@ let instruction endianness source =
 
     | Opcode.``obj.null`` -> index1 Obj_null
     | Opcode.``obj.new`` -> Obj_new(index source, vector source index, index source)
+    | Opcode.``obj.ldfd`` -> index3 Obj_ldfd
+    | Opcode.``obj.stfd`` -> index3 Obj_stfd
 
     | Opcode.``call.ret`` -> callargs Call_ret
     | Opcode.``call.virt.ret`` -> callargs Call_virt_ret

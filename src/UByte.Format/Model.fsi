@@ -136,6 +136,10 @@ module InstructionSet =
         // Register
         | ``reg.copy`` = 0x17u
 
+        // Global
+        //| ``global.ld`` = 0x19u
+        //| ``global.st`` = 0x20u
+
         // Arithmetic
         // TODO: Should math opcodes get unsigned versions like in CIL?
         | add = 0x20u
@@ -327,6 +331,14 @@ module InstructionSet =
         /// Stores a <see langword="null"/> object reference into the specified <paramref name="destination"/> register.
         /// </summary>
         | Obj_null of destination: RegisterIndex
+        /// <summary>
+        /// Copies the value of an object's field into the <paramref name="destination"/> register.
+        /// </summary>
+        | Obj_ldfd of field: FieldIndex * object: RegisterIndex * destination: RegisterIndex
+        /// <summary>
+        /// Copies the value from the <paramref name="source"/> register into the field of the specified object.
+        /// </summary>
+        | Obj_stfd of field: FieldIndex * object: RegisterIndex * source: RegisterIndex
 
         | Call_ret of method: MethodIndex * arguments: vector<RegisterIndex> * results: vector<RegisterIndex>
         | Call_virt_ret of method: MethodIndex * arguments: vector<RegisterIndex> * results: vector<RegisterIndex>

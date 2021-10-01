@@ -133,7 +133,7 @@ type MethodLookup () =
 type UnresolvedMethodSignature = { ReturnTypes: (Position * Name) list; ParameterTypes: (Position * Name) list }
 
 type UnresolvedInstruction =
-    (Name -> RegisterIndex voption) -> MethodLookup -> Result<InstructionSet.Instruction, AssemblerError list>
+    (Name -> RegisterIndex voption) -> FieldLookup -> MethodLookup -> Result<InstructionSet.Instruction, AssemblerError list>
 
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
 type UnresolvedRegisterType =
@@ -345,10 +345,10 @@ let tcode =
     let body: Parser<UnresolvedInstruction list, _> =
         choice [
             choice [
-                keyword "ret" >>. many (getPosition .>>. identifier) |>> fun names -> fun registers _ ->
+                keyword "ret" >>. many (getPosition .>>. identifier) |>> fun names -> fun registers _ _ ->
                     Result.map InstructionSet.Ret (lookupRegisterList registers names)
 
-                keyword "add" >>. parray 3 (getPosition .>>. identifier) |>> fun names -> fun registers _ ->
+                keyword "add" >>. parray 3 (getPosition .>>. identifier) |>> fun names -> fun registers _ _ ->
                     Result.map
                         (fun (registers': ImmutableArray<_>) ->
                             InstructionSet.Add(registers'.[0], registers'.[1], registers'.[2]))
@@ -362,7 +362,7 @@ let tcode =
                 keyword "const.i32"
                 >>. (getPosition .>>. integerlit)
                 .>>. (getPosition .>>. identifier)
-                |>> fun (value, name) -> fun registers _ ->
+                |>> fun (value, name) -> fun registers _ _ ->
                     match guardIntegerRange Int32.MinValue Int32.MaxValue int32 (snd value) with
                     | ValueSome value' ->
                         lookupRegisterName registers name
@@ -371,7 +371,7 @@ let tcode =
                     | ValueNone ->
                         Result.Error [ ValidationError(string (snd value) + " is not a valid 32-bit integer literal", fst value) ]
 
-                keyword "obj.null" >>. getPosition .>>. identifier |>> fun r -> fun registers _ ->
+                keyword "obj.null" >>. getPosition .>>. identifier |>> fun r -> fun registers _ _ ->
                     lookupRegisterName registers r
                     |> Result.map InstructionSet.Obj_null
                     |> Result.mapError List.singleton
@@ -380,13 +380,34 @@ let tcode =
                     (getPosition .>>. identifier)
                     (declaration "arguments" (many (getPosition .>>. identifier)))
                     (declaration "returns" (getPosition .>>. identifier))
-                |>> fun (mname, args, ret) -> fun registers mlookup ->
+                |>> fun (mname, args, ret) -> fun registers _ mlookup ->
                     validated {
                         let! args' = lookupRegisterList registers args
                         let! ret' = lookupRegisterName registers ret |> Result.mapError List.singleton
                         let! constructor = lookupMethodName mlookup mname
                         return InstructionSet.Obj_new(constructor, args', ret')
                     }
+
+                let objectFieldInstruction name instr =
+                    keyword name >>. tuple3
+                        (getPosition .>>. identifier)
+                        (getPosition .>>. identifier)
+                        (getPosition .>>. identifier)
+                    |>> fun (field, oreg, reg) -> fun registers (flookup: FieldLookup) _ ->
+                        validated {
+                            let! field' =
+                                match flookup.Find(snd field) with
+                                | ValueSome findex -> Result.Ok findex
+                                | ValueNone -> Result.Error [ errorIdentifierUndefined "field" (snd field) (fst field) ]
+
+                            let! oreg' = lookupRegisterName registers oreg |> Result.mapError List.singleton
+                            let! reg' = lookupRegisterName registers reg |> Result.mapError List.singleton
+
+                            return instr(field', oreg', reg')
+                        }
+
+                objectFieldInstruction "obj.ldfd" InstructionSet.Obj_ldfd
+                objectFieldInstruction "obj.stfd" InstructionSet.Obj_stfd
 
                 let callLikeInstruction =
                     let registers = many (getPosition .>>. identifier)
@@ -396,7 +417,7 @@ let tcode =
                             (getPosition .>>. identifier)
                             (declaration "arguments" registers)
                             (declaration "returns" registers)
-                        |>> fun (mname, args, rets) -> fun registers mlookup ->
+                        |>> fun (mname, args, rets) -> fun registers _ mlookup ->
                             validated {
                                 let! args' = lookupRegisterList registers args
                                 let! rets' = lookupRegisterList registers rets
@@ -412,7 +433,7 @@ let tcode =
             |> sexpression
 
             let noOperandInstruction name instr =
-                keyword name >>. preturn (fun _ _ -> Result.Ok instr)
+                keyword name >>. preturn (fun _ _ _ -> Result.Ok instr)
 
             noOperandInstruction "ret" (InstructionSet.Ret ImmutableArray.Empty)
             noOperandInstruction "nop" InstructionSet.Nop
@@ -854,7 +875,7 @@ let buildCodeRegisters (types: TypeSignatureLookup) =
             inner 0 lookup locals List.empty
         | Result.Error errors -> Result.Error errors
 
-let buildCodeInstructions methods =
+let buildCodeInstructions fields methods =
     let builder = ImmutableArray.CreateBuilder()
 
     fun (registers: IReadOnlyDictionary<_, _>) ->
@@ -869,7 +890,7 @@ let buildCodeInstructions methods =
             | [], _ -> Result.Error errors
             | (instr: UnresolvedInstruction) :: remaining, _ ->
                 let errors' =
-                    match instr lookupRegisterName methods with
+                    match instr lookupRegisterName fields methods with
                     | Result.Ok instr' ->
                         builder.Add instr'
                         errors
@@ -978,7 +999,7 @@ let tmodule: Parser<AssemblerResult, State> =
 
                 let! codes =
                     let getCodeRegisters = buildCodeRegisters state.ModuleTypeSignatures
-                    let getCodeInstructions = buildCodeInstructions state.ModuleMethods
+                    let getCodeInstructions = buildCodeInstructions state.ModuleFields state.ModuleMethods
                     tryMapLookup state.ModuleCode <| fun code ->
                         validated {
                             let! (rlookup, registers) = getCodeRegisters code.Registers

@@ -20,9 +20,7 @@
 
     (const.i32 21 $l0)
     (obj.new $method_constructor (arguments $l0) (returns $l1))
-
-    ; return 0
-    (const.i32 0 $l0)
+    ; (obj.ldfd $field_value $l1 $l0)
     (ret $l0)
   )
 
@@ -31,7 +29,7 @@
         (argument $this 0)
         (argument $a_value 1))
 
-    ; (obj.stfd $field_value $this $a_value)
+    (obj.stfd $field_value $this $a_value)
     ret
   )
 
