@@ -424,7 +424,7 @@ type RuntimeTypeDefinition (rm: RuntimeModule, t: TypeDefinition) =
 
                     // Stores either the index into the data array or reference array, the kind of index depends on whether dsize
                     // or rlen was set, only one will be zero
-                    indices.Add(rfield, max dsize rlen)
+                    indices.Add(rfield, if dsize > rlen then sumDataSize else sumReferencesLength)
 
                     sumDataSize <- sumDataSize + dsize
                     sumReferencesLength <- sumReferencesLength + dsize
