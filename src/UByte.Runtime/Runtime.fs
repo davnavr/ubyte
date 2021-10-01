@@ -135,6 +135,14 @@ module Interpreter =
 
     [<RequireQualifiedAccess>]
     module private Arithmetic =
+        let inline private unaryOp opu8 opu16 opu32 opu64 opunative register =
+            match register with
+            | RuntimeRegister.R1 r -> r.contents <- opu8 r.contents
+            | RuntimeRegister.R2 r -> r.contents <- opu16 r.contents
+            | RuntimeRegister.R4 r -> r.contents <- opu32 r.contents
+            | RuntimeRegister.R8 r -> r.contents <- opu64 r.contents
+            | RuntimeRegister.RNative r -> r.contents <- opunative r.contents
+
         let inline private binaryOp opu8 opu16 opu32 opu64 opunative xreg yreg rreg =
             match xreg, yreg, rreg with
             | RuntimeRegister.R1 { contents = x }, RuntimeRegister.R1 { contents = y }, RuntimeRegister.R1 result ->
@@ -155,6 +163,8 @@ module Interpreter =
         let ``or`` xreg yreg rreg = binaryOp (|||) (|||) (|||) (|||) (|||) xreg yreg rreg
         //let ``not`` xreg yreg rreg = unaryOp (~~~) (~~~) (~~~) (~~~) (~~~) xreg yreg rreg
         let xor xreg yreg rreg = binaryOp (^^^) (^^^) (^^^) (^^^) (^^^) xreg yreg rreg
+        let incr reg = unaryOp ((+) 1uy) ((+) 1us) ((+) 1u) ((+) 1UL) ((+) 1un) reg
+        let decr reg = unaryOp ((-) 1uy) ((-) 1us) ((-) 1u) ((-) 1UL) ((-) 1un) reg
 
     [<RequireQualifiedAccess>]
     module private Const =
@@ -168,6 +178,9 @@ module Interpreter =
             //"Cannot store integer into a register containing an object reference"
 
         let i32 (value: int32) destination = store value destination
+        let u8 (value: uint8) destination = store value destination
+        let inline ``true`` destination = u8 1uy destination
+        let inline ``false`` destination = u8 0uy destination
 
     let private (|Registers|) (frame: RuntimeStackFrame) (registers: ImmutableArray<RegisterIndex>) =
         let mutable registers' = Array.zeroCreate registers.Length
@@ -217,7 +230,12 @@ module Interpreter =
                 | And(Register x, Register y, Register r) -> Arithmetic.``and`` x y r
                 | Or(Register x, Register y, Register r) -> Arithmetic.``or`` x y r
                 | Xor(Register x, Register y, Register r) -> Arithmetic.xor x y r
+                | Incr(Register register) -> Arithmetic.incr register
+                | Decr(Register register) -> Arithmetic.decr register
                 | Const_i32(value, Register dest) -> Const.i32 value dest
+                | Const_true(Register dest) -> Const.``true`` dest
+                | Const_false(Register dest)
+                | Const_zero(Register dest) -> Const.``false`` dest
                 | Ret(Registers frame' registers) ->
                     copyRegisterValues registers frame'.ReturnRegisters
                     frame <- frame'.Previous
@@ -289,9 +307,6 @@ module Interpreter =
 [<Sealed; AllowNullLiteral>]
 type RuntimeObject (otype: RuntimeTypeDefinition) =
     member val Fields = otype.InitializeObjectFields()
-
-    member _.SetField(field: RuntimeField) =
-        failwith "TODO: Call helper to calculate where the field value is stored"
 
 [<Sealed>]
 type InvalidConstructorException (method: RuntimeMethod, frame, message) =
@@ -368,10 +383,6 @@ type RuntimeField (rmodule: RuntimeModule, field: Field, n: int32) =
 
     do
         if isFlagSet FieldFlags.Static field.FieldFlags then raise(NotSupportedException "Static fields are not yet supported")
-
-    let offset =
-        let mutable offset' = 0
-        lazy 0
 
     member _.Module = rmodule
 
