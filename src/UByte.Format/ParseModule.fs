@@ -120,6 +120,7 @@ let moduleImports source =
         lengthEncodedVector source <| fun t ->
             { TypeDefinitionImport.Module = index t
               TypeName = index t
+              TypeNamespace = index t
               TypeKind =
                 let kind = bits1 t
                 if kind > Tag.TypeDefinitionKind.Struct then failwithf "TODO: Invalid type kind 0x%02X (%A)" (uint8 kind) kind

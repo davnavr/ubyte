@@ -455,7 +455,9 @@ type MethodSignature =
 
 [<NoComparison; NoEquality>]
 type FieldImport =
-    { FieldOwner: TypeDefinitionIndex
+    { // NOTE: Field and method imports allow refering to types defined in the current model,
+      // which makes adding generics in the future easier.
+      FieldOwner: TypeDefinitionIndex
       FieldName: IdentifierIndex
       FieldType: TypeSignatureIndex }
 
@@ -463,13 +465,14 @@ type FieldImport =
 type MethodImport =
     { MethodOwner: TypeDefinitionIndex
       MethodName: IdentifierIndex
-      TypeParameters: uvarint
+      TypeParameters: uvarint // TODO: Provide list of type parameters instead.
       Signature: MethodSignatureIndex }
 
 [<NoComparison; NoEquality>]
 type TypeDefinitionImport =
     { Module: ModuleIndex
       TypeName: IdentifierIndex
+      TypeNamespace: NamespaceIndex
       TypeKind: Tag.TypeDefinitionKind
       TypeParameters: uvarint }
 
@@ -512,6 +515,7 @@ type MethodBody =
     | Defined of CodeIndex // TODO: Have flags indicating if method is final be here instead?
     | Abstract
     //| External of
+    //| RuntimeOrCompilerProvided of 
 
 /// <summary>
 /// Represents a method or constructor.
@@ -616,6 +620,8 @@ type ModuleHeaderFlags = // TODO: Have endian information be somewhere else, and
     | BigEndian = 0b0000_0001uy
     /// Instructs the compiler or runtime to prevent usage of opcodes that depend on a garbage collector.
     | NoGarbageCollector = 0b0000_0010uy
+    ///// Indicates that the module may treat object references as if they were references to objects of another class.
+    //| ReinterpretsObjectReferences = 0b0000_0100uy
     | ValidMask = 0b0000_0001uy
 
 type PointerSize =
