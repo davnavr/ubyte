@@ -121,6 +121,16 @@ type UnresolvedField =
       FieldFlags: FieldFlags
       FieldType: Position * Name }
 
+[<Sealed>]
+type FieldLookup () =
+    let defined = SymbolDictionary<IndexKinds.Field, UnresolvedField>() // TODO: Use SharedIdentifierLookup instead.
+
+    member _.Definitions = defined.Values
+    member _.AddDefinition(name, item) = defined.Add(name, item)
+    member _.FindDefinition name = defined.FromIdentifier name
+    member this.Find name = this.FindDefinition name
+
+[<NoComparison; NoEquality>]
 type UnresolvedMethodImport =
     { MethodOwner: Position * Name
       MethodName: Position * Name
@@ -135,24 +145,7 @@ type UnresolvedMethod =
       MethodSignature: Position * Name
       MethodBody: (Name -> CodeIndex voption) -> Result<MethodBody, AssemblerError> }
 
-[<Sealed>]
-type FieldLookup () =
-    let defined = SymbolDictionary<IndexKinds.Field, UnresolvedField>() // TODO: Use SharedIdentifierLookup instead.
-
-    member _.Definitions = defined.Values
-    member _.AddDefinition(name, item) = defined.Add(name, item)
-    member _.FindDefinition name = defined.FromIdentifier name
-    member this.Find name = this.FindDefinition name
-
-[<Sealed>]
-type MethodLookup () =
-    let defined = SymbolDictionary<IndexKinds.Method, UnresolvedMethod>() // TODO: Use SharedIdentifierLookup instead.
-    //let imported
-
-    member _.Definitions = defined.Values
-    member _.AddDefinition(name, item) = defined.Add(name, item)
-    member _.FindDefinition name = defined.FromIdentifier name
-    member this.Find name = this.FindDefinition name
+type MethodLookup = SharedIdentifierLookup<IndexKinds.Method, UnresolvedMethodImport, UnresolvedMethod>
 
 [<NoComparison; NoEquality; IsReadOnly; Struct>]
 type UnresolvedMethodSignature = { ReturnTypes: (Position * Name) list; ParameterTypes: (Position * Name) list }
@@ -532,6 +525,23 @@ let timports: Parser<unit, _> =
                         state
                     else
                         { state with Errors = errorDuplicateIdentifier "type definition import" id pos :: state.Errors }
+
+            keyword "method" >>. tuple4
+                (getPosition .>>. identifier)
+                tnamedecl
+                (declaration "signature" (getPosition .>>. identifier))
+                (declaration "owner" (getPosition .>>. identifier))
+            >>= fun ((pos, id), name, signature, owner) ->
+                updateUserState <| fun state ->
+                    let m =
+                        { UnresolvedMethodImport.MethodOwner = owner
+                          MethodName = name
+                          MethodSignature = signature }
+
+                    if state.Module.ModuleMethods.AddImport(ValueSome id, m) then
+                        state
+                    else
+                        { state with Errors = errorDuplicateIdentifier "module import" id pos :: state.Errors }
         ]
         |> sexpression
         |> skipMany
@@ -853,8 +863,42 @@ let buildMethodDefinitions
     (methods: MethodLookup)
     (methodOwnerLookup: IDictionary<_, _>)
     =
-    let builder = ImmutableArray.CreateBuilder()
-    let mutable errors, i = List.empty, 0u // TODO: Start at # of method imports when building method definitions.
+    let imports = ImmutableArray.CreateBuilder methods.Imports.Count
+    let definitions = ImmutableArray.CreateBuilder methods.Definitions.Count
+    let mutable errors, i = List.empty, 0u
+
+    for m in methods.Imports do
+        let result = validated {
+            let! mowner =
+                let (pos, owner) = m.MethodOwner
+                match types.Find owner with
+                | ValueSome namei -> Result.Ok namei
+                | ValueNone -> Result.Error [ errorIdentifierUndefined "method import owner type definition" owner pos ]
+
+            let! mname =
+                let (pos, name) = m.MethodName
+                match identifiers.FromIdentifier name with
+                | ValueSome namei -> Result.Ok namei
+                | ValueNone -> Result.Error [ errorIdentifierUndefined "method name" name pos ]
+
+            let! msig =
+                let (pos, signature) = m.MethodSignature
+                match signatures.FromIdentifier signature with
+                | ValueSome namei -> Result.Ok namei
+                | ValueNone -> Result.Error [ errorIdentifierUndefined "method signature" signature pos ]
+
+            return! Result.Ok
+                { MethodImport.MethodOwner = mowner
+                  MethodName = mname
+                  TypeParameters = 0u
+                  Signature = msig }
+        }
+
+        match result with
+        | Result.Ok m' -> imports.Add m'
+        | Result.Error errors' -> errors <- errors' @ errors
+
+        i <- Checked.(+) i 1u
 
     for m in methods.Definitions do
         let result =
@@ -903,13 +947,13 @@ let buildMethodDefinitions
             }
 
         match result with
-        | Result.Ok m' -> builder.Add m'
+        | Result.Ok m' -> definitions.Add m'
         | Result.Error errors' -> errors <- errors' @ errors
 
         i <- Checked.(+) i 1u
 
     match errors with
-    | [] -> Result.Ok(builder.ToImmutable())
+    | [] -> Result.Ok(imports.ToImmutable(), definitions.ToImmutable())
     | _ -> Result.Error errors
 
 let buildCodeRegisters (types: TypeSignatureLookup) =
@@ -1109,7 +1153,7 @@ let tmodule: Parser<AssemblerResult, State> =
 
                 let methodOwnerLookup = Dictionary state.ModuleTypes.Definitions.Count
 
-                let! mdefinitions =
+                let! (mimports, mdefinitions) =
                     buildMethodDefinitions
                         state.ModuleIdentifiers
                         state.ModuleMethodSignatures
@@ -1166,7 +1210,7 @@ let tmodule: Parser<AssemblerResult, State> =
                         { ModuleImports.ImportedModules = ImmutableArray.CreateRange state.ModuleImports.Imports
                           ImportedTypes = timports
                           ImportedFields = ImmutableArray.Empty
-                          ImportedMethods = ImmutableArray.Empty }
+                          ImportedMethods = mimports }
                       Definitions =
                         { ModuleDefinitions.DefinedTypes = tdefinitions
                           ModuleDefinitions.DefinedFields = fdefinitions
