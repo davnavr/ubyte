@@ -106,6 +106,9 @@ type RuntimeStruct =
         let mutable value = value
         MemoryMarshal.Write<'T>(Span(this.RawData).Slice(index), &value)
 
+[<Sealed>]
+type MissingReturnInstructionException (frame, message) = inherit RuntimeException(frame, message)
+
 [<RequireQualifiedAccess>]
 module Interpreter =
     open UByte.Format.Model.InstructionSet
@@ -281,8 +284,7 @@ module Interpreter =
 
         match frame with
         | ValueNone -> ()
-        | ValueSome bad ->
-            failwith "TODO: Error for method did not have Ret instruction"
+        | ValueSome _ -> raise(MissingReturnInstructionException(frame, "Reached unexpected end of instructions"))
 
 [<Sealed; AllowNullLiteral>]
 type RuntimeObject (otype: RuntimeTypeDefinition) =
