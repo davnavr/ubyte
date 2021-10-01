@@ -473,6 +473,12 @@ let createIndexedLookup (count: int32) initializer =
             lookup.Add(i, value)
             value
 
+let createDefinitionOrImportLookup definedCount importCount definedInitializer importInitializer =
+    createIndexedLookup (definedCount + importCount) <| fun (Index i as index) ->
+        if i < uint32 importCount
+        then importInitializer (Checked.int32 i) index
+        else definedInitializer (Checked.int32 i - importCount) index
+
 [<Sealed>]
 type MissingEntryPointException (m: RuntimeModule, message: string) =
     inherit RuntimeException(ValueNone, message)
@@ -500,17 +506,15 @@ type RuntimeModule (m: Module, moduleImportResolver: ModuleIdentifier -> Runtime
             then rm
             else moduleImportResolver imports.[Checked.int32 i + 1]
 
-    // TODO: Account for imported type defs when resolving indices.
-    let definedTypeLookup =
+    let typeDefinitionLookup =
         let imports = m.Imports.ImportedTypes
         let definitions = m.Definitions.DefinedTypes
-        createIndexedLookup (imports.Length + definitions.Length) <| fun (Index i) ->
-            if i < uint32 imports.Length then
+        createDefinitionOrImportLookup definitions.Length imports.Length
+            (fun i _ -> RuntimeTypeDefinition(rm, definitions.[i]))
+            (fun i _ ->
                 let t = imports.[Checked.int32 i]
                 let owner = importedModuleLookup t.Module
-                owner.FindType(rm.NamespaceAt t.TypeNamespace, rm.IdentifierAt t.TypeName)
-            else
-                RuntimeTypeDefinition(rm, definitions.[Checked.int32 i - imports.Length])
+                owner.FindType(rm.NamespaceAt t.TypeNamespace, rm.IdentifierAt t.TypeName))
 
     // TODO: Account for imported methods when resolving indices.
     let definedMethodLookup =
@@ -544,7 +548,7 @@ type RuntimeModule (m: Module, moduleImportResolver: ModuleIdentifier -> Runtime
 
     member _.InitializeField i = definedFieldLookup i
 
-    member _.InitializeType i = definedTypeLookup i
+    member _.InitializeType i = typeDefinitionLookup i
 
     member _.ComputeFieldSize(index, rawDataSize: outref<_>, objectReferencesLength: outref<_>) =
         let field = definedFieldLookup index
@@ -569,7 +573,7 @@ type RuntimeModule (m: Module, moduleImportResolver: ModuleIdentifier -> Runtime
 
                 if this.NamespaceAt t.TypeNamespace = typeNamespace && this.IdentifierAt t.TypeName = typeName then
                     let tindex = TypeDefinitionIndex.Index(Checked.uint32 i)
-                    let init = definedTypeLookup tindex
+                    let init = typeDefinitionLookup tindex
                     typeNameLookup.[key] <- init
                     result <- ValueSome init
 
