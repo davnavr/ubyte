@@ -274,8 +274,10 @@ type VisibilityFlags =
 
 [<Flags>]
 type FieldFlags =
+    /// Indicates that the field can only be mutated in a class constructor or in a type initializer.
     | ReadOnly = 0uy
     | Mutable = 0b0000_0001uy
+    /// Indicates whether the field is a global, which means that the field does not belong to instances of the type.
     | Static = 0b0000_0010uy
     | ValidMask = 0b0000_0011uy
 

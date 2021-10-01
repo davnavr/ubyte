@@ -9,7 +9,7 @@ open System.Runtime.InteropServices
 
 open UByte.Format.Model
 
-let inline flagIsSet flag value = value &&& flag = flag
+let inline isFlagSet flag value = value &&& flag = flag
 
 [<RequireQualifiedAccess>]
 type RuntimeRegister =
@@ -18,8 +18,8 @@ type RuntimeRegister =
     | R4 of uint32 ref
     | R8 of uint64 ref
     | RNative of unativeint ref
-    | RStruct of RuntimeStruct ref
-    | RRef of obj ref
+    | RStruct of RuntimeStruct
+    | RRef of RuntimeObject ref
 
     member source.CopyValueTo destination =
         match source, destination with
@@ -84,6 +84,28 @@ type RuntimeException =
 
 type MethodInvocationResult = ImmutableArray<RuntimeRegister>
 
+type FieldAccessException (frame, message, field: RuntimeField) =
+    inherit RuntimeException(frame, message)
+
+    member _.Field = field
+
+[<Sealed>]
+type NullReferenceFieldAccessException (frame, message, field) = inherit FieldAccessException(frame, message, field)
+
+let inline (|RuntimeObjectFields|) (o: RuntimeObject): RuntimeStruct = o.Fields
+
+[<IsReadOnly; Struct; NoComparison; NoEquality>]
+type RuntimeStruct =
+    { RawData: byte[]
+      References: RuntimeObject[] }
+
+    member this.ReadRaw<'T when 'T : struct and 'T :> ValueType and 'T : (new: unit -> 'T)> index: 'T =
+        MemoryMarshal.Read<'T>(ReadOnlySpan(this.RawData).Slice(index))
+
+    member this.WriteRaw<'T when 'T : struct and 'T :> ValueType and 'T : (new: unit -> 'T)>(index, value: 'T) =
+        let mutable value = value
+        MemoryMarshal.Write<'T>(Span(this.RawData).Slice(index), &value)
+
 [<RequireQualifiedAccess>]
 module Interpreter =
     open UByte.Format.Model.InstructionSet
@@ -91,6 +113,22 @@ module Interpreter =
     let private copyRegisterValues (source: ImmutableArray<RuntimeRegister>) (dest: ImmutableArray<RuntimeRegister>) =
         if source.Length > dest.Length then failwith "TODO: Error, more source registers than destination registers"
         for i = 0 to dest.Length - 1 do source.[i].CopyValueTo dest.[i]
+
+    let private numericFieldAccess frame field =
+        FieldAccessException (
+            ValueSome frame,
+            "Attempted to access the field of a field of a numeric value",
+            field
+        )
+        |> raise
+
+    let private nullReferenceFieldAccess frame field =
+        NullReferenceFieldAccessException (
+            ValueSome frame,
+            "Attempted to access an object field with a null object reference",
+            field
+        )
+        |> raise
 
     [<RequireQualifiedAccess>]
     module private Arithmetic =
@@ -149,8 +187,17 @@ module Interpreter =
 
         while cont() do
             let frame' = frame.Value
+
             let inline (|Register|) rindex = frame'.RegisterAt rindex
             let inline (|Method|) mindex: RuntimeMethod = frame'.CurrentMethod.Module.InitializeMethod mindex
+            let inline (|Field|) findex: RuntimeField = frame'.CurrentMethod.Module.InitializeField findex
+
+            let inline fieldAccessInstruction field object register execute =
+                match object with
+                | RuntimeRegister.RRef { contents = null } -> nullReferenceFieldAccess frame' field
+                | RuntimeRegister.RRef { contents = RuntimeObjectFields data }
+                | RuntimeRegister.RStruct data -> execute data
+                | _ -> numericFieldAccess frame' field
 
             (*
             match ex with
@@ -191,6 +238,36 @@ module Interpreter =
                         invoke ImmutableArray.Empty (arguments.Insert(0, destination)) constructor
                     | bad ->
                         failwithf "TODO: Error for cannot store object reference here after calling constructor %A" bad
+                | Obj_ldfd(Field field, Register object, Register destination) ->
+                    field.CheckMutate frame'
+
+                    fieldAccessInstruction field object destination <| fun fields ->
+                        match destination with // TODO: How to respect endianness when reading values from struct
+                        | RuntimeRegister.R1 destination' ->
+                            destination'.contents <- fields.RawData.[field.Offset]
+                        | RuntimeRegister.R2 destination' ->
+                            destination'.contents <- BitConverter.ToUInt16(fields.RawData, field.Offset)
+                        | RuntimeRegister.R4 destination' ->
+                            destination'.contents <- BitConverter.ToUInt32(fields.RawData, field.Offset)
+                        | RuntimeRegister.R8 destination' ->
+                            destination'.contents <- BitConverter.ToUInt64(fields.RawData, field.Offset)
+                        | RuntimeRegister.RNative destination' ->
+                            destination'.contents <- fields.ReadRaw<unativeint> field.Offset
+                        | RuntimeRegister.RStruct _ ->
+                            failwith "// TODO: How to read structs stored inside other structs?"
+                        | RuntimeRegister.RRef destination' ->
+                            destination'.contents <- fields.References.[field.Offset]
+                | Obj_stfd(Field field, Register object, Register source) ->
+                    fieldAccessInstruction field object source <| fun fields ->
+                        match source with
+                        | RuntimeRegister.R1 { contents = value } -> fields.RawData.[field.Offset] <- value
+                        | RuntimeRegister.R2 { contents = value } -> fields.WriteRaw(field.Offset, value)
+                        | RuntimeRegister.R4 { contents = value } -> fields.WriteRaw(field.Offset, value)
+                        | RuntimeRegister.R8 { contents = value } -> fields.WriteRaw(field.Offset, value)
+                        | RuntimeRegister.RNative { contents = value } -> fields.WriteRaw(field.Offset, value)
+                        | RuntimeRegister.RStruct _ ->
+                            failwith "// TODO: How to store structs stored inside other structs?"
+                        | RuntimeRegister.RRef { contents = value } -> fields.References.[field.Offset] <- value
                 | Nop -> ()
                 | bad -> failwithf "TODO: Unsupported instruction %A" bad
 
@@ -207,12 +284,12 @@ module Interpreter =
         | ValueSome bad ->
             failwith "TODO: Error for method did not have Ret instruction"
 
-[<IsReadOnly; Struct; NoComparison; NoEquality>]
-type RuntimeStruct = { RawData: byte[]; References: RuntimeObject[] }
-
 [<Sealed; AllowNullLiteral>]
 type RuntimeObject (otype: RuntimeTypeDefinition) =
-    let fields = otype.InitializeObjectFields()
+    member val Fields = otype.InitializeObjectFields()
+
+    member _.SetField(field: RuntimeField) =
+        failwith "TODO: Call helper to calculate where the field value is stored"
 
 [<Sealed>]
 type InvalidConstructorException (method: RuntimeMethod, frame, message) =
@@ -230,9 +307,9 @@ type RuntimeMethod (rmodule: RuntimeModule, method: Method) =
 
     member val DeclaringType = rmodule.InitializeType method.MethodOwner
 
-    member _.IsInstance = flagIsSet MethodFlags.Instance flags
+    member _.IsInstance = isFlagSet MethodFlags.Instance flags
 
-    member _.IsConstructor = flagIsSet MethodFlags.ConstructorMask flags
+    member _.IsConstructor = isFlagSet MethodFlags.ConstructorMask flags
 
     member private _.CreateRegister rtype =
         match rmodule.TypeSignatureAt rtype with
@@ -285,16 +362,50 @@ type RuntimeMethod (rmodule: RuntimeModule, method: Method) =
 
 [<Sealed>]
 type RuntimeField (rmodule: RuntimeModule, field: Field, n: int32) =
+    let { Field.FieldName = namei; FieldFlags = flags } = field
+
+    do
+        if isFlagSet FieldFlags.Static field.FieldFlags then raise(NotSupportedException "Static fields are not yet supported")
+
+    let offset =
+        let mutable offset' = 0
+        lazy 0
+
     member _.Module = rmodule
 
-    member _.Name = rmodule.IdentifierAt field.FieldName
+    member _.Name = rmodule.IdentifierAt namei
+
+    member _.IsMutable = isFlagSet FieldFlags.Mutable flags
+
+    member val DeclaringType: RuntimeTypeDefinition = rmodule.InitializeType field.FieldOwner
 
     member val FieldType = rmodule.TypeSignatureAt field.FieldType
 
-[<IsReadOnly; Struct; NoComparison; NoEquality>]
-type RuntimeTypeLayout = { Fields: RuntimeField[]; RawDataSize: int32; ObjectReferencesLength: int32 }
+    member this.Offset = this.DeclaringType.Layout.FieldIndices.[this] // TODO: Cache field offset
 
-let emptyTypeLayout = lazy { RuntimeTypeLayout.Fields = Array.empty; RawDataSize = 0; ObjectReferencesLength = 0 }
+    /// If the field is not marked as mutable, prevents modification of the field value outside of a constructor or type initializer.
+    member this.CheckMutate(frame: RuntimeStackFrame) =
+        if not this.IsMutable && not frame.CurrentMethod.IsConstructor then
+            FieldAccessException (
+                ValueSome frame,
+                "Attempted to modify read-only field outside of constructor or type initializer",
+                this
+            )
+            |> raise
+
+[<IsReadOnly; Struct; NoComparison; NoEquality>]
+type RuntimeTypeLayout =
+    { Fields: RuntimeField[]
+      FieldIndices: IReadOnlyDictionary<RuntimeField, int32>
+      RawDataSize: int32
+      ObjectReferencesLength: int32 }
+
+let emptyTypeLayout =
+    lazy
+        { RuntimeTypeLayout.Fields = Array.empty
+          FieldIndices = ImmutableDictionary.Empty
+          RawDataSize = 0
+          ObjectReferencesLength = 0 }
 
 [<Sealed>]
 type RuntimeTypeDefinition (rm: RuntimeModule, t: TypeDefinition) =
@@ -302,23 +413,35 @@ type RuntimeTypeDefinition (rm: RuntimeModule, t: TypeDefinition) =
         let { TypeDefinition.Fields = fields } = t
         if fields.Length > 0 then
             lazy
-                let fields' = Array.zeroCreate fields.Length
+                let fields', indices = Array.zeroCreate fields.Length, Dictionary fields.Length
                 let mutable sumDataSize, sumReferencesLength = 0, 0
 
                 for i = 0 to fields'.Length - 1 do
+                    // TODO: Check for static fields.
                     let mutable dsize, rlen = 0, 0
-                    fields'.[i] <- rm.ComputeFieldSize(fields.[i], &dsize, &rlen)
+                    let rfield = rm.ComputeFieldSize(fields.[i], &dsize, &rlen)
+                    fields'.[i] <- rfield
+
+                    // Stores either the index into the data array or reference array, the kind of index depends on whether dsize
+                    // or rlen was set, only one will be zero
+                    indices.Add(rfield, max dsize rlen)
+
                     sumDataSize <- sumDataSize + dsize
                     sumReferencesLength <- sumReferencesLength + dsize
 
                 { RuntimeTypeLayout.Fields = fields'
+                  FieldIndices = indices
                   RawDataSize = sumDataSize
                   ObjectReferencesLength = sumReferencesLength }
         else emptyTypeLayout
 
+    //let globals: RuntimeStruct
+
     // TODO: Cache length of RawData and References arrays for RuntimeObject and RuntimeStruct
 
     member _.Module = rm
+
+    member _.Layout: RuntimeTypeLayout = layout.Value
 
     member val Name = rm.IdentifierAt t.TypeName
 

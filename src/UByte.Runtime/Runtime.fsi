@@ -76,6 +76,7 @@ type RuntimeTypeDefinition =
     //member InvokeInitializer: unit -> 
 
 type RuntimeMethod with member DeclaringType : RuntimeTypeDefinition
+type RuntimeField with member DeclaringType : RuntimeTypeDefinition
 
 /// Thrown when the entry point of a module could not be found.
 [<Sealed; Class>]
