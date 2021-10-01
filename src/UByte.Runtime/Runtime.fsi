@@ -73,6 +73,8 @@ type RuntimeTypeDefinition =
 
     member Name : string
 
+    member FindMethod : name: string -> RuntimeMethod
+
     //member InvokeInitializer: unit -> 
 
 type RuntimeMethod with member DeclaringType : RuntimeTypeDefinition

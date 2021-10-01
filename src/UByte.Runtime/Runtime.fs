@@ -450,6 +450,8 @@ type RuntimeTypeDefinition (rm: RuntimeModule, t: TypeDefinition) =
 
     //let globals: RuntimeStruct
 
+    let methodis = t.Methods
+
     // TODO: Cache length of RawData and References arrays for RuntimeObject and RuntimeStruct
 
     member _.Module = rm
@@ -457,6 +459,19 @@ type RuntimeTypeDefinition (rm: RuntimeModule, t: TypeDefinition) =
     member _.Layout: RuntimeTypeLayout = layout.Value
 
     member val Name = rm.IdentifierAt t.TypeName
+
+    member _.FindMethod name = // TODO: Figure out if methods defined in inherited class(es)
+        let mutable result, i = ValueNone, 0
+
+        while i < methodis.Length && result.IsNone do
+            let m = rm.InitializeMethod methodis.[i]
+            if m.Name = name then
+                result <- ValueSome m
+            i <- Checked.(+) i 1
+
+        match result with
+        | ValueSome m -> m
+        | ValueNone -> failwithf "TODO: Method not found %s" name
 
     member _.InitializeObjectFields(): RuntimeStruct =
         let layout' = layout.Value
@@ -504,9 +519,9 @@ type RuntimeModule (m: Module, moduleImportResolver: ModuleIdentifier -> Runtime
         createIndexedLookup imports.Length <| fun (Index i) ->
             if i = 0u
             then rm
-            else moduleImportResolver imports.[Checked.int32 i + 1]
+            else moduleImportResolver imports.[Checked.int32 i - 1]
 
-    let typeDefinitionLookup =
+    let typeDefinitionLookup: TypeDefinitionIndex -> _ =
         let imports = m.Imports.ImportedTypes
         let definitions = m.Definitions.DefinedTypes
         createDefinitionOrImportLookup definitions.Length imports.Length
@@ -516,10 +531,15 @@ type RuntimeModule (m: Module, moduleImportResolver: ModuleIdentifier -> Runtime
                 let owner = importedModuleLookup t.Module
                 owner.FindType(rm.NamespaceAt t.TypeNamespace, rm.IdentifierAt t.TypeName))
 
-    // TODO: Account for imported methods when resolving indices.
-    let definedMethodLookup =
-        let methods = m.Definitions.DefinedMethods
-        createIndexedLookup methods.Length <| fun (Index i) -> RuntimeMethod(rm, methods.[Checked.int32 i])
+    let definedMethodLookup: MethodIndex -> RuntimeMethod =
+        let imports = m.Imports.ImportedMethods
+        let definitions = m.Definitions.DefinedMethods
+        createDefinitionOrImportLookup definitions.Length imports.Length
+            (fun i _ -> RuntimeMethod(rm, definitions.[i]))
+            (fun i _ ->
+                let m = imports.[Checked.int32 i]
+                let owner = typeDefinitionLookup m.MethodOwner
+                owner.FindMethod(rm.IdentifierAt m.MethodName))
 
     // TODO: Account for imported fields when resolving indices.
     let definedFieldLookup =
