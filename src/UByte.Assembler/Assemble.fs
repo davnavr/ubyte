@@ -624,6 +624,7 @@ let buildTypeDefinitions
     (namespaces: SymbolDictionary<_, _>)
     (types: TypeDefinitionLookup)
     (methodOwnerLookup: IReadOnlyDictionary<_, ImmutableArray<_>.Builder>)
+    (fieldOwnerLookup: IReadOnlyDictionary<_, ImmutableArray<_>.Builder>)
     =
     let builder = ImmutableArray.CreateBuilder()
     let mutable errors, i = List.empty, 0u // TODO: Start at count of type imports when building type definitions.
@@ -657,7 +658,10 @@ let buildTypeDefinitions
                       ImplementedInterfaces = ImmutableArray.Empty
                       TypeParameters = ImmutableArray.Empty
                       TypeAnnotations = ImmutableArray.Empty
-                      Fields = ImmutableArray.Empty
+                      Fields =
+                        match fieldOwnerLookup.TryGetValue tindex with
+                        | true, existing -> existing.ToImmutable()
+                        | false, _ -> ImmutableArray.Empty
                       Methods =
                         match methodOwnerLookup.TryGetValue tindex with
                         | true, existing -> existing.ToImmutable()
@@ -1011,7 +1015,12 @@ let tmodule: Parser<AssemblerResult, State> =
                         state.ModuleMethods
                         methodOwnerLookup
 
-                let! tdefinitions = buildTypeDefinitions state.ModuleIdentifiers state.ModuleNamespaces state.ModuleTypes methodOwnerLookup
+                let! tdefinitions =
+                    buildTypeDefinitions
+                        state.ModuleIdentifiers
+                        state.ModuleNamespaces
+                        state.ModuleTypes methodOwnerLookup
+                        fieldOwnerLookup
 
                 let! codes =
                     let getCodeRegisters = buildCodeRegisters state.ModuleTypeSignatures
