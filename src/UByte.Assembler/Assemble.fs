@@ -693,6 +693,16 @@ let buildFieldDefinitions
                     | ValueSome namei -> Result.Ok namei
                     | ValueNone -> Result.Error [ errorIdentifierUndefined "field owner type definition" owner pos ]
 
+                let others =
+                    match fieldOwnerLookup.TryGetValue fowner with
+                    | true, existing -> existing
+                    | false, _ ->
+                        let m = ImmutableArray.CreateBuilder()
+                        fieldOwnerLookup.Add(fowner, m)
+                        m
+
+                others.Add(FieldIndex.Index i)
+
                 let! fname =
                     let (pos, name) = f.FieldName
                     match identifiers.FromIdentifier name with
@@ -982,7 +992,13 @@ let tmodule: Parser<AssemblerResult, State> =
 
                 let fieldOwnerLookup = Dictionary state.ModuleTypes.Definitions.Count
 
-
+                let! fdefinitions =
+                    buildFieldDefinitions
+                        state.ModuleIdentifiers
+                        state.ModuleTypeSignatures
+                        state.ModuleTypes
+                        state.ModuleFields
+                        fieldOwnerLookup
 
                 let methodOwnerLookup = Dictionary state.ModuleTypes.Definitions.Count
 
@@ -1040,7 +1056,7 @@ let tmodule: Parser<AssemblerResult, State> =
                           ImportedMethods = ImmutableArray.Empty }
                       Definitions =
                         { ModuleDefinitions.DefinedTypes = tdefinitions
-                          ModuleDefinitions.DefinedFields = ImmutableArray.Empty
+                          ModuleDefinitions.DefinedFields = fdefinitions
                           ModuleDefinitions.DefinedMethods = mdefinitions }
                       // TODO: Implement generation of data
                       Data = ImmutableArray.Empty

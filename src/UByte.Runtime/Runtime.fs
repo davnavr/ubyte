@@ -275,7 +275,7 @@ module Interpreter =
             with
             | e ->
                 //ex <- ValueSome e
-                raise(System.NotImplementedException("TODO: Implement exception handling, " + e.Message, e))
+                raise(System.NotImplementedException("TODO: Implement exception handling", e))
 
             ()
 
