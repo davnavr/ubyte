@@ -479,16 +479,38 @@ type MissingEntryPointException (m: RuntimeModule, message: string) =
 
     member _.Module = m
 
+[<Sealed>]
+type TypeNotFoundException (m: RuntimeModule, typeNamespace, typeName, message: string) =
+    inherit RuntimeException(ValueNone, message)
+
+    member _.TypeNamespace: string = typeNamespace
+    member _.TypeName: string = typeName
+    member _.Module = m
+
 //type State // TODO: Keep track of format version supported by the runtime.
 
 [<Sealed>]
 type RuntimeModule (m: Module, moduleImportResolver: ModuleIdentifier -> RuntimeModule) as rm =
     // TODO: Check if the runtime version matches the module's format version.
 
+    let importedModuleLookup =
+        let imports = m.Imports.ImportedModules
+        createIndexedLookup imports.Length <| fun (Index i) ->
+            if i = 0u
+            then rm
+            else moduleImportResolver imports.[Checked.int32 i + 1]
+
     // TODO: Account for imported type defs when resolving indices.
     let definedTypeLookup =
-        let types = m.Definitions.DefinedTypes
-        createIndexedLookup types.Length <| fun (Index i) -> RuntimeTypeDefinition(rm, types.[Checked.int32 i])
+        let imports = m.Imports.ImportedTypes
+        let definitions = m.Definitions.DefinedTypes
+        createIndexedLookup (imports.Length + definitions.Length) <| fun (Index i) ->
+            if i < uint32 imports.Length then
+                let t = imports.[Checked.int32 i]
+                let owner = importedModuleLookup t.Module
+                owner.FindType(rm.NamespaceAt t.TypeNamespace, rm.IdentifierAt t.TypeName)
+            else
+                RuntimeTypeDefinition(rm, definitions.[Checked.int32 i - imports.Length])
 
     // TODO: Account for imported methods when resolving indices.
     let definedMethodLookup =
@@ -505,7 +527,12 @@ type RuntimeModule (m: Module, moduleImportResolver: ModuleIdentifier -> Runtime
             let n = owners.[Checked.int32 owner].Fields.IndexOf i'
             RuntimeField(rm, f, n)
 
+    let typeNameLookup = Dictionary()
+
     member _.IdentifierAt(Index i: IdentifierIndex) = m.Identifiers.Identifiers.[Checked.int32 i]
+
+    member this.NamespaceAt(Index i: NamespaceIndex): string =
+        m.Namespaces.[Checked.int32 i] |> Seq.map this.IdentifierAt |> String.concat "." // TODO: Cache namespaces
 
     member _.TypeSignatureAt(Index i: TypeSignatureIndex) = m.TypeSignatures.[Checked.int32 i]
 
@@ -529,6 +556,30 @@ type RuntimeModule (m: Module, moduleImportResolver: ModuleIdentifier -> Runtime
 
         field
 
+    /// Finds the first type defined in this module with the specified name.
+    member this.FindType(typeNamespace: string, typeName: string): RuntimeTypeDefinition =
+        let key = struct(typeNamespace, typeName)
+        match typeNameLookup.TryGetValue key with
+        | false, _ ->
+            let types = m.Definitions.DefinedTypes
+            let mutable result, i = ValueNone, m.Imports.ImportedTypes.Length
+
+            while i < types.Length && result.IsNone do
+                let t = types.[i]
+
+                if this.NamespaceAt t.TypeNamespace = typeNamespace && this.IdentifierAt t.TypeName = typeName then
+                    let tindex = TypeDefinitionIndex.Index(Checked.uint32 i)
+                    let init = definedTypeLookup tindex
+                    typeNameLookup.[key] <- init
+                    result <- ValueSome init
+
+                i <- Checked.(+) 1 i
+
+            match result with
+            | ValueSome t -> t
+            | ValueNone -> raise(TypeNotFoundException(this, typeNamespace, typeName, "Unable to find type"))
+        | true, existing -> existing
+
     member this.InvokeEntryPoint(argv: string[]) =
         match m.EntryPoint with
         | ValueSome ei ->
@@ -540,6 +591,12 @@ type RuntimeModule (m: Module, moduleImportResolver: ModuleIdentifier -> Runtime
             int32 result.contents
         | ValueNone -> raise(MissingEntryPointException(this, "The entry point method of the module is not defined"))
 
+[<Sealed>]
+type ModuleNotFoundException (name: ModuleIdentifier, message) =
+    inherit RuntimeException(ValueNone, message)
+
+    member _.Name = name
+
 let initialize program moduleImportLoader =
     /// A cache for the modules created by the import loader.
     let moduleImportResolver =
@@ -548,9 +605,13 @@ let initialize program moduleImportLoader =
             match resolved.TryGetValue import with
             | true, existing -> existing
             | false, _ ->
-                let r = RuntimeModule(moduleImportLoader import, resolver)
-                resolved.Add(import, r)
-                r
+                match moduleImportLoader import with
+                | ValueSome import' ->
+                    let r = RuntimeModule(import', resolver)
+                    resolved.Add(import, r)
+                    r
+                | ValueNone ->
+                    raise(ModuleNotFoundException(import, "Unable to find module " + string import))
         resolver
 
     RuntimeModule(program, moduleImportResolver)
