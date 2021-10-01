@@ -2,6 +2,7 @@
   (identifier $id_namespace "Example")
   (identifier $id_class "MyClass")
   (identifier $id_entry_point "main")
+  (identifier $id_field "myvalue")
 
   (signature $sig_int (type s32))
 
@@ -52,7 +53,7 @@
     (owner $class_my)
   )
 
-  (field $field_value (visibility public)
+  (field $field_value (name $id_field) (visibility public)
     (type $sig_int)
     (flags mutable)
     (owner $class_my)

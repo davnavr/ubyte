@@ -564,15 +564,15 @@ let tfielddef =
 
     keyword "field" >>. tuple5
         (getPosition .>>. identifier)
-        tvisibility
+        (tnamedecl .>>. tvisibility)
         (getPosition .>>. declaration "type" identifier)
         fflags
         (getPosition .>>. declaration "owner" identifier)
-    >>= fun ((pos, id) as id', vis, t, flags, owner) ->
+    >>= fun ((pos, id), (name, vis), t, flags, owner) ->
         updateUserState <| fun state ->
             let field =
                 { UnresolvedField.FieldOwner = owner
-                  FieldName = id'
+                  FieldName = name
                   FieldVisibility = vis
                   FieldFlags = flags
                   FieldType = t }
