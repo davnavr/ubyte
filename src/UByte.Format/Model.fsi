@@ -464,7 +464,7 @@ type FieldImport =
 [<NoComparison; NoEquality>]
 type MethodImport =
     { MethodOwner: TypeDefinitionIndex
-      MethodName: IdentifierIndex
+      MethodName: IdentifierIndex // TODO: How to handle importing constructors?
       TypeParameters: uvarint // TODO: Provide list of type parameters instead.
       Signature: MethodSignatureIndex }
 

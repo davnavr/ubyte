@@ -1,0 +1,42 @@
+﻿(module (format 0 0) (name "ImportingModule") (version 0 1 0)
+  (identifier $id_namespace_import "Example.Import")
+  (identifier $id_namespace_imported "Example.Imported")
+  (identifier $id_main_class "MyProgram")
+  (identifier $id_imported_class "MyImport")
+  (identifier $id_entry_point "Main")
+  (identifier $id_imported_method "Helper")
+
+  (signature $sig_int (type s32))
+  (signature $sig_main (method (returns $sig_int)))
+
+  (code $code_main
+    (registers (local $l0 $sig_int))
+
+    ; (call $method_imported (arguments $l0) (returns $l0)
+    (ret $l0)
+  )
+
+  (imports
+    (module $module_imported (name "ImportedModule") (version 0 1 0))
+
+    (type $class_imported (module $module_imported) (name $id_imported_class) (namespace $namespace_imported) class)
+
+    ; (method $method_imported (name $id_imported_method) (signature $class_imported) (owner $class_imported))
+  )
+
+  (namespace $namespace_import (name $id_namespace_import))
+  (namespace $namespace_imported (name $id_namespace_imported))
+
+  (type $class_hello_world (name $id_main_class) (namespace $namespace_import)
+    (visibility public)
+    (class base)
+  )
+
+  (method $method_main (name $id_entry_point) (visibility public)
+    (signature $sig_main)
+    (defined $code_main)
+    (owner $class_hello_world)
+  )
+
+  (entrypoint $method_main)
+)

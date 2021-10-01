@@ -62,6 +62,25 @@ type IdentifierLookup = SymbolDictionary<IndexKinds.Identifier, string>
 type TypeSignatureLookup =
     SymbolDictionary<IndexKinds.TypeSignature, (Name -> TypeDefinitionIndex voption) -> Result<AnyType, AssemblerError>>
 
+[<Sealed>]
+type ModuleImportLookup () =
+    let imports = SymbolDictionary<IndexKinds.Module, ModuleIdentifier>()
+
+    member _.Add(id, import) = imports.Add(id, import)
+    member _.Find id: ModuleIndex voption =
+        match imports.FromIdentifier id with
+        | ValueSome(Index i) -> ValueSome(Index(i + 1u))
+        | ValueNone -> ValueNone
+
+    member _.Imports = imports.Values
+
+[<NoComparison; NoEquality>]
+type UnresolvedTypeDefinitionImport =
+    { TypeOwner: Position * Name
+      TypeName: Position * Name
+      TypeNamespace: Position * Name
+      IsStruct: bool }
+
 [<NoComparison; NoEquality>]
 type UnresolvedTypeDefinition =
     { TypeName: Position * Name
@@ -70,28 +89,29 @@ type UnresolvedTypeDefinition =
       TypeKind: (Name -> TypeDefinitionIndex voption) -> Result<TypeDefinitionKind, AssemblerError> }
 
 // TODO: Use these to replace TypeDefinitionLookup, MethodLookup, and FieldLookup
-//type SharedIdentifierLookup<'IndexKind, 'Imported, 'Defined when 'IndexKind :> IndexKinds.Kind> () =
-//    let imported = SymbolDictionary<'IndexKind, 'Imported>()
-//    let defined = SymbolDictionary<'IndexKind, 'Defined>()
-
-//    member _.Definitions = defined.Values
-
-//    member _.AddDefinition(name, definition) = defined.Add(name, definition)
-//    member _.FindDefinition name = defined.FromIdentifier name
-
-//    member this.Find name: Index<'IndexKind> voption =
-//        this.FindDefinition name
-
-[<Sealed>]
-type TypeDefinitionLookup () =
-    let defined = SymbolDictionary<IndexKinds.TypeDefinition, UnresolvedTypeDefinition>()
-    //let imported = SymbolDictionary<IndexKinds.TypeDefinition, TypeDefinitionImport>()
-
-    member _.AddDefinition(name, item) = defined.Add(name, item)
-    member _.FindDefinition name = defined.FromIdentifier name
-    member this.Find name: TypeDefinitionIndex voption = this.FindDefinition name
+type SharedIdentifierLookup<'IndexKind, 'Imported, 'Defined when 'IndexKind :> IndexKinds.Kind> () =
+    let imported = SymbolDictionary<'IndexKind, 'Imported>()
+    let defined = SymbolDictionary<'IndexKind, 'Defined>()
 
     member _.Definitions = defined.Values
+    member _.Imports = imported.Values
+
+    member _.AddDefinition(name, definition) = defined.Add(name, definition)
+    /// Be sure to only lookup definitions once all imports have been added to avoid changing of indices.
+    member _.FindDefinition name: Index<'IndexKind> voption =
+        match defined.FromIdentifier name with
+        | ValueSome(Index i) -> ValueSome(Index(i + uint32 imported.Count))
+        | ValueNone -> ValueNone
+
+    member _.AddImport(name, import) = imported.Add(name, import)
+    member _.FindImport name = imported.FromIdentifier name
+
+    member this.Find name: Index<'IndexKind> voption =
+        match this.FindImport name with
+        | ValueSome _ as i -> i
+        | ValueNone -> this.FindDefinition name
+
+type TypeDefinitionLookup = SharedIdentifierLookup<IndexKinds.TypeDefinition, UnresolvedTypeDefinitionImport, UnresolvedTypeDefinition>
 
 [<NoComparison; NoEquality>]
 type UnresolvedField =
@@ -100,6 +120,11 @@ type UnresolvedField =
       FieldVisibility: VisibilityFlags
       FieldFlags: FieldFlags
       FieldType: Position * Name }
+
+type UnresolvedMethodImport =
+    { MethodOwner: Position * Name
+      MethodName: Position * Name
+      MethodSignature: Position * Name }
 
 [<NoComparison; NoEquality>]
 type UnresolvedMethod =
@@ -112,7 +137,7 @@ type UnresolvedMethod =
 
 [<Sealed>]
 type FieldLookup () =
-    let defined = SymbolDictionary<IndexKinds.Field, UnresolvedField>()
+    let defined = SymbolDictionary<IndexKinds.Field, UnresolvedField>() // TODO: Use SharedIdentifierLookup instead.
 
     member _.Definitions = defined.Values
     member _.AddDefinition(name, item) = defined.Add(name, item)
@@ -121,7 +146,7 @@ type FieldLookup () =
 
 [<Sealed>]
 type MethodLookup () =
-    let defined = SymbolDictionary<IndexKinds.Method, UnresolvedMethod>()
+    let defined = SymbolDictionary<IndexKinds.Method, UnresolvedMethod>() // TODO: Use SharedIdentifierLookup instead.
     //let imported
 
     member _.Definitions = defined.Values
@@ -155,6 +180,7 @@ type IncompleteModule =
       ModuleNamespaces: SymbolDictionary<IndexKinds.Namespace, (Position * Name) list>
       ModuleTypeSignatures: TypeSignatureLookup
       ModuleMethodSignatures: SymbolDictionary<IndexKinds.MethodSignature, UnresolvedMethodSignature>
+      ModuleImports: ModuleImportLookup
       ModuleTypes: TypeDefinitionLookup
       ModuleFields: FieldLookup
       ModuleMethods: MethodLookup
@@ -223,6 +249,8 @@ type AssemblerResultBuilder () =
     member inline _.ReturnFrom(result: Result<_, AssemblerError list>) = result
 
 let validated = AssemblerResultBuilder()
+
+let vnumbers = (many integerlit |>> (List.map uint32 >> ImmutableArray.CreateRange >> VersionNumbers))
 
 let tidentifier =
     keyword "identifier" >>. tuple3 getPosition identifier stringlit >>= fun (pos, id, name) ->
@@ -460,12 +488,55 @@ let tnamespace =
                 { state with Errors = errorDuplicateIdentifier "method signature" id pos :: state.Errors }
 
 let tnamedecl = getPosition .>>. declaration "name" identifier
+let tnamespacedecl = getPosition .>>. declaration "namespace" identifier
 
 let tvisibility =
     flags "visibility" [
         "public", VisibilityFlags.Public
         "private", VisibilityFlags.Private
     ]
+
+let timports: Parser<unit, _> =
+    let inner =
+        choice [
+            keyword "module" >>. tuple3
+                (getPosition .>>. identifier)
+                (declaration "name" stringlit)
+                (declaration "version" vnumbers)
+            >>= fun ((pos, id), name, version) ->
+                updateUserState <| fun state ->
+                    let import =
+                        { ModuleIdentifier.ModuleName = Name.ofStr name
+                          Version = version }
+
+                    if state.Module.ModuleImports.Add(ValueSome id, import) then
+                        state
+                    else
+                        { state with Errors = errorDuplicateIdentifier "module imports" id pos :: state.Errors }
+
+            keyword "type" >>. tuple5
+                (getPosition .>>. identifier)
+                (declaration "module" (getPosition .>>. identifier))
+                tnamedecl
+                tnamespacedecl
+                (choice [ keyword "class" >>. preturn true; keyword "struct" >>. preturn false ])
+            >>= fun ((pos, id), owner, name, ns, isValueType) ->
+                updateUserState <| fun state ->
+                    let t =
+                        { UnresolvedTypeDefinitionImport.TypeOwner = owner
+                          TypeName = name
+                          TypeNamespace = ns
+                          IsStruct = isValueType }
+
+                    if state.Module.ModuleTypes.AddImport(ValueSome id, t) then
+                        state
+                    else
+                        { state with Errors = errorDuplicateIdentifier "type definition import" id pos :: state.Errors }
+        ]
+        |> sexpression
+        |> skipMany
+
+    keyword "imports" .>> inner
 
 let ttypedef =
     let kind: Parser<_, _> = choice [
@@ -482,7 +553,7 @@ let ttypedef =
     tuple5
         (keyword "type" >>. getPosition .>>. identifier)
         tnamedecl
-        (getPosition .>>. declaration "namespace" identifier)
+        tnamespacedecl
         tvisibility
         kind
     >>= fun ((pos, id), name, ns, vis, tkind) ->
@@ -621,13 +692,51 @@ let buildLookupValues (lookup: SymbolDictionary<_, _>) =
 
 let buildTypeDefinitions
     (identifiers: IdentifierLookup)
+    (modules: ModuleImportLookup)
     (namespaces: SymbolDictionary<_, _>)
     (types: TypeDefinitionLookup)
     (methodOwnerLookup: IReadOnlyDictionary<_, ImmutableArray<_>.Builder>)
     (fieldOwnerLookup: IReadOnlyDictionary<_, ImmutableArray<_>.Builder>)
     =
-    let builder = ImmutableArray.CreateBuilder()
-    let mutable errors, i = List.empty, 0u // TODO: Start at count of type imports when building type definitions.
+    let imports = ImmutableArray.CreateBuilder types.Imports.Count
+    let definitions = ImmutableArray.CreateBuilder types.Definitions.Count
+    let mutable errors, i = List.empty, 0u
+
+    for t in types.Imports do
+        let result =
+            validated {
+                let! towner =
+                    let (pos, name) = t.TypeOwner
+                    match modules.Find name with
+                    | ValueSome namei -> Result.Ok namei
+                    | ValueNone -> Result.Error [ errorIdentifierUndefined "module import" name pos ]
+
+                let! tname =
+                    let (pos, name) = t.TypeName
+                    match identifiers.FromIdentifier name with
+                    | ValueSome namei -> Result.Ok namei
+                    | ValueNone -> Result.Error [ errorIdentifierUndefined "type name" name pos ]
+
+                // TODO: Reduce code duplication with lookups involving Names
+                let! tnamespace =
+                    let (pos, name) = t.TypeNamespace
+                    match namespaces.FromIdentifier name with
+                    | ValueSome nsi -> Result.Ok nsi
+                    | ValueNone -> Result.Error [ errorIdentifierUndefined "type namespace" name pos ]
+
+                return! Result.Ok
+                    { TypeDefinitionImport.Module = towner
+                      TypeName = tname
+                      TypeNamespace = tnamespace
+                      IsStruct = t.IsStruct
+                      TypeParameters = 0u }
+            }
+
+        match result with
+        | Result.Ok t' -> imports.Add t'
+        | Result.Error errors' -> errors <- errors' @ errors
+
+        i <- Checked.(+) i 1u
 
     for t in types.Definitions do
         let result =
@@ -669,13 +778,13 @@ let buildTypeDefinitions
             }
 
         match result with
-        | Result.Ok t' -> builder.Add t'
+        | Result.Ok t' -> definitions.Add t'
         | Result.Error errors' -> errors <- errors' @ errors
 
         i <- Checked.(+) i 1u
 
     match errors with
-    | [] -> Result.Ok(builder.ToImmutable())
+    | [] -> Result.Ok(imports.ToImmutable(), definitions.ToImmutable())
     | _ -> Result.Error errors
 
 let buildFieldDefinitions
@@ -919,7 +1028,7 @@ let tmodule: Parser<AssemblerResult, State> =
     let moduleVersionInfo vname version err =
         getPosition
         .>> keyword vname
-        .>>. (many integerlit |>> (List.map uint32 >> ImmutableArray.CreateRange >> VersionNumbers))
+        .>>. vnumbers
         >>= fun (pos, numbers) ->
             updateUserState <| fun state ->
                 match version state.Module with
@@ -932,13 +1041,9 @@ let tmodule: Parser<AssemblerResult, State> =
     choice [
         moduleVersionInfo "format" (fun mdle -> mdle.ModuleFormatVersion) "Duplicate module format version"
         moduleVersionInfo "version" (fun mdle -> mdle.ModuleHeaderVersion) "Duplicate module version"
-
         tidentifier
-
         tsignature
-
         tcode
-
         // "namespace" also starts with "name", so this parser must go before the module name
         tnamespace
 
@@ -953,12 +1058,10 @@ let tmodule: Parser<AssemblerResult, State> =
                 | ValueNone, _ ->
                     { state with Errors = ValidationError("The module name cannot be empty", pos) :: state.Errors }
 
+        timports
         ttypedef
-
         tfielddef
-
         tmethoddef
-
         tctordef
 
         keyword "entrypoint" >>. getPosition .>>. identifier >>= fun ((pos, _) as ename) ->
@@ -972,7 +1075,7 @@ let tmodule: Parser<AssemblerResult, State> =
     ]
     |> sexpression
     |> skipMany
-    |> declaration "module"
+    |> declaration "module" // TODO: Have way to refer to current module $
     >>. eof
     >>. getUserState
     |>> fun { Module = state; Errors = errors } ->
@@ -1015,9 +1118,10 @@ let tmodule: Parser<AssemblerResult, State> =
                         state.ModuleMethods
                         methodOwnerLookup
 
-                let! tdefinitions =
+                let! (timports, tdefinitions) =
                     buildTypeDefinitions
                         state.ModuleIdentifiers
+                        state.ModuleImports
                         state.ModuleNamespaces
                         state.ModuleTypes methodOwnerLookup
                         fieldOwnerLookup
@@ -1059,8 +1163,8 @@ let tmodule: Parser<AssemblerResult, State> =
                       MethodSignatures = msignatures
                       Imports =
                         // TODO: Implement generation of module imports
-                        { ModuleImports.ImportedModules = ImmutableArray.Empty
-                          ImportedTypes = ImmutableArray.Empty
+                        { ModuleImports.ImportedModules = ImmutableArray.CreateRange state.ModuleImports.Imports
+                          ImportedTypes = timports
                           ImportedFields = ImmutableArray.Empty
                           ImportedMethods = ImmutableArray.Empty }
                       Definitions =
@@ -1091,6 +1195,7 @@ let fromInput (input: _ -> _ -> ParserResult<AssemblerResult, State>) =
               ModuleNamespaces = SymbolDictionary()
               ModuleTypeSignatures = TypeSignatureLookup()
               ModuleMethodSignatures = SymbolDictionary()
+              ModuleImports = ModuleImportLookup()
               ModuleTypes = TypeDefinitionLookup()
               ModuleFields = FieldLookup()
               ModuleMethods = MethodLookup()
