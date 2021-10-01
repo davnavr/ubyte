@@ -121,10 +121,10 @@ let moduleImports source =
             { TypeDefinitionImport.Module = index t
               TypeName = index t
               TypeNamespace = index t
-              TypeKind =
-                let kind = bits1 t
-                if kind > Tag.TypeDefinitionKind.Struct then failwithf "TODO: Invalid type kind 0x%02X (%A)" (uint8 kind) kind
-                kind
+              IsStruct =
+                let tag = u1 t
+                if tag > 1uy then failwithf "TODO: Invalid type import kind 0x%02X" tag
+                tag = 1uy
               TypeParameters = LEB128.uint t }
       ImportedFields =
         lengthEncodedVector source <| fun f ->

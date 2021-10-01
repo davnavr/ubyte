@@ -359,7 +359,7 @@ module Tag =
     type TypeDefinitionKind =
         | BaseClass = 0uy
         | Class = 1uy
-        | Interface = 2uy
+        | [<Obsolete>] Interface = 2uy
         | Struct = 3uy
 
     type TypeDefinitionLayout =
@@ -473,7 +473,7 @@ type TypeDefinitionImport =
     { Module: ModuleIndex
       TypeName: IdentifierIndex
       TypeNamespace: NamespaceIndex
-      TypeKind: Tag.TypeDefinitionKind
+      IsStruct: bool
       TypeParameters: uvarint }
 
 /// Used to specify whether or not a type, field, or method can be imported by another module.
@@ -548,7 +548,7 @@ type ClassDefinitionFlags =
 [<NoComparison; NoEquality>]
 type TypeDefinitionKind =
     | Class of extends: TypeDefinitionIndex voption * flags: ClassDefinitionFlags // TODO: Use TypeSignatureIndex to allow inheriting from generic types
-    | Interface
+    | [<Obsolete>] Interface
     /// A type whose instances can be allocated on the stack.
     | Struct
 

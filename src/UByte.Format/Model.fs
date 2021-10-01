@@ -264,7 +264,8 @@ type MethodImport =
 type TypeDefinitionImport =
     { Module: ModuleIndex
       TypeName: IdentifierIndex
-      TypeKind: Tag.TypeDefinitionKind
+      TypeNamespace: NamespaceIndex
+      IsStruct: bool
       TypeParameters: uvarint }
 
 type VisibilityFlags =

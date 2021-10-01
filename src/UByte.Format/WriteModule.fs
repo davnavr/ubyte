@@ -207,7 +207,7 @@ let toStream (stream: Stream) (md: Module) =
                 index timport.Module dest
                 index timport.TypeName dest
                 index timport.TypeNamespace dest
-                bits1 timport.TypeKind dest
+                dest.WriteByte(if timport.IsStruct then 1uy else 0uy)
                 LEB128.uint timport.TypeParameters dest
                 if timport.TypeParameters > 0u then failwith "TODO: Type imports with type parameters are not yet supported"
 
