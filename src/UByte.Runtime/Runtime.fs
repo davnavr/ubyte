@@ -156,6 +156,7 @@ module Interpreter =
 
         let add xreg yreg rreg = binaryOp (+) (+) (+) (+) (+) xreg yreg rreg
         let sub xreg yreg rreg = binaryOp (-) (-) (-) (-) (-) xreg yreg rreg
+        let mul xreg yreg rreg = binaryOp (*) (*) (*) (*) (*) xreg yreg rreg
 
         let ``and`` xreg yreg rreg = binaryOp (&&&) (&&&) (&&&) (&&&) (&&&) xreg yreg rreg
         let ``or`` xreg yreg rreg = binaryOp (|||) (|||) (|||) (|||) (|||) xreg yreg rreg
@@ -252,6 +253,7 @@ module Interpreter =
                 | Reg_copy(source, dest) -> (frame'.RegisterAt source).CopyValueTo(frame'.RegisterAt dest)
                 | Add(Register x, Register y, Register r) -> Arithmetic.add x y r
                 | Sub(Register x, Register y, Register r) -> Arithmetic.sub x y r
+                | Mul(Register x, Register y, Register r) -> Arithmetic.mul x y r
                 | And(Register x, Register y, Register r) -> Arithmetic.``and`` x y r
                 | Or(Register x, Register y, Register r) -> Arithmetic.``or`` x y r
                 | Xor(Register x, Register y, Register r) -> Arithmetic.xor x y r

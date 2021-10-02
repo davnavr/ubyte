@@ -14,7 +14,7 @@
     (registers (argument $l0 0) (local $l1 $sig_int))
 
     (br.zero $l0 5)
-    (const.i32 -1 $l1)
+    (const.i32 1 $l1)
     (sub $l0 $l1 $l1)
     (call $method_factorial (arguments $l1) (returns $l1))
     (mul $l0 $l1 $l0)
