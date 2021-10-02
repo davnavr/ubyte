@@ -316,11 +316,13 @@ type InvalidConstructorException (method: RuntimeMethod, frame, message) =
 
 [<Sealed>]
 type RuntimeMethod (rmodule: RuntimeModule, method: Method) =
-    let { Method.MethodName = name; MethodFlags = flags; Body = body } = method
+    let { Method.MethodFlags = flags; Body = body } = method
 
     member _.Module: RuntimeModule = rmodule
 
-    member val Name = rmodule.IdentifierAt name
+    member val Name = rmodule.IdentifierAt method.MethodName
+
+    member val Visibility = method.MethodVisibility
 
     member val DeclaringType = rmodule.InitializeType method.MethodOwner
 
@@ -465,7 +467,7 @@ type RuntimeTypeDefinition (rm: RuntimeModule, t: TypeDefinition) =
 
         while i < methodis.Length && result.IsNone do
             let m = rm.InitializeMethod methodis.[i]
-            if m.Name = name then
+            if m.Visibility <= VisibilityFlags.Public && m.Name = name then
                 result <- ValueSome m
             i <- Checked.(+) i 1
 
@@ -591,7 +593,11 @@ type RuntimeModule (m: Module, moduleImportResolver: ModuleIdentifier -> Runtime
             while i < types.Length && result.IsNone do
                 let t = types.[i]
 
-                if this.NamespaceAt t.TypeNamespace = typeNamespace && this.IdentifierAt t.TypeName = typeName then
+                if
+                    t.TypeVisibility <= VisibilityFlags.Public &&
+                    this.NamespaceAt t.TypeNamespace = typeNamespace &&
+                    this.IdentifierAt t.TypeName = typeName
+                then
                     let tindex = TypeDefinitionIndex.Index(Checked.uint32 i)
                     let init = typeDefinitionLookup tindex
                     typeNameLookup.[key] <- init
