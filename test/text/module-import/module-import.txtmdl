@@ -13,6 +13,7 @@
   (code $code_main
     (registers (local $l0 $sig_int))
 
+    (const.i32 63 $l0)
     (call $method_imported (arguments $l0) (returns $l0))
     (ret $l0)
   )
