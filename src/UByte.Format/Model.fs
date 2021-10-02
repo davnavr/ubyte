@@ -18,6 +18,8 @@ type vector<'T> = ImmutableArray<'T>
 
 type uvarint = uint32
 
+type varint = int32
+
 [<Struct; CustomComparison; CustomEquality>]
 type VersionNumbers =
     | VersionNumbers of vector<uint32>
@@ -104,6 +106,8 @@ type RegisterIndex = Index<IndexKinds.Register>
 type DataIndex = Index<IndexKinds.Data>
 
 module InstructionSet =
+    type InstructionOffset = varint
+
     type Opcode =
         | nop = 0u
         | ret = 1u
@@ -137,6 +141,13 @@ module InstructionSet =
         | rotr = 0x4Du
         | br = 0x60u
         | ``br.eq`` = 0x61u
+        | ``br.ne`` = 0x62u
+        | ``br.lt`` = 0x63u
+        | ``br.gt`` = 0x64u
+        | ``br.le`` = 0x65u
+        | ``br.ge`` = 0x66u
+        | ``br.true`` = 0x67u
+        | ``br.false`` = 0x68u
         | ``obj.new`` = 0x70u
         | ``obj.null`` = 0x71u
         | ``obj.ldfd`` = 0x72u
@@ -168,6 +179,15 @@ module InstructionSet =
         | Rem of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
         | Rotl of amount: RegisterIndex * RegisterIndex
         | Rotr of amount: RegisterIndex * RegisterIndex
+        | Br of target: InstructionOffset
+        | Br_eq of x: RegisterIndex * y: RegisterIndex * target: InstructionOffset
+        | Br_ne of x: RegisterIndex * y: RegisterIndex * target: InstructionOffset
+        | Br_lt of x: RegisterIndex * y: RegisterIndex * target: InstructionOffset
+        | Br_gt of x: RegisterIndex * y: RegisterIndex * target: InstructionOffset
+        | Br_le of x: RegisterIndex * y: RegisterIndex * target: InstructionOffset
+        | Br_ge of x: RegisterIndex * y: RegisterIndex * target: InstructionOffset
+        | Br_true of x: RegisterIndex * target: InstructionOffset
+        | Br_false of x: RegisterIndex * target: InstructionOffset
         | Obj_new of constructor: MethodIndex * arguments: vector<RegisterIndex> * result: RegisterIndex
         | Obj_null of destination: RegisterIndex
         | Obj_ldfd of field: FieldIndex * object: RegisterIndex * destination: RegisterIndex
