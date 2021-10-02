@@ -201,7 +201,7 @@ let idchar = choice [ asciiLetter; digit; anyOf "_.<>";  ]
 let identifier = skipChar '$' >>. (many1Chars idchar) |>> Name.ofStr |> atomL "identifier"
 let stringlit = let quot = skipChar '\"' in quot >>. manyCharsTill idchar quot |> atomL "string literal"
 let integerlit = atomL "integer literal" pint64
-let keyword = skipString >> atom
+let keyword name = skipString name |> atom
 
 /// <summary>Parses text nested within parenthesis.</summary>
 /// <remarks>
@@ -451,10 +451,10 @@ let tcode =
                                 return instr(method, args', rets')
                             }
 
-                attempt (callLikeInstruction "call" InstructionSet.Call)
                 callLikeInstruction "call.virt" InstructionSet.Call_virt
                 callLikeInstruction "call.ret" InstructionSet.Call_ret
                 callLikeInstruction "call.virt.ret" InstructionSet.Call_virt_ret
+                callLikeInstruction "call" InstructionSet.Call
 
                 let rawoffset =
                     choice [
@@ -463,10 +463,8 @@ let tcode =
                     ]
                     |> atomL "instruction offset"
 
-                attempt (keyword "br" >>. rawoffset |>> fun i -> fun _ _ _ -> Result.Ok(InstructionSet.Br i))
-
                 let comparisonBranchInstruction name (instr: _ -> InstructionSet.Instruction): Parser<_, _> =
-                    keyword "name" >>.
+                    keyword name >>.
                     tuple3
                         (getPosition .>>. identifier)
                         (getPosition .>>. identifier)
@@ -495,6 +493,7 @@ let tcode =
                 ifBranchInstruction "br.true" InstructionSet.Br_true
                 ifBranchInstruction "br.false" InstructionSet.Br_false
                 ifBranchInstruction "br.zero" InstructionSet.Br_false
+                keyword "br" >>. rawoffset |>> fun i -> fun _ _ _ -> Result.Ok(InstructionSet.Br i)
             ]
             |> sexpression
 
