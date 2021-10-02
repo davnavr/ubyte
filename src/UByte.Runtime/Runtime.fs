@@ -204,6 +204,8 @@ module Interpreter =
         let isLessThan xreg yreg = comparison (<) (<) (<) (<) (<) (fun _ _ -> false) xreg yreg
         let isGreaterThan xreg yreg = comparison (>) (>) (>) (>) (>) (fun _ _ -> false) xreg yreg
         let private refeq a b = Object.ReferenceEquals(a, b)
+        let isEqual xreg yreg = comparison (=) (=) (=) (=) (=) refeq xreg yreg
+        let inline isNotEqual xreg yreg = not(isEqual xreg yreg)
         let isLessOrEqual xreg yreg = comparison (<=) (<=) (<=) (<=) (<=) refeq xreg yreg
         let isGreaterOrEqual xreg yreg = comparison (>=) (>=) (>=) (>=) (>=) refeq xreg yreg
 
@@ -274,6 +276,10 @@ module Interpreter =
                     invoke rregs aregs method
                     copyRegisterValues rregs frame'.ReturnRegisters
                 | Br(BranchTarget target) -> frame'.InstructionIndex <- target
+                | Br_eq(Register xreg, Register yreg, BranchTarget target) ->
+                    if Compare.isEqual xreg yreg then frame'.InstructionIndex <- target
+                | Br_ne(Register xreg, Register yreg, BranchTarget target) ->
+                    if Compare.isNotEqual xreg yreg then frame'.InstructionIndex <- target
                 | Br_lt(Register xreg, Register yreg, BranchTarget target) ->
                     if Compare.isLessThan xreg yreg then frame'.InstructionIndex <- target
                 | Br_gt(Register xreg, Register yreg, BranchTarget target) ->
