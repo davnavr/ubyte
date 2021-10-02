@@ -1,7 +1,7 @@
 ﻿(module (format 0 0) (name "ImportedModule") (version 0 1 0)
   (identifier $id_namespace "Example.Imported")
-  (identifier $id_class "Helper")
-  (identifier $id_helper "IncrementInteger")
+  (identifier $id_class "MyImport")
+  (identifier $id_helper "Helper")
 
   (signature $sig_int32 (type s32))
   (signature $sig_helper (method (returns $sig_int32) (parameters $sig_int32)))

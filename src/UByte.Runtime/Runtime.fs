@@ -607,7 +607,13 @@ type RuntimeModule (m: Module, moduleImportResolver: ModuleIdentifier -> Runtime
 
             match result with
             | ValueSome t -> t
-            | ValueNone -> raise(TypeNotFoundException(this, typeNamespace, typeName, "Unable to find type"))
+            | ValueNone ->
+                TypeNotFoundException (
+                    this,
+                    typeNamespace,
+                    typeName, sprintf "Unable to find type %s %s" typeNamespace typeName
+                )
+                |> raise
         | true, existing -> existing
 
     member this.InvokeEntryPoint(argv: string[]) =
