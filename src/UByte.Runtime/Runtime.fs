@@ -58,7 +58,7 @@ type RuntimeStackFrame
     let mutable iindex = 0
 
     member _.ArgumentRegisters = args
-    member _.InstructionIndex = iindex
+    member _.InstructionIndex with get() = iindex and set i = iindex <- i
     member _.LocalRegisters = locals
     member _.ReturnRegisters = returns
     member _.Instructions = instructions
@@ -68,8 +68,6 @@ type RuntimeStackFrame
     member this.RegisterAt (Index i: RegisterIndex) =
         let i' = Checked.int32 i
         if i' >= args.Length then this.LocalRegisters.[i' - args.Length] else args.[i']
-
-    member _.IncrementInstructionIndex() = iindex <- Checked.(+) 1 iindex
 
 type RuntimeException =
     inherit Exception
@@ -182,6 +180,32 @@ module Interpreter =
         let inline ``true`` destination = u8 1uy destination
         let inline ``false`` destination = u8 0uy destination
 
+    [<RequireQualifiedAccess>]
+    module private Compare =
+        let inline comparison cu8 cu16 cu32 cu64 cunative cref xreg yreg =
+            match xreg, yreg with
+            | RuntimeRegister.R1 { contents = x }, RuntimeRegister.R1 { contents = y } -> cu8 x y
+            | RuntimeRegister.R4 { contents = x }, RuntimeRegister.R4 { contents = y } -> cu32 x y
+
+        let isTrueValue register =
+            match register with
+            | RuntimeRegister.R1 { contents = 0uy }
+            | RuntimeRegister.R2 { contents = 0us }
+            | RuntimeRegister.R4 { contents = 0u }
+            | RuntimeRegister.R8 { contents = 0UL }
+            | RuntimeRegister.RNative { contents = 0un }
+            | RuntimeRegister.RRef { contents = null } -> false
+            | RuntimeRegister.RStruct _ -> failwith "TODO: How to determine if a struct is truthy"
+            | _ -> true
+
+        let inline isFalseValue register = not(isTrueValue register)
+
+        let isLessThan xreg yreg = comparison (<) (<) (<) (<) (<) (fun _ _ -> false) xreg yreg
+        let isGreaterThan xreg yreg = comparison (>) (>) (>) (>) (>) (fun _ _ -> false) xreg yreg
+        let private refeq a b = Object.ReferenceEquals(a, b)
+        let isLessOrEqual xreg yreg = comparison (<=) (<=) (<=) (<=) (<=) refeq xreg yreg
+        let isGreaterOrEqual xreg yreg = comparison (>=) (>=) (>=) (>=) (>=) refeq xreg yreg
+
     let private (|Registers|) (frame: RuntimeStackFrame) (registers: ImmutableArray<RegisterIndex>) =
         let mutable registers' = Array.zeroCreate registers.Length
         for i = 0 to registers.Length - 1 do registers'.[i] <- frame.RegisterAt registers.[i]
@@ -207,6 +231,7 @@ module Interpreter =
             let inline (|Register|) rindex = frame'.RegisterAt rindex
             let inline (|Method|) mindex: RuntimeMethod = frame'.CurrentMethod.Module.InitializeMethod mindex
             let inline (|Field|) findex: RuntimeField = frame'.CurrentMethod.Module.InitializeField findex
+            let inline (|BranchTarget|) (target: InstructionOffset) = Checked.(-) target 1
 
             let inline fieldAccessInstruction field object register execute =
                 match object with
@@ -246,6 +271,19 @@ module Interpreter =
                     frame <- frame'.Previous
                     invoke rregs aregs method
                     copyRegisterValues rregs frame'.ReturnRegisters
+                | Br(BranchTarget target) -> frame'.InstructionIndex <- target
+                | Br_lt(Register xreg, Register yreg, BranchTarget target) ->
+                    if Compare.isLessThan xreg yreg then frame'.InstructionIndex <- target
+                | Br_gt(Register xreg, Register yreg, BranchTarget target) ->
+                    if Compare.isGreaterThan xreg yreg then frame'.InstructionIndex <- target
+                | Br_le(Register xreg, Register yreg, BranchTarget target) ->
+                    if Compare.isLessOrEqual xreg yreg then frame'.InstructionIndex <- target
+                | Br_ge(Register xreg, Register yreg, BranchTarget target) ->
+                    if Compare.isGreaterOrEqual xreg yreg then frame'.InstructionIndex <- target
+                | Br_true(Register register, BranchTarget target) ->
+                    if Compare.isTrueValue register then frame'.InstructionIndex <- target
+                | Br_false(Register register, BranchTarget target) ->
+                    if Compare.isFalseValue register then frame'.InstructionIndex <- target
                 | Obj_null(Register destination) ->
                     match destination with
                     | RuntimeRegister.RRef destination' -> destination'.contents <- null
@@ -292,7 +330,7 @@ module Interpreter =
                 | Nop -> ()
                 | bad -> failwithf "TODO: Unsupported instruction %A" bad
 
-                frame'.IncrementInstructionIndex()
+                frame'.InstructionIndex <- Checked.(+) frame'.InstructionIndex 1
             with
             | e ->
                 //ex <- ValueSome e

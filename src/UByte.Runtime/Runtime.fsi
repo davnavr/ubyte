@@ -19,7 +19,7 @@ type RuntimeStackFrame =
     /// Contains the registers that the return values will be stored to.
     member ReturnRegisters : ImmutableArray<RuntimeRegister>
     member Previous : RuntimeStackFrame voption
-    member InstructionIndex : int32
+    member InstructionIndex : int32 with get
 
     member RegisterAt : Model.RegisterIndex -> RuntimeRegister
 
