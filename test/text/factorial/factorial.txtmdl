@@ -13,9 +13,8 @@
   (code $code_factorial
     (registers (argument $l0 0) (local $l1 $sig_int))
 
-    (const.i32 0 $l1)
-    (br.eq $l1 $l0 5)
-    (const.i32 1 $l1)
+    (br.zero $l0 5)
+    (const.i32 -1 $l1)
     (sub $l0 $l1 $l1)
     (call $method_factorial (arguments $l1) (returns $l1))
     (mul $l0 $l1 $l0)
@@ -44,8 +43,8 @@
   )
 
   (method $method_factorial (name $id_factorial) (visibility private)
-    (signature $sig_helper)
-    (defined $code_factorial
+    (signature $sig_factorial)
+    (defined $code_factorial)
     (owner $class_program)
   )
 

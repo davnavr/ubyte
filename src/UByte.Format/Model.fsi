@@ -380,6 +380,7 @@ module InstructionSet =
         /// <paramref name="target"/> offset.
         /// </summary>
         | Br_false of x: RegisterIndex * target: InstructionOffset
+        //| Br_zero
 
         /// <summary>
         /// Allocates a new object and calls the specified <paramref name="constructor"/> with the specified

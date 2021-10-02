@@ -325,7 +325,7 @@ let tcode =
         |> declaration "registers"
         // TODO: Registers should be optional
 
-    let lookupRegisterName lookup (pos, name) =
+    let lookupRegisterName lookup (pos, name): Result<RegisterIndex, _> =
         match lookup name with
         | ValueSome i -> Result.Ok i
         | ValueNone -> Result.Error(errorIdentifierUndefined "register" name pos)
@@ -369,11 +369,16 @@ let tcode =
                 keyword "ret" >>. many (getPosition .>>. identifier) |>> fun names -> fun registers _ _ ->
                     Result.map InstructionSet.Ret (lookupRegisterList registers names)
 
-                keyword "add" >>. parray 3 (getPosition .>>. identifier) |>> fun names -> fun registers _ _ ->
-                    Result.map
-                        (fun (registers': ImmutableArray<_>) ->
-                            InstructionSet.Add(registers'.[0], registers'.[1], registers'.[2]))
-                        (lookupRegisterArray registers names)
+                let binaryOpInstruction name instr =
+                    keyword name >>. parray 3 (getPosition .>>. identifier) |>> fun names -> fun registers _ _ ->
+                        Result.map
+                            (fun (registers': ImmutableArray<_>) -> instr(registers'.[0], registers'.[1], registers'.[2]))
+                            (lookupRegisterArray registers names)
+
+                binaryOpInstruction "add" InstructionSet.Add
+                binaryOpInstruction "sub" InstructionSet.Sub
+                binaryOpInstruction "mul" InstructionSet.Mul
+                binaryOpInstruction "div" InstructionSet.Div
 
                 let inline guardIntegerRange min max convert value =
                     if value >= int64 min && value <= int64 max
@@ -446,10 +451,50 @@ let tcode =
                                 return instr(method, args', rets')
                             }
 
-                callLikeInstruction "call" InstructionSet.Call
+                attempt (callLikeInstruction "call" InstructionSet.Call)
                 callLikeInstruction "call.virt" InstructionSet.Call_virt
                 callLikeInstruction "call.ret" InstructionSet.Call_ret
                 callLikeInstruction "call.virt.ret" InstructionSet.Call_virt_ret
+
+                let rawoffset =
+                    choice [
+                        skipChar '-' >>. pint32 |>> (fun i -> i * -1)
+                        pint32
+                    ]
+                    |> atomL "instruction offset"
+
+                attempt (keyword "br" >>. rawoffset |>> fun i -> fun _ _ _ -> Result.Ok(InstructionSet.Br i))
+
+                let comparisonBranchInstruction name (instr: _ -> InstructionSet.Instruction): Parser<_, _> =
+                    keyword "name" >>.
+                    tuple3
+                        (getPosition .>>. identifier)
+                        (getPosition .>>. identifier)
+                        rawoffset
+                    |>> fun (xreg, yreg, i) ->  fun registers _ _ ->
+                        validated {
+                            let! xreg' = lookupRegisterName registers xreg |> Result.mapError List.singleton
+                            let! yreg' = lookupRegisterName registers yreg |> Result.mapError List.singleton
+                            return! Result.Ok(instr(xreg', yreg', i))
+                        }
+
+                comparisonBranchInstruction "br.eq" InstructionSet.Br_eq
+                comparisonBranchInstruction "br.ne" InstructionSet.Br_ne
+                comparisonBranchInstruction "br.lt" InstructionSet.Br_lt
+                comparisonBranchInstruction "br.gt" InstructionSet.Br_gt
+                comparisonBranchInstruction "br.le" InstructionSet.Br_le
+                comparisonBranchInstruction "br.ge" InstructionSet.Br_ge
+
+                let ifBranchInstruction name (instr: _ -> InstructionSet.Instruction): Parser<_, _> =
+                    keyword name >>. (getPosition .>>. identifier) .>>. rawoffset |>> fun (reg, i) -> fun registers _ _ ->
+                        validated {
+                            let! reg' = lookupRegisterName registers reg |> Result.mapError List.singleton
+                            return! Result.Ok(instr(reg', i))
+                        }
+
+                ifBranchInstruction "br.true" InstructionSet.Br_true
+                ifBranchInstruction "br.false" InstructionSet.Br_false
+                ifBranchInstruction "br.zero" InstructionSet.Br_false
             ]
             |> sexpression
 
