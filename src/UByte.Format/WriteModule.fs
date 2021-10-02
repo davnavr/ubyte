@@ -26,6 +26,24 @@ module LEB128 =
 
     let uint value dest = unsigned value dest
 
+    let [<Literal>] private SignMask = 0b0100_0000uy
+
+    let inline private signed unsign uconvert value (dest: Stream) =
+        if value <> LanguagePrimitives.GenericZero then
+            let signed = value < LanguagePrimitives.GenericZero
+            let uvalue = unsign value
+            let mutable bits = uvalue &&& uconvert 0x7FFF_FFFF
+
+            while bits > LanguagePrimitives.GenericZero do
+                let mutable b = uint8 bits &&& (~~~ContinueMask)
+                bits <- bits >>> 7
+                if signed then b <- b ||| SignMask
+                dest.WriteByte b
+        else
+            dest.WriteByte 0uy
+
+    let int value dest = signed uint32 uint32 value dest
+
 let inline index (Index i) dest = LEB128.uint i dest
 
 let vector writer (items: vector<'T>) dest =
@@ -130,6 +148,24 @@ let instruction endianness i dest =
     | (Instruction.Obj_null reg & Opcode Opcode.``obj.null`` op) ->
         opcode op dest
         index reg dest
+    | Instruction.Br target ->
+        opcode Opcode.br dest
+        LEB128.int target dest
+    | (Instruction.Br_eq(xreg, yreg, target) & Opcode Opcode.``br.eq`` op)
+    | (Instruction.Br_ne(xreg, yreg, target) & Opcode Opcode.``br.ne`` op)
+    | (Instruction.Br_lt(xreg, yreg, target) & Opcode Opcode.``br.lt`` op)
+    | (Instruction.Br_gt(xreg, yreg, target) & Opcode Opcode.``br.gt`` op)
+    | (Instruction.Br_le(xreg, yreg, target) & Opcode Opcode.``br.le`` op)
+    | (Instruction.Br_ge(xreg, yreg, target) & Opcode Opcode.``br.ge`` op) ->
+        opcode op dest
+        index xreg dest
+        index yreg dest
+        LEB128.int target dest
+    | (Instruction.Br_true(reg, target) & Opcode Opcode.``br.true`` op)
+    | (Instruction.Br_false(reg, target) & Opcode Opcode.``br.false`` op) ->
+        opcode op dest
+        index reg dest
+        LEB128.int target dest
     | Instruction.Obj_new(constructor, aregs, rreg) ->
         opcode Opcode.``obj.new`` dest
         index constructor dest

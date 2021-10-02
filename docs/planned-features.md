@@ -2,8 +2,9 @@
 
 Features further down the list are ones I think are more difficult or will take more time to implement.
 
+- Comparison instructions
 - Importing fields
-- Branching instructions
+- Labels in text format
 - Unsigned arithimetic operations (maybe just have registers keep track of whether they are signed or unsigned)
 - Overflow checking arithmetic operations
 - Exception handling (`try`, `catch`, and `finally`)

@@ -17,6 +17,9 @@ type vector<'T> = ImmutableArray<'T>
 /// Represents a LEB128 encoded unsigned integer.
 type uvarint = uint32
 
+/// Represents a LEB128 encoded signed integer.
+type varint = int32
+
 /// A length-encoded array of LEB128 encoded unsigned integers used to indicate a version.
 [<IsReadOnly; Struct; CustomComparison; CustomEquality>]
 type VersionNumbers =
@@ -123,6 +126,12 @@ type CodeIndex = Index<IndexKinds.Code>
 type RegisterIndex = Index<IndexKinds.Register>
 
 module InstructionSet =
+    /// <summary>
+    /// Specifies the target of a branch instruction, points to the instruction that will be executed next if the branch is
+    /// taken. <c>0</c> refers to the current branch instruction.
+    /// </summary>
+    type InstructionOffset = varint
+
     /// Opcodes are represented as LEB128 encoded unsigned integers.
     type Opcode =
         | nop = 0u
@@ -196,6 +205,13 @@ module InstructionSet =
         // Branching
         | br = 0x60u
         | ``br.eq`` = 0x61u
+        | ``br.ne`` = 0x62u
+        | ``br.lt`` = 0x63u
+        | ``br.gt`` = 0x64u
+        | ``br.le`` = 0x65u
+        | ``br.ge`` = 0x66u
+        | ``br.true`` = 0x67u
+        | ``br.false`` = 0x68u
 
         // Object
         | ``obj.new`` = 0x70u
@@ -219,7 +235,6 @@ module InstructionSet =
         /// To simplify parsing, the number of registers containing the values to return is included as part of the instruction.
         /// </remarks>
         | Ret of results: vector<RegisterIndex>
-        
 
         /// <summary>
         /// Calls the specified <paramref name="method"/> supplying the specified <paramref name="arguments"/> and storing the
@@ -320,6 +335,52 @@ module InstructionSet =
 
         | Rotl of amount: RegisterIndex * RegisterIndex
         | Rotr of amount: RegisterIndex * RegisterIndex
+
+        /// <summary>
+        /// Performs an unconditional branch to the instruction specified by the <paramref name="target"/> offset.
+        /// </summary>
+        | Br of target: InstructionOffset
+        /// <summary>
+        /// If the value in register <paramref name="x"/> is equal to the value in register <paramref name="y"/>, branches to the
+        /// instruction specified by the <paramref name="target"/> offset.
+        /// </summary>
+        | Br_eq of x: RegisterIndex * y: RegisterIndex * target: InstructionOffset
+        /// <summary>
+        /// If the value in register <paramref name="x"/> is not equal to the value in register <paramref name="y"/>, branches to
+        /// the instruction specified by the <paramref name="target"/> offset.
+        /// </summary>
+        | Br_ne of x: RegisterIndex * y: RegisterIndex * target: InstructionOffset
+        /// <summary>
+        /// If the value in register <paramref name="x"/> is less than the value in register <paramref name="y"/>, branches to
+        /// the instruction specified by the <paramref name="target"/> offset.
+        /// </summary>
+        | Br_lt of x: RegisterIndex * y: RegisterIndex * target: InstructionOffset
+        /// <summary>
+        /// If the value in register <paramref name="x"/> is greater than the value in register <paramref name="y"/>, branches to
+        /// the instruction specified by the <paramref name="target"/> offset.
+        /// </summary>
+        | Br_gt of x: RegisterIndex * y: RegisterIndex * target: InstructionOffset
+        /// <summary>
+        /// If the value in register <paramref name="x"/> is less than or equal to the value in register <paramref name="y"/>,
+        /// branches to the instruction specified by the <paramref name="target"/> offset.
+        /// </summary>
+        | Br_le of x: RegisterIndex * y: RegisterIndex * target: InstructionOffset
+        /// <summary>
+        /// If the value in register <paramref name="x"/> is greater than or equal to the value in register <paramref name="y"/>,
+        /// branches to the instruction specified by the <paramref name="target"/> offset.
+        /// </summary>
+        | Br_ge of x: RegisterIndex * y: RegisterIndex * target: InstructionOffset
+        /// <summary>
+        /// If the value in register <paramref name="x"/> is not equal to <c>0</c>, branches to the instruction specified by the
+        /// <paramref name="target"/> offset.
+        /// </summary>
+        | Br_true of x: RegisterIndex * target: InstructionOffset
+        /// <summary>
+        /// If the value in register <paramref name="x"/> is equal to <c>0</c>, branches to the instruction specified by the
+        /// <paramref name="target"/> offset.
+        /// </summary>
+        | Br_false of x: RegisterIndex * target: InstructionOffset
+        //| Br_zero
 
         /// <summary>
         /// Allocates a new object and calls the specified <paramref name="constructor"/> with the specified

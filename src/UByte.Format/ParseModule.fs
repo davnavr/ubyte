@@ -48,6 +48,33 @@ module LEB128 =
 
     let uint (source: #_) = unsigned 32 uint32 source
 
+    let [<Literal>] private SignMask = 0b0100_0000uy
+
+    let inline private signed size convert sign unsign negate (stream: #IByteSequence) =
+        let mutable cont, n, shifted = true, LanguagePrimitives.GenericZero, 0
+        while cont do
+            let b = u1 stream
+            cont <- b &&& ContinueMask = ContinueMask
+            if not cont && b ||| SignMask <> 0uy then n <- negate n
+            let mask = ~~~(if not cont then ContinueMask ||| SignMask else ContinueMask)
+            n <- sign(unsign n ||| ((unsign (convert (b &&& mask))) <<< shifted))
+
+            let shifted' =
+                if cont then 7
+                elif b >= 64uy then 6
+                elif b >= 32uy then 5
+                elif b >= 16uy then 4
+                elif b >= 8uy then 3
+                elif b >= 4uy then 2
+                elif b >= 2uy then 1
+                else 0
+
+            shifted <- Checked.(+) shifted shifted'
+            if shifted > size then failwith "TODO: Error for exceeded max allowed value for this kind of LEB128 integer"
+        n
+
+    let int (source: #_) = signed 32 int int uint32 (fun i -> i * -1) source
+
 [<IsReadOnly; Struct>]
 type StreamWrapper (stream: Stream) =
     interface IByteSequence with
@@ -214,6 +241,8 @@ let instruction endianness source =
     let inline index1 instr: Instruction = instr(index source)
     let inline index2 instr: Instruction = instr(index source, index source)
     let inline index3 instr: Instruction = instr(index source, index source, index source)
+    let inline br1 instr: Instruction = instr(index source, LEB128.int source)
+    let inline br2 instr: Instruction = instr(index source, index source, LEB128.int source)
 
     match LanguagePrimitives.EnumOfValue(LEB128.uint source) with
     | Opcode.nop -> Nop
@@ -248,6 +277,16 @@ let instruction endianness source =
 
     | Opcode.rotl -> index2 Rotl
     | Opcode.rotr -> index2 Rotr
+
+    | Opcode.br -> Br(LEB128.int source)
+    | Opcode.``br.eq`` -> br2 Br_eq
+    | Opcode.``br.ne`` -> br2 Br_ne
+    | Opcode.``br.lt`` -> br2 Br_le
+    | Opcode.``br.gt`` -> br2 Br_gt
+    | Opcode.``br.le`` -> br2 Br_le
+    | Opcode.``br.ge`` -> br2 Br_ge
+    | Opcode.``br.true`` -> br1 Br_true
+    | Opcode.``br.false`` -> br1 Br_false
 
     | Opcode.``obj.null`` -> index1 Obj_null
     | Opcode.``obj.new`` -> Obj_new(index source, vector source index, index source)
