@@ -4,52 +4,59 @@
 
   <PropertyGroup>
     <InterpreterExecutable>$(RootDirectory)\src\runmdl\runmdl.fsproj</InterpreterExecutable>
-
-    <!-- NOTE: Due to the ordering of things, the default value might always end up being used. -->
     <OutputDirectory Condition="'$(OutputDirectory)'==''">$(MSBuildProjectDirectory)\out\</OutputDirectory>
-    <OutputFile Condition="'$(OutputFile)'==''">$(OutputDirectory)\$(MSBuildProjectName).binmdl</OutputFile>
-    <PowerShellRunScript Condition="'$(PowerShellRunScript)'==''">$(OutputDirectory)\$(MSBuildProjectName).ps1</PowerShellRunScript>
   </PropertyGroup>
 
+  <ItemGroup>
+    <Compile Include="$(MSBuildProjectDirectory)\*.txtmdl" />
+  </ItemGroup>
+
+  <ItemDefinitionGroup>
+    <Compile>
+      <OutputPath>$(OutputDirectory)\%(Filename).binmdl</OutputPath>
+      <ScriptPath>$(OutputDirectory)\%(Filename).ps1</ScriptPath>
+    </Compile>
+  </ItemDefinitionGroup>
+
   <Target Name="Clean">
-    <Delete Files="$(OutputFile);$(PowerShellRunScript)" />
+    <Delete Files="%(Compile.OutputPath);%(Compile.ScriptPath)" />
   </Target>
 
-  <Target Name="Build" AfterTargets="Clean" Inputs="$(InputFile)" Outputs="$(OutputFile)">
-
+  <Target Name="Build" AfterTargets="Clean" Inputs="@(Compile)" Outputs="%(Compile.OutputPath)">
+    
     <PropertyGroup>
-      <AssemblerArguments>--input &quot;$(InputFile)&quot; --output &quot;$(OutputFile)&quot;</AssemblerArguments>
+      <AssemblerArguments>--input &quot;%(Compile.FullPath)&quot; --output &quot;%(Compile.OutputPath)&quot;</AssemblerArguments>
     </PropertyGroup>
-
+    
     <Exec
       Command="dotnet run -p &quot;$(RootDirectory)\src\asmdl\asmdl.fsproj&quot; -- $(AssemblerArguments)"
       ConsoleToMsBuild="true"
       LogStandardErrorAsError="true" />
-
+  
   </Target>
 
-  <Target Name="GeneratePowerShellRunScript" AfterTargets="Clean;Build" Inputs="$(InputFile)" Outputs="$(PowerShellRunScript)">
-
+  <Target Name="WriteRunScript" AfterTargets="Clean" Inputs="@(Compile)" Outputs="%(Compile.ScriptPath)">
+    
     <PropertyGroup>
-      <PowerShellRunScriptContents>
+      <ScriptContents>
         <![CDATA[
 param (
     [switch]$LaunchInterpreterDebugger
 )
 
-$arguments = @("run", "--project", "$(InterpreterExecutable)", "--", "--program", "$(OutputFile)")
+$arguments = @("run", "--project", "$(InterpreterExecutable)", "--", "--program", "%(Compile.OutputPath)")
 
 if ($LaunchInterpreterDebugger) { $arguments += "--launch-interpreter-debugger" }
 
 & "dotnet" $arguments
 ]]>
-      </PowerShellRunScriptContents>
+      </ScriptContents>
     </PropertyGroup>
 
-    <WriteLinesToFile File="$(PowerShellRunScript)" Lines="$(PowerShellRunScriptContents)" Overwrite="true" />
-
+    <WriteLinesToFile File="%(Compile.ScriptPath)" Lines="$(ScriptContents)" Overwrite="true" />
+  
   </Target>
 
-  <Target Name="Rebuild" DependsOnTargets="Clean;Build" />
+  <Target Name="Rebuild" DependsOnTargets="Clean;Build;WriteRunScript" />
 
 </Project>
