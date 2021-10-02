@@ -155,7 +155,7 @@ module Interpreter =
                 result.contents <- opunative x y
 
         let add xreg yreg rreg = binaryOp (+) (+) (+) (+) (+) xreg yreg rreg
-        let sub xreg yreg rreg = binaryOp (-) (-) (-) (-) (-) yreg xreg rreg // Reversed since x must be subtracted from y
+        let sub xreg yreg rreg = binaryOp (-) (-) (-) (-) (-) xreg yreg rreg
 
         let ``and`` xreg yreg rreg = binaryOp (&&&) (&&&) (&&&) (&&&) (&&&) xreg yreg rreg
         let ``or`` xreg yreg rreg = binaryOp (|||) (|||) (|||) (|||) (|||) xreg yreg rreg
