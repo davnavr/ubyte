@@ -44,7 +44,7 @@ param (
     [switch]$LaunchInterpreterDebugger
 )
 
-$arguments = @("run", "--project", "$(InterpreterExecutable)", "--", "--program", "%(Compile.OutputPath)")
+$arguments = @("run", "--project", "$(InterpreterExecutable)", "--", "--import-directory", "$(OutputDirectory)", "--program", "%(Compile.OutputPath)")
 
 if ($LaunchInterpreterDebugger) { $arguments += "--launch-interpreter-debugger" }
 

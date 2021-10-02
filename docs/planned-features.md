@@ -1,6 +1,6 @@
 # Planned Features
 
-- Module imports
+- Importing fields
 - Unsigned arithimetic operations (maybe just have registers keep track of whether they are signed or unsigned)
 - Overflow checking arithmetic operations
 - Exception handling (`try`, `catch`, and `finally`)
