@@ -316,11 +316,13 @@ type InvalidConstructorException (method: RuntimeMethod, frame, message) =
 
 [<Sealed>]
 type RuntimeMethod (rmodule: RuntimeModule, method: Method) =
-    let { Method.MethodName = name; MethodFlags = flags; Body = body } = method
+    let { Method.MethodFlags = flags; Body = body } = method
 
     member _.Module: RuntimeModule = rmodule
 
-    member val Name = rmodule.IdentifierAt name
+    member val Name = rmodule.IdentifierAt method.MethodName
+
+    member val Visibility = method.MethodVisibility
 
     member val DeclaringType = rmodule.InitializeType method.MethodOwner
 
@@ -450,6 +452,8 @@ type RuntimeTypeDefinition (rm: RuntimeModule, t: TypeDefinition) =
 
     //let globals: RuntimeStruct
 
+    let methodis = t.Methods
+
     // TODO: Cache length of RawData and References arrays for RuntimeObject and RuntimeStruct
 
     member _.Module = rm
@@ -457,6 +461,19 @@ type RuntimeTypeDefinition (rm: RuntimeModule, t: TypeDefinition) =
     member _.Layout: RuntimeTypeLayout = layout.Value
 
     member val Name = rm.IdentifierAt t.TypeName
+
+    member _.FindMethod name = // TODO: Figure out if methods defined in inherited class(es)
+        let mutable result, i = ValueNone, 0
+
+        while i < methodis.Length && result.IsNone do
+            let m = rm.InitializeMethod methodis.[i]
+            if m.Visibility <= VisibilityFlags.Public && m.Name = name then
+                result <- ValueSome m
+            i <- Checked.(+) i 1
+
+        match result with
+        | ValueSome m -> m
+        | ValueNone -> failwithf "TODO: Method not found %s" name
 
     member _.InitializeObjectFields(): RuntimeStruct =
         let layout' = layout.Value
@@ -473,10 +490,24 @@ let createIndexedLookup (count: int32) initializer =
             lookup.Add(i, value)
             value
 
+let createDefinitionOrImportLookup definedCount importCount definedInitializer importInitializer =
+    createIndexedLookup (definedCount + importCount) <| fun (Index i as index) ->
+        if i < uint32 importCount
+        then importInitializer (Checked.int32 i) index
+        else definedInitializer (Checked.int32 i - importCount) index
+
 [<Sealed>]
 type MissingEntryPointException (m: RuntimeModule, message: string) =
     inherit RuntimeException(ValueNone, message)
 
+    member _.Module = m
+
+[<Sealed>]
+type TypeNotFoundException (m: RuntimeModule, typeNamespace, typeName, message: string) =
+    inherit RuntimeException(ValueNone, message)
+
+    member _.TypeNamespace: string = typeNamespace
+    member _.TypeName: string = typeName
     member _.Module = m
 
 //type State // TODO: Keep track of format version supported by the runtime.
@@ -485,15 +516,32 @@ type MissingEntryPointException (m: RuntimeModule, message: string) =
 type RuntimeModule (m: Module, moduleImportResolver: ModuleIdentifier -> RuntimeModule) as rm =
     // TODO: Check if the runtime version matches the module's format version.
 
-    // TODO: Account for imported type defs when resolving indices.
-    let definedTypeLookup =
-        let types = m.Definitions.DefinedTypes
-        createIndexedLookup types.Length <| fun (Index i) -> RuntimeTypeDefinition(rm, types.[Checked.int32 i])
+    let importedModuleLookup =
+        let imports = m.Imports.ImportedModules
+        createIndexedLookup imports.Length <| fun (Index i) ->
+            if i = 0u
+            then rm
+            else moduleImportResolver imports.[Checked.int32 i - 1]
 
-    // TODO: Account for imported methods when resolving indices.
-    let definedMethodLookup =
-        let methods = m.Definitions.DefinedMethods
-        createIndexedLookup methods.Length <| fun (Index i) -> RuntimeMethod(rm, methods.[Checked.int32 i])
+    let typeDefinitionLookup: TypeDefinitionIndex -> _ =
+        let imports = m.Imports.ImportedTypes
+        let definitions = m.Definitions.DefinedTypes
+        createDefinitionOrImportLookup definitions.Length imports.Length
+            (fun i _ -> RuntimeTypeDefinition(rm, definitions.[i]))
+            (fun i _ ->
+                let t = imports.[Checked.int32 i]
+                let owner = importedModuleLookup t.Module
+                owner.FindType(rm.NamespaceAt t.TypeNamespace, rm.IdentifierAt t.TypeName))
+
+    let definedMethodLookup: MethodIndex -> RuntimeMethod =
+        let imports = m.Imports.ImportedMethods
+        let definitions = m.Definitions.DefinedMethods
+        createDefinitionOrImportLookup definitions.Length imports.Length
+            (fun i _ -> RuntimeMethod(rm, definitions.[i]))
+            (fun i _ ->
+                let m = imports.[Checked.int32 i]
+                let owner = typeDefinitionLookup m.MethodOwner
+                owner.FindMethod(rm.IdentifierAt m.MethodName))
 
     // TODO: Account for imported fields when resolving indices.
     let definedFieldLookup =
@@ -505,7 +553,12 @@ type RuntimeModule (m: Module, moduleImportResolver: ModuleIdentifier -> Runtime
             let n = owners.[Checked.int32 owner].Fields.IndexOf i'
             RuntimeField(rm, f, n)
 
+    let typeNameLookup = Dictionary()
+
     member _.IdentifierAt(Index i: IdentifierIndex) = m.Identifiers.Identifiers.[Checked.int32 i]
+
+    member this.NamespaceAt(Index i: NamespaceIndex): string =
+        m.Namespaces.[Checked.int32 i] |> Seq.map this.IdentifierAt |> String.concat "." // TODO: Cache namespaces
 
     member _.TypeSignatureAt(Index i: TypeSignatureIndex) = m.TypeSignatures.[Checked.int32 i]
 
@@ -517,7 +570,7 @@ type RuntimeModule (m: Module, moduleImportResolver: ModuleIdentifier -> Runtime
 
     member _.InitializeField i = definedFieldLookup i
 
-    member _.InitializeType i = definedTypeLookup i
+    member _.InitializeType i = typeDefinitionLookup i
 
     member _.ComputeFieldSize(index, rawDataSize: outref<_>, objectReferencesLength: outref<_>) =
         let field = definedFieldLookup index
@@ -528,6 +581,40 @@ type RuntimeModule (m: Module, moduleImportResolver: ModuleIdentifier -> Runtime
         | bad -> failwithf "TODO: Unsupported field type %A" bad
 
         field
+
+    /// Finds the first type defined in this module with the specified name.
+    member this.FindType(typeNamespace: string, typeName: string): RuntimeTypeDefinition =
+        let key = struct(typeNamespace, typeName)
+        match typeNameLookup.TryGetValue key with
+        | false, _ ->
+            let types = m.Definitions.DefinedTypes
+            let mutable result, i = ValueNone, m.Imports.ImportedTypes.Length
+
+            while i < types.Length && result.IsNone do
+                let t = types.[i]
+
+                if
+                    t.TypeVisibility <= VisibilityFlags.Public &&
+                    this.NamespaceAt t.TypeNamespace = typeNamespace &&
+                    this.IdentifierAt t.TypeName = typeName
+                then
+                    let tindex = TypeDefinitionIndex.Index(Checked.uint32 i)
+                    let init = typeDefinitionLookup tindex
+                    typeNameLookup.[key] <- init
+                    result <- ValueSome init
+
+                i <- Checked.(+) 1 i
+
+            match result with
+            | ValueSome t -> t
+            | ValueNone ->
+                TypeNotFoundException (
+                    this,
+                    typeNamespace,
+                    typeName, sprintf "Unable to find type %s %s" typeNamespace typeName
+                )
+                |> raise
+        | true, existing -> existing
 
     member this.InvokeEntryPoint(argv: string[]) =
         match m.EntryPoint with
@@ -540,6 +627,12 @@ type RuntimeModule (m: Module, moduleImportResolver: ModuleIdentifier -> Runtime
             int32 result.contents
         | ValueNone -> raise(MissingEntryPointException(this, "The entry point method of the module is not defined"))
 
+[<Sealed>]
+type ModuleNotFoundException (name: ModuleIdentifier, message) =
+    inherit RuntimeException(ValueNone, message)
+
+    member _.Name = name
+
 let initialize program moduleImportLoader =
     /// A cache for the modules created by the import loader.
     let moduleImportResolver =
@@ -548,9 +641,13 @@ let initialize program moduleImportLoader =
             match resolved.TryGetValue import with
             | true, existing -> existing
             | false, _ ->
-                let r = RuntimeModule(moduleImportLoader import, resolver)
-                resolved.Add(import, r)
-                r
+                match moduleImportLoader import with
+                | ValueSome import' ->
+                    let r = RuntimeModule(import', resolver)
+                    resolved.Add(import, r)
+                    r
+                | ValueNone ->
+                    raise(ModuleNotFoundException(import, "Unable to find module " + string import))
         resolver
 
     RuntimeModule(program, moduleImportResolver)

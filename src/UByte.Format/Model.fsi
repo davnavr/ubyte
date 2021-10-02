@@ -359,7 +359,7 @@ module Tag =
     type TypeDefinitionKind =
         | BaseClass = 0uy
         | Class = 1uy
-        | Interface = 2uy
+        | [<Obsolete>] Interface = 2uy
         | Struct = 3uy
 
     type TypeDefinitionLayout =
@@ -443,8 +443,7 @@ and [<NoComparison; StructuralEquality>] AnyType =
 /// Describes the return types and parameter types of a method.
 [<NoComparison; StructuralEquality>]
 type MethodSignature =
-    { // TODO: Consider simply using pointers for more than one return type.
-      /// <summary>The types of the values returned by the method.</summary>
+    { /// <summary>The types of the values returned by the method.</summary>
       /// <remarks>
       /// Methods that return multiple values can easily be translated to a .NET method with <see langword="out"/> parameters.
       /// </remarks>
@@ -455,22 +454,25 @@ type MethodSignature =
 
 [<NoComparison; NoEquality>]
 type FieldImport =
-    { FieldOwner: TypeDefinitionIndex
+    { // NOTE: Field and method imports allow refering to types defined in the current model,
+      // which makes adding generics in the future easier.
+      FieldOwner: TypeDefinitionIndex
       FieldName: IdentifierIndex
       FieldType: TypeSignatureIndex }
 
 [<NoComparison; NoEquality>]
 type MethodImport =
     { MethodOwner: TypeDefinitionIndex
-      MethodName: IdentifierIndex
-      TypeParameters: uvarint
+      MethodName: IdentifierIndex // TODO: How to handle importing constructors?
+      TypeParameters: uvarint // TODO: Provide list of type parameters instead.
       Signature: MethodSignatureIndex }
 
 [<NoComparison; NoEquality>]
 type TypeDefinitionImport =
     { Module: ModuleIndex
       TypeName: IdentifierIndex
-      TypeKind: Tag.TypeDefinitionKind
+      TypeNamespace: NamespaceIndex
+      IsStruct: bool
       TypeParameters: uvarint }
 
 /// Used to specify whether or not a type, field, or method can be imported by another module.
@@ -512,6 +514,7 @@ type MethodBody =
     | Defined of CodeIndex // TODO: Have flags indicating if method is final be here instead?
     | Abstract
     //| External of
+    //| RuntimeOrCompilerProvided of 
 
 /// <summary>
 /// Represents a method or constructor.
@@ -544,7 +547,7 @@ type ClassDefinitionFlags =
 [<NoComparison; NoEquality>]
 type TypeDefinitionKind =
     | Class of extends: TypeDefinitionIndex voption * flags: ClassDefinitionFlags // TODO: Use TypeSignatureIndex to allow inheriting from generic types
-    | Interface
+    | [<Obsolete>] Interface
     /// A type whose instances can be allocated on the stack.
     | Struct
 
@@ -616,6 +619,8 @@ type ModuleHeaderFlags = // TODO: Have endian information be somewhere else, and
     | BigEndian = 0b0000_0001uy
     /// Instructs the compiler or runtime to prevent usage of opcodes that depend on a garbage collector.
     | NoGarbageCollector = 0b0000_0010uy
+    ///// Indicates that the module may treat object references as if they were references to objects of another class.
+    //| ReinterpretsObjectReferences = 0b0000_0100uy
     | ValidMask = 0b0000_0001uy
 
 type PointerSize =

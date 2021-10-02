@@ -1,10 +1,10 @@
 # Planned Features
 
-- Unsigned arithimetic operations
+- Importing fields
+- Unsigned arithimetic operations (maybe just have registers keep track of whether they are signed or unsigned)
 - Overflow checking arithmetic operations
 - Exception handling (`try`, `catch`, and `finally`)
 - Inline `name`, signature (`type` and `method`), and `code` in text format
-- Module imports
 - Methods marked as being implemented elsewhere (such as an interpreter or being provided at transpile time)
 - Virtual method calls
 - Single class inheritance

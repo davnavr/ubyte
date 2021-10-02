@@ -73,14 +73,19 @@ type RuntimeTypeDefinition =
 
     member Name : string
 
+    member FindMethod : name: string -> RuntimeMethod
+
     //member InvokeInitializer: unit -> 
 
 type RuntimeMethod with member DeclaringType : RuntimeTypeDefinition
 type RuntimeField with member DeclaringType : RuntimeTypeDefinition
 
-/// Thrown when the entry point of a module could not be found.
 [<Sealed; Class>]
-type MissingEntryPointException = inherit RuntimeException
+type TypeNotFoundException =
+    inherit RuntimeException
+
+    member TypeNamespace: string
+    member TypeName: string
 
 [<Sealed>]
 type RuntimeModule =
@@ -90,15 +95,30 @@ type RuntimeModule =
 
     member InitializeField : Model.FieldIndex -> RuntimeField
 
+    member FindType : typeNamespace: string * typeName: string -> RuntimeTypeDefinition
+
     /// <summary>Invokes the entry point of the program, supplying the specified arguments.</summary>
     /// <exception cref="T:UByte.Interpreter.Runtime.MissingEntryPointException" />
     member InvokeEntryPoint : argv: string[] -> int32
 
-type MissingEntryPointException with
+[<Sealed; Class>]
+type MissingEntryPointException =
+    inherit RuntimeException
+
     /// The module that is missing an entry point.
+    member Module : RuntimeModule
+
+type TypeNotFoundException with
+    /// The module that was searched for the specified type.
     member Module : RuntimeModule
 
 type RuntimeMethod with member Module : RuntimeModule
 type RuntimeTypeDefinition with member Module : RuntimeModule
 
-val initialize : program: Model.Module -> moduleImportLoader: (Model.ModuleIdentifier -> Model.Module) -> RuntimeModule
+[<Sealed; Class>]
+type ModuleNotFoundException =
+    inherit RuntimeException
+
+    member Name: Model.ModuleIdentifier
+
+val initialize : program: Model.Module -> moduleImportLoader: (Model.ModuleIdentifier -> Model.Module voption) -> RuntimeModule
