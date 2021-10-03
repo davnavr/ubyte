@@ -259,32 +259,47 @@ let ttypesig =
     types'.contents <- choice [
         choiceL
             [
+                skipString "bool" >>. preturn PrimitiveType.Bool
+                skipString "u8" >>. preturn PrimitiveType.U8
+                skipString "s8" >>. preturn PrimitiveType.S8
+                skipString "u16" >>. preturn PrimitiveType.U16
+                skipString "s16" >>. preturn PrimitiveType.S16
+                skipString "char16" >>. preturn PrimitiveType.Char16
+                skipString "u32" >>. preturn PrimitiveType.U32
                 skipString "s32" >>. preturn PrimitiveType.S32
+                skipString "char32" >>. preturn PrimitiveType.Char32
+                skipString "u64" >>. preturn PrimitiveType.U64
+                skipString "s64" >>. preturn PrimitiveType.S64
+                skipString "unative" >>. preturn PrimitiveType.UNative
+                skipString "snative" >>. preturn PrimitiveType.SNative
+                skipString "f32" >>. preturn PrimitiveType.F32
+                skipString "f64" >>. preturn PrimitiveType.F64
             ]
             "primitive type"
         |>> fun prim -> fun _ -> Result.Ok(ValueType(ValueType.Primitive prim))
 
         choice [
-            keyword "ref" >>. choice [
-                keyword "any" >>. preturn (fun _ -> Result.Ok ReferenceType.Any)
+            keyword "ref" >>. choiceL
+                [
+                    keyword "any" >>. preturn (fun _ -> Result.Ok ReferenceType.Any)
 
-                keyword "def" >>. getPosition .>>. identifier |>> fun (pos, id) -> fun lookup ->
-                    match lookup id with
-                    | ValueSome tindex ->
-                        Result.Ok(ReferenceType.Defined tindex)
-                    | ValueNone ->
-                        Result.Error(errorIdentifierUndefined "type definition" id pos)
+                    keyword "def" >>. getPosition .>>. identifier |>> fun (pos, id) -> fun lookup ->
+                        match lookup id with
+                        | ValueSome tindex ->
+                            Result.Ok(ReferenceType.Defined tindex)
+                        | ValueNone ->
+                            Result.Error(errorIdentifierUndefined "type definition" id pos)
 
-                keyword "vector" >>. getPosition .>>. sexpression types |>> fun (pos, etype) -> fun lookup ->
-                    match etype lookup with
-                    | Result.Ok(ReferenceType rt) -> Result.Ok(ReferenceType.Vector(ReferenceOrValueType.Reference rt))
-                    | Result.Ok(ValueType vt) -> Result.Ok(ReferenceType.Vector(ReferenceOrValueType.Value vt))
-                    | Result.Ok(SafePointer _) ->
-                        Result.Error(ValidationError("Cannot create a vector type of safe pointers", pos))
-                    | Result.Error error ->
-                        Result.Error error
-            ]
-            <?> "reference type"
+                    keyword "vector" >>. getPosition .>>. types |>> fun (pos, etype) -> fun lookup ->
+                        match etype lookup with
+                        | Result.Ok(ReferenceType rt) -> Result.Ok(ReferenceType.Vector(ReferenceOrValueType.Reference rt))
+                        | Result.Ok(ValueType vt) -> Result.Ok(ReferenceType.Vector(ReferenceOrValueType.Value vt))
+                        | Result.Ok(SafePointer _) ->
+                            Result.Error(ValidationError("Cannot create a vector type of safe pointers", pos))
+                        | Result.Error error ->
+                            Result.Error error
+                ]
+                "reference type"
             |>> fun o -> fun lookup -> Result.map ReferenceType (o lookup)
         ]
         |> sexpression

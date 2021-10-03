@@ -1,0 +1,33 @@
+﻿(module (format 0 0) (name "Arrays") (version 0 1 0)
+  (identifier $id_namespace "Example")
+  (identifier $id_class "Arrays")
+  (identifier $id_entry_point "main")
+
+  (signature $sig_int32 (type s32))
+  (signature $sig_argv (type (ref vector (ref vector char32))))
+  (signature $sig_main (method (returns $sig_int32) (parameters $sig_argv)))
+
+  (code $code_main
+    (registers
+      (argument $argv 0)
+      (local $l0 $sig_int32))
+    ; TODO: Just have a for loop that sums the lengths of each argv string
+    (const.i32 1 $l0)
+    (ret $l0)
+  )
+
+  (namespace $namespace (name $id_namespace))
+
+  (type $class (name $id_class) (namespace $namespace)
+    (visibility public)
+    (class base)
+  )
+
+  (method $method_main (name $id_entry_point) (visibility public)
+    (signature $sig_main)
+    (defined $code_main)
+    (owner $class)
+  )
+
+  (entrypoint $method_main)
+)
