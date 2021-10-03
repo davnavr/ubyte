@@ -20,6 +20,7 @@ type RuntimeRegister =
     | RNative of unativeint ref
     | RStruct of RuntimeStruct
     | RRef of RuntimeObject ref
+    //| RSafePointer of _ -> _
 
     member source.CopyValueTo destination =
         match source, destination with
@@ -97,10 +98,10 @@ type RuntimeStruct =
     { RawData: byte[]
       References: RuntimeObject[] }
 
-    member this.ReadRaw<'T when 'T : struct and 'T :> ValueType and 'T : (new: unit -> 'T)> index: 'T =
+    member this.ReadRaw<'T when 'T : struct and 'T :> System.ValueType and 'T : (new: unit -> 'T)> index: 'T =
         MemoryMarshal.Read<'T>(ReadOnlySpan(this.RawData).Slice(index))
 
-    member this.WriteRaw<'T when 'T : struct and 'T :> ValueType and 'T : (new: unit -> 'T)>(index, value: 'T) =
+    member this.WriteRaw<'T when 'T : struct and 'T :> System.ValueType and 'T : (new: unit -> 'T)>(index, value: 'T) =
         let mutable value = value
         MemoryMarshal.Write<'T>(Span(this.RawData).Slice(index), &value)
 
@@ -378,26 +379,28 @@ type RuntimeMethod (rmodule: RuntimeModule, method: Method) =
 
     member private _.CreateRegister rtype =
         match rmodule.TypeSignatureAt rtype with
-        | AnyType.Primitive prim ->
-            match prim with
-            | PrimitiveType.Bool
-            | PrimitiveType.S8
-            | PrimitiveType.U8 -> fun() -> RuntimeRegister.R1(ref 0uy)
-            | PrimitiveType.S16
-            | PrimitiveType.U16
-            | PrimitiveType.Char16 -> fun() -> RuntimeRegister.R2(ref 0us)
-            | PrimitiveType.S32
-            | PrimitiveType.U32
-            | PrimitiveType.F32
-            | PrimitiveType.Char32 -> fun() -> RuntimeRegister.R4(ref 0u)
-            | PrimitiveType.S64
-            | PrimitiveType.U64
-            | PrimitiveType.F64 -> fun() -> RuntimeRegister.R8(ref 0UL)
-            | PrimitiveType.SNative
-            | PrimitiveType.UNative -> fun() -> RuntimeRegister.RNative(ref 0un)
-            | PrimitiveType.Unit -> fun() -> failwith "TODO: Prevent usage of Unit in register types."
-        | AnyType.ObjectReference _ -> fun() -> RuntimeRegister.RRef(ref null)
-        | bad -> failwithf "TODO: Unsupported type for register %A" bad
+        | ValueType vt ->
+            match vt with
+            | ValueType.Primitive PrimitiveType.Bool
+            | ValueType.Primitive PrimitiveType.S8
+            | ValueType.Primitive PrimitiveType.U8 -> fun() -> RuntimeRegister.R1(ref 0uy)
+            | ValueType.Primitive PrimitiveType.S16
+            | ValueType.Primitive PrimitiveType.U16
+            | ValueType.Primitive PrimitiveType.Char16 -> fun() -> RuntimeRegister.R2(ref 0us)
+            | ValueType.Primitive PrimitiveType.S32
+            | ValueType.Primitive PrimitiveType.U32
+            | ValueType.Primitive PrimitiveType.F32
+            | ValueType.Primitive PrimitiveType.Char32 -> fun() -> RuntimeRegister.R4(ref 0u)
+            | ValueType.Primitive PrimitiveType.S64
+            | ValueType.Primitive PrimitiveType.U64
+            | ValueType.Primitive PrimitiveType.F64 -> fun() -> RuntimeRegister.R8(ref 0UL)
+            | ValueType.Primitive PrimitiveType.SNative
+            | ValueType.Primitive PrimitiveType.UNative
+            | ValueType.UnsafePointer _ -> fun() -> RuntimeRegister.RNative(ref 0un)
+            | ValueType.Primitive PrimitiveType.Unit -> fun() -> failwith "TODO: Prevent usage of Unit in register types."
+            | ValueType.Defined _ -> failwith "TODO: Add support for registers containing structs"
+        | ReferenceType _ -> fun() -> RuntimeRegister.RRef(ref null)
+        | SafePointer _ -> failwithf "TODO: Safe pointers in registers not yet supported"
 
     member this.CreateArgumentRegisters() =
         let { MethodSignature.ParameterTypes = atypes } = rmodule.MethodSignatureAt method.Signature
@@ -622,9 +625,16 @@ type RuntimeModule (m: Module, moduleImportResolver: ModuleIdentifier -> Runtime
         let field = definedFieldLookup index
 
         match field.FieldType with
-        | Primitive PrimitiveType.S32 -> rawDataSize <- 4
-        | ObjectReference _ -> objectReferencesLength <- 1
-        | bad -> failwithf "TODO: Unsupported field type %A" bad
+        | ValueType vt ->
+            match vt with
+            | ValueType.Primitive prim ->
+                rawDataSize <-
+                    match prim with
+                    | PrimitiveType.U32
+                    | PrimitiveType.S32
+                    | PrimitiveType.Char32 -> 4
+        | ReferenceType _ -> objectReferencesLength <- 1
+        | _ -> failwith "TODO: Error for fields cannot contain safe pointers"
 
         field
 
