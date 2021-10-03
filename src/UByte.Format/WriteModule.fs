@@ -121,7 +121,8 @@ let instruction endianness i dest =
         vector index rregs dest
     | (Instruction.Reg_copy(reg1, reg2) & Opcode Opcode.``reg.copy`` op)
     | (Instruction.Rotl(reg1, reg2) & Opcode Opcode.rotl op)
-    | (Instruction.Rotr(reg1, reg2) & Opcode Opcode.rotr op) ->
+    | (Instruction.Rotr(reg1, reg2) & Opcode Opcode.rotr op)
+    | (Instruction.Obj_arr_len(reg1, reg2) & Opcode Opcode.``obj.arr.len`` op) ->
         opcode op dest
         index reg1 dest
         index reg2 dest
@@ -133,7 +134,9 @@ let instruction endianness i dest =
     | (Instruction.Or(xreg, yreg, rreg) & Opcode Opcode.``or`` op)
     | (Instruction.Not(xreg, yreg, rreg) & Opcode Opcode.``not`` op)
     | (Instruction.Xor(xreg, yreg, rreg) & Opcode Opcode.xor op)
-    | (Instruction.Rem(xreg, yreg, rreg) & Opcode Opcode.rem op) ->
+    | (Instruction.Rem(xreg, yreg, rreg) & Opcode Opcode.rem op)
+    | (Instruction.Obj_arr_get(xreg, yreg, rreg) & Opcode Opcode.``obj.arr.get`` op)
+    | (Instruction.Obj_arr_set(xreg, yreg, rreg) & Opcode Opcode.``obj.arr.set`` op) ->
         opcode op dest
         index xreg dest
         index yreg dest
@@ -177,6 +180,11 @@ let instruction endianness i dest =
         index field dest
         index typei dest
         index reg dest
+    | Instruction.Obj_arr_new(typei, lreg, rreg) ->
+        opcode Opcode.``obj.arr.new`` dest
+        index typei dest
+        index lreg dest
+        index rreg dest
     | _ -> failwithf "TODO: Cannot write unsupported instruction %A" i
 
 let toStream (stream: Stream) (md: Module) =

@@ -153,6 +153,10 @@ module InstructionSet =
         | ``obj.ldfd`` = 0x72u
         | ``obj.stfd`` = 0x73u
         | ``obj.throw`` = 0x74u
+        | ``obj.arr.new`` = 0x7Au
+        | ``obj.arr.len`` = 0x7Bu
+        | ``obj.arr.get`` = 0x7Cu
+        | ``obj.arr.set`` = 0x7Eu
         | ``call.ret`` = 0x90u
         | ``call.virt.ret`` = 0x91u
 
@@ -192,6 +196,10 @@ module InstructionSet =
         | Obj_null of destination: RegisterIndex
         | Obj_ldfd of field: FieldIndex * object: RegisterIndex * destination: RegisterIndex
         | Obj_stfd of field: FieldIndex * object: RegisterIndex * source: RegisterIndex
+        | Obj_arr_new of etype: TypeSignatureIndex * length: RegisterIndex * result: RegisterIndex
+        | Obj_arr_len of array: RegisterIndex * result: RegisterIndex
+        | Obj_arr_get of array: RegisterIndex * index: RegisterIndex * result: RegisterIndex
+        | Obj_arr_set of array: RegisterIndex * index: RegisterIndex * result: RegisterIndex
         | Call_ret of method: MethodIndex * arguments: vector<RegisterIndex> * results: vector<RegisterIndex>
         | Call_virt_ret of method: MethodIndex * arguments: vector<RegisterIndex> * results: vector<RegisterIndex>
 

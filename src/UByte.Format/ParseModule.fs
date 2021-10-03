@@ -293,6 +293,11 @@ let instruction endianness source =
     | Opcode.``obj.ldfd`` -> index3 Obj_ldfd
     | Opcode.``obj.stfd`` -> index3 Obj_stfd
 
+    | Opcode.``obj.arr.new`` -> index3 Obj_arr_new
+    | Opcode.``obj.arr.len`` -> index2 Obj_arr_len
+    | Opcode.``obj.arr.get`` -> index3 Obj_arr_get
+    | Opcode.``obj.arr.set`` -> index3 Obj_arr_set
+
     | Opcode.``call.ret`` -> callargs Call_ret
     | Opcode.``call.virt.ret`` -> callargs Call_virt_ret
 

@@ -220,6 +220,12 @@ module InstructionSet =
         | ``obj.stfd`` = 0x73u
         | ``obj.throw`` = 0x74u
 
+        | ``obj.arr.new`` = 0x7Au
+        | ``obj.arr.len`` = 0x7Bu
+        | ``obj.arr.get`` = 0x7Cu
+        //| ``obj.arr.addr`` = 0x7Du
+        | ``obj.arr.set`` = 0x7Eu
+
         // Tail Call
         | ``call.ret`` = 0x90u
         | ``call.virt.ret`` = 0x91u
@@ -400,6 +406,19 @@ module InstructionSet =
         /// Copies the value from the <paramref name="source"/> register into the field of the specified object.
         /// </summary>
         | Obj_stfd of field: FieldIndex * object: RegisterIndex * source: RegisterIndex
+
+        /// <summary>
+        /// Allocates a new vector containing elements of the specified type with the specified <paramref name="length"/> and
+        /// stores an object reference to the vector into the <paramref name="result"/> register.
+        /// </summary>
+        | Obj_arr_new of etype: TypeSignatureIndex * length: RegisterIndex * result: RegisterIndex
+        /// <summary>
+        /// Stores the length of the specified <paramref name="array"/> into the <paramref name="result"/> register.
+        /// </summary>
+        | Obj_arr_len of array: RegisterIndex * result: RegisterIndex
+        | Obj_arr_get of array: RegisterIndex * index: RegisterIndex * result: RegisterIndex
+
+        | Obj_arr_set of array: RegisterIndex * index: RegisterIndex * result: RegisterIndex
 
         | Call_ret of method: MethodIndex * arguments: vector<RegisterIndex> * results: vector<RegisterIndex>
         | Call_virt_ret of method: MethodIndex * arguments: vector<RegisterIndex> * results: vector<RegisterIndex>
