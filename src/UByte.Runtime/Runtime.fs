@@ -91,19 +91,66 @@ type FieldAccessException (frame, message, field: RuntimeField) =
 [<Sealed>]
 type NullReferenceFieldAccessException (frame, message, field) = inherit FieldAccessException(frame, message, field)
 
-let inline (|RuntimeObjectFields|) (o: RuntimeObject): RuntimeStruct = o.Fields
+[<IsReadOnly; Struct; NoComparison; NoEquality>]
+type OffsetArray<'T> =
+    val Start: int32
+    val Items: 'T[]
+
+    new (start, items) = { Start = start; Items = items }
+    new (items) = OffsetArray(0, items)
+    new (length) = OffsetArray(Array.zeroCreate<'T> length)
+
+    member this.Length = this.Items.Length - this.Start
+
+    member this.ToSpan() = Span<'T>(this.Items).Slice this.Start
+
+[<Sealed>]
+type StructVector (stype: RuntimeTypeDefinition, length) =
+    do if length < 0 then raise(ArgumentOutOfRangeException(nameof length, length, "The length of an array cannot be negative"))
+    let data = Array.zeroCreate<byte> (Checked.(*) stype.Layout.RawDataSize length)
+    let references = Array.zeroCreate<RuntimeObject> (Checked.(*) stype.Layout.ObjectReferencesLength length)
+
+    member _.Length = length
+
+    member private _.ElementLength arr = Array.length arr / length
+
+    member private this.ElementData i = OffsetArray<byte>(i * this.ElementLength data, data)
+
+    member private this.ElementReferences i = OffsetArray<RuntimeObject>(i * this.ElementLength references, references)
+
+    member this.Item
+        with get index = { RuntimeStruct.RawData = this.ElementData index; References = this.ElementReferences index }
+        and set index (value: RuntimeStruct) =
+            value.RawData.ToSpan().CopyTo(Span(data, index * this.ElementLength data, value.RawData.Length))
+            value.References.ToSpan().CopyTo(Span(references, index * this.ElementLength references, value.References.Length))
+
+[<RequireQualifiedAccess; NoComparison; ReferenceEquality>]
+type RuntimeObject =
+    | Null
+    /// Represents a class instance or a boxed value type.
+    | TypeInstance of otype: RuntimeTypeDefinition * fields: RuntimeStruct
+    | ByteVector of elements: uint8[]
+    | ShortVector of elements: uint16[]
+    | IntVector of elements: uint32[]
+    | LongVector of elements: uint64[]
+    | NativeIntVector of elements: unativeint[]
+    | StructVector of elements: StructVector
+    | ObjectVector of elements: RuntimeObject[]
 
 [<IsReadOnly; Struct; NoComparison; NoEquality>]
 type RuntimeStruct =
-    { RawData: byte[]
-      References: RuntimeObject[] }
+    { RawData: OffsetArray<byte>; References: OffsetArray<RuntimeObject> }
 
     member this.ReadRaw<'T when 'T : struct and 'T :> System.ValueType and 'T : (new: unit -> 'T)> index: 'T =
-        MemoryMarshal.Read<'T>(ReadOnlySpan(this.RawData).Slice(index))
+        MemoryMarshal.Read<'T>(Span.op_Implicit(this.RawData.ToSpan()).Slice(index))
 
     member this.WriteRaw<'T when 'T : struct and 'T :> System.ValueType and 'T : (new: unit -> 'T)>(index, value: 'T) =
         let mutable value = value
-        MemoryMarshal.Write<'T>(Span(this.RawData).Slice(index), &value)
+        MemoryMarshal.Write<'T>(this.RawData.ToSpan().Slice(index), &value)
+
+    member this.ReadRef index = this.References.ToSpan().[index]
+
+    member this.WriteRef(index, o) = this.References.ToSpan().[index] <- o
 
 [<Sealed>]
 type MissingReturnInstructionException (frame, message) = inherit RuntimeException(frame, message)
@@ -196,7 +243,7 @@ module Interpreter =
             | RuntimeRegister.R4 { contents = 0u }
             | RuntimeRegister.R8 { contents = 0UL }
             | RuntimeRegister.RNative { contents = 0un }
-            | RuntimeRegister.RRef { contents = null } -> false
+            | RuntimeRegister.RRef { contents = RuntimeObject.Null } -> false
             | RuntimeRegister.RStruct _ -> failwith "TODO: How to determine if a struct is truthy"
             | _ -> true
 
@@ -239,9 +286,11 @@ module Interpreter =
 
             let inline fieldAccessInstruction field object register execute =
                 match object with
-                | RuntimeRegister.RRef { contents = null } -> nullReferenceFieldAccess frame' field
-                | RuntimeRegister.RRef { contents = RuntimeObjectFields data }
+                | RuntimeRegister.RRef { contents = RuntimeObject.Null } -> nullReferenceFieldAccess frame' field
+                | RuntimeRegister.RRef { contents = RuntimeObject.TypeInstance(_, data) }
                 | RuntimeRegister.RStruct data -> execute data
+                | RuntimeRegister.RRef { contents = _ } ->
+                    failwith "TODO: Error when attempted to access object field using reference to array"
                 | _ -> numericFieldAccess frame' field
 
             (*
@@ -295,13 +344,13 @@ module Interpreter =
                     if Compare.isFalseValue register then frame'.InstructionIndex <- target
                 | Obj_null(Register destination) ->
                     match destination with
-                    | RuntimeRegister.RRef destination' -> destination'.contents <- null
+                    | RuntimeRegister.RRef destination' -> destination'.contents <- RuntimeObject.Null
                     | RuntimeRegister.RNative destination' -> destination'.contents <- 0un
                     | _ -> raise(RuntimeException(frame, "Unable to store null reference into register"))
                 | Obj_new(Method constructor, Registers frame' arguments, Register destination) ->
                     match destination with
                     | RuntimeRegister.RRef o ->
-                        o.contents <- new RuntimeObject(constructor.DeclaringType)
+                        o.contents <- RuntimeObject.TypeInstance(constructor.DeclaringType, constructor.DeclaringType.InitializeObjectFields())
                         // TODO: Check that first argument is an object reference.
                         invoke ImmutableArray.Empty (arguments.Insert(0, destination)) constructor
                     | bad ->
@@ -312,30 +361,30 @@ module Interpreter =
                     fieldAccessInstruction field object destination <| fun fields ->
                         match destination with // TODO: How to respect endianness when reading values from struct
                         | RuntimeRegister.R1 destination' ->
-                            destination'.contents <- fields.RawData.[field.Offset]
+                            destination'.contents <- fields.ReadRaw<uint8> field.Offset
                         | RuntimeRegister.R2 destination' ->
-                            destination'.contents <- BitConverter.ToUInt16(fields.RawData, field.Offset)
+                            destination'.contents <- fields.ReadRaw<uint16> field.Offset
                         | RuntimeRegister.R4 destination' ->
-                            destination'.contents <- BitConverter.ToUInt32(fields.RawData, field.Offset)
+                            destination'.contents <- fields.ReadRaw<uint32> field.Offset
                         | RuntimeRegister.R8 destination' ->
-                            destination'.contents <- BitConverter.ToUInt64(fields.RawData, field.Offset)
+                            destination'.contents <- fields.ReadRaw<uint64> field.Offset
                         | RuntimeRegister.RNative destination' ->
                             destination'.contents <- fields.ReadRaw<unativeint> field.Offset
                         | RuntimeRegister.RStruct _ ->
                             failwith "// TODO: How to read structs stored inside other structs?"
                         | RuntimeRegister.RRef destination' ->
-                            destination'.contents <- fields.References.[field.Offset]
+                            destination'.contents <- fields.ReadRef(field.Offset)
                 | Obj_stfd(Field field, Register object, Register source) ->
                     fieldAccessInstruction field object source <| fun fields ->
                         match source with
-                        | RuntimeRegister.R1 { contents = value } -> fields.RawData.[field.Offset] <- value
+                        | RuntimeRegister.R1 { contents = value } -> fields.WriteRaw(field.Offset, value)
                         | RuntimeRegister.R2 { contents = value } -> fields.WriteRaw(field.Offset, value)
                         | RuntimeRegister.R4 { contents = value } -> fields.WriteRaw(field.Offset, value)
                         | RuntimeRegister.R8 { contents = value } -> fields.WriteRaw(field.Offset, value)
                         | RuntimeRegister.RNative { contents = value } -> fields.WriteRaw(field.Offset, value)
                         | RuntimeRegister.RStruct _ ->
                             failwith "// TODO: How to store structs stored inside other structs?"
-                        | RuntimeRegister.RRef { contents = value } -> fields.References.[field.Offset] <- value
+                        | RuntimeRegister.RRef { contents = value } -> fields.WriteRef(field.Offset, value)
                 | Nop -> ()
                 | bad -> failwithf "TODO: Unsupported instruction %A" bad
 
@@ -351,9 +400,7 @@ module Interpreter =
         | ValueNone -> ()
         | ValueSome _ -> raise(MissingReturnInstructionException(frame, "Reached unexpected end of instructions"))
 
-[<Sealed; AllowNullLiteral>]
-type RuntimeObject (otype: RuntimeTypeDefinition) =
-    member val Fields = otype.InitializeObjectFields()
+// TODO: Make a RuntimeArray type.
 
 [<Sealed>]
 type InvalidConstructorException (method: RuntimeMethod, frame, message) =
@@ -399,7 +446,7 @@ type RuntimeMethod (rmodule: RuntimeModule, method: Method) =
             | ValueType.UnsafePointer _ -> fun() -> RuntimeRegister.RNative(ref 0un)
             | ValueType.Primitive PrimitiveType.Unit -> fun() -> failwith "TODO: Prevent usage of Unit in register types."
             | ValueType.Defined _ -> failwith "TODO: Add support for registers containing structs"
-        | ReferenceType _ -> fun() -> RuntimeRegister.RRef(ref null)
+        | ReferenceType _ -> fun() -> RuntimeRegister.RRef(ref RuntimeObject.Null)
         | SafePointer _ -> failwithf "TODO: Safe pointers in registers not yet supported"
 
     member this.CreateArgumentRegisters() =
@@ -526,8 +573,8 @@ type RuntimeTypeDefinition (rm: RuntimeModule, t: TypeDefinition) =
 
     member _.InitializeObjectFields(): RuntimeStruct =
         let layout' = layout.Value
-        { RuntimeStruct.RawData = Array.zeroCreate layout'.RawDataSize
-          References = Array.zeroCreate layout'.ObjectReferencesLength }
+        { RuntimeStruct.RawData = OffsetArray layout'.RawDataSize
+          References = OffsetArray layout'.ObjectReferencesLength }
 
 let createIndexedLookup (count: int32) initializer =
     let lookup = Dictionary<Index<_>, _> count
@@ -626,15 +673,28 @@ type RuntimeModule (m: Module, moduleImportResolver: ModuleIdentifier -> Runtime
 
         match field.FieldType with
         | ValueType vt ->
-            match vt with
-            | ValueType.Primitive prim ->
-                rawDataSize <-
-                    match prim with
-                    | PrimitiveType.U32
-                    | PrimitiveType.S32
-                    | PrimitiveType.Char32 -> 4
+            rawDataSize <-
+                match vt with
+                | ValueType.Primitive PrimitiveType.Bool
+                | ValueType.Primitive PrimitiveType.U8
+                | ValueType.Primitive PrimitiveType.S8 -> 1
+                | ValueType.Primitive PrimitiveType.U16
+                | ValueType.Primitive PrimitiveType.S16
+                | ValueType.Primitive PrimitiveType.Char16 -> 2
+                | ValueType.Primitive PrimitiveType.U32
+                | ValueType.Primitive PrimitiveType.S32
+                | ValueType.Primitive PrimitiveType.F32
+                | ValueType.Primitive PrimitiveType.Char32 -> 4
+                | ValueType.Primitive PrimitiveType.U64
+                | ValueType.Primitive PrimitiveType.S64
+                | ValueType.Primitive PrimitiveType.F64 -> 8
+                | ValueType.Primitive PrimitiveType.UNative
+                | ValueType.Primitive PrimitiveType.SNative
+                | ValueType.UnsafePointer _ -> sizeof<unativeint>
+                | ValueType.Primitive PrimitiveType.Unit -> 0
+                | ValueType.Defined _ -> failwith "TODO: Struct fields are currently not yet supported"
         | ReferenceType _ -> objectReferencesLength <- 1
-        | _ -> failwith "TODO: Error for fields cannot contain safe pointers"
+        | SafePointer _ -> failwith "TODO: Error for fields cannot contain safe pointers"
 
         field
 
