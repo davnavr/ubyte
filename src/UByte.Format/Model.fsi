@@ -434,6 +434,7 @@ module Tag =
         | S16 = 2uy
         | S32 = 4uy
         | S64 = 8uy
+        /// Represents an object reference to an array containing elements of the following type.
         | RefVector = 0xAuy
         | U8 = 0x10uy
         | U16 = 0x20uy
@@ -442,14 +443,17 @@ module Tag =
         | UNative = 0x55uy
         | U64 = 0x80uy
         /// Precedes a type index, represents a user-defined struct.
-        | ValueType = 0xA1uy
+        | DefinedStruct = 0xA1uy
         | RefAny = 0xAAuy
         | Bool = 0xB0uy
+        /// Represents an object reference to a boxed instance of the following value type.
+        | RefBoxed = 0xBBuy
         /// Represents a UTF-16 code unit.
         | Char16 = 0xC2uy
         | Char32 = 0xC4uy
-        /// Indicates that the following type instead represents a pointer to an instance of that type.
+        /// Represents a pointer to an instance of the following value type.
         | UnsafePointer = 0xCCuy
+        | SafePointer = 0xCEuy
         /// Precedes a type index, represents an object reference to a user-defined type.
         | RefDefinedType = 0xDEuy
         | F32 = 0xF4uy
@@ -477,27 +481,35 @@ type PrimitiveType =
     interface IEquatable<PrimitiveType>
 
 [<RequireQualifiedAccess; NoComparison; StructuralEquality>]
+type ValueType =
+    | Primitive of PrimitiveType
+    /// User-defined struct that is passed by value. The types index must point to a struct.
+    | Defined of TypeDefinitionIndex
+    | UnsafePointer of ValueType
+
+[<RequireQualifiedAccess; NoComparison; StructuralEquality>]
 type ReferenceType =
     | Defined of TypeDefinitionIndex
-    //| BoxedValueType of TypeDefinitionIndex
-    //| BoxedPrimitive of PrimitiveType
+    | BoxedValueType of ValueType
     /// <summary>
     /// Represents an untyped object reference, similar to <see cref="T:System.Object"/> in the Common Language Runtime.
     /// </summary>
     | Any
-    ///// One-dimensional array whose first element is at index zero.
-    //| Vector of AnyType // TODO: Define a union of reference types and "safe" value types, will also be used in Boxed case
+    /// One-dimensional array whose first element is at index zero.
+    | Vector of ReferenceOrValueType
 
     interface IEquatable<ReferenceType>
 
-and [<NoComparison; StructuralEquality>] AnyType =
-    | Primitive of PrimitiveType
-    // TODO: Differentiate between object references and things that are similar to .NET byrefs
-    //(e.g., will an object reference to some class in this system allow a value to be stored in it like a byref, or should a new type be added? Make a SafePointer type?)
-    | ObjectReference of ReferenceType
-    | UnsafePointer of AnyType
-    /// User-defined struct that is passed by value. The types index must point to a struct.
-    | ValueType of TypeDefinitionIndex
+and [<RequireQualifiedAccess; NoComparison; StructuralEquality>] ReferenceOrValueType =
+    | Reference of ReferenceType
+    | Value of ValueType
+
+[<NoComparison; StructuralEquality>]
+type AnyType =
+    | ValueType of ValueType
+    | ReferenceType of ReferenceType
+    /// Represents a pointer to a field, array element, or register that is tracked by the garbage collector.
+    | SafePointer of ReferenceOrValueType
 
     interface IEquatable<AnyType>
 

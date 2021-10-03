@@ -230,12 +230,14 @@ module Tag =
         | SNative = 0x49uy
         | UNative = 0x55uy
         | U64 = 0x80uy
-        | ValueType = 0xA1uy
+        | DefinedStruct = 0xA1uy
         | RefAny = 0xAAuy
         | Bool = 0xB0uy
+        | RefBoxed = 0xBBuy
         | Char16 = 0xC2uy
         | Char32 = 0xC4uy
         | UnsafePointer = 0xCCuy
+        | SafePointer = 0xCEuy
         | RefDefinedType = 0xDEuy
         | F32 = 0xF4uy
         | F64 = 0xF8uy
@@ -260,15 +262,27 @@ type PrimitiveType =
     | Unit
 
 [<RequireQualifiedAccess>]
+type ValueType =
+    | Primitive of PrimitiveType
+    | Defined of TypeDefinitionIndex
+    | UnsafePointer of ValueType
+
+[<RequireQualifiedAccess>]
 type ReferenceType =
     | Defined of TypeDefinitionIndex
+    | BoxedValueType of ValueType
     | Any
+    | Vector of ReferenceOrValueType
 
-and [<NoComparison; StructuralEquality>]  AnyType =
-    | Primitive of PrimitiveType
-    | ObjectReference of ReferenceType
-    | UnsafePointer of AnyType
-    | ValueType of TypeDefinitionIndex
+and [<RequireQualifiedAccess; NoComparison; StructuralEquality>] ReferenceOrValueType =
+    | Reference of ReferenceType
+    | Value of ValueType
+
+[<NoComparison; StructuralEquality>]
+type AnyType =
+    | ValueType of ValueType
+    | ReferenceType of ReferenceType
+    | SafePointer of ReferenceOrValueType
 
 [<NoComparison; StructuralEquality>]
 type MethodSignature = { ReturnTypes: vector<TypeSignatureIndex>; ParameterTypes: vector<TypeSignatureIndex> }
