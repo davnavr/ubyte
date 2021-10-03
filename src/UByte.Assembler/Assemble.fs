@@ -254,13 +254,15 @@ let tidentifier =
                 { state with Errors = errorDuplicateIdentifier "identifier" id pos :: state.Errors }
 
 let ttypesig =
-    keyword "type" >>. choice [
+    let types, types' = createParserForwardedToRef()
+
+    types'.contents <- choice [
         choiceL
             [
                 skipString "s32" >>. preturn PrimitiveType.S32
             ]
             "primitive type"
-        |>> fun prim -> fun _ -> Result.Ok(AnyType.Primitive prim)
+        |>> fun prim -> fun _ -> Result.Ok(ValueType(ValueType.Primitive prim))
 
         choice [
             keyword "ref" >>. choice [
@@ -272,12 +274,23 @@ let ttypesig =
                         Result.Ok(ReferenceType.Defined tindex)
                     | ValueNone ->
                         Result.Error(errorIdentifierUndefined "type definition" id pos)
+
+                keyword "vector" >>. getPosition .>>. sexpression types |>> fun (pos, etype) -> fun lookup ->
+                    match etype lookup with
+                    | Result.Ok(ReferenceType rt) -> Result.Ok(ReferenceType.Vector(ReferenceOrValueType.Reference rt))
+                    | Result.Ok(ValueType vt) -> Result.Ok(ReferenceType.Vector(ReferenceOrValueType.Value vt))
+                    | Result.Ok(SafePointer _) ->
+                        Result.Error(ValidationError("Cannot create a vector type of safe pointers", pos))
+                    | Result.Error error ->
+                        Result.Error error
             ]
             <?> "reference type"
-            |>> fun o -> fun lookup -> Result.map AnyType.ObjectReference (o lookup)
+            |>> fun o -> fun lookup -> Result.map ReferenceType (o lookup)
         ]
         |> sexpression
     ]
+
+    keyword "type" >>. types
 
 let tmethodsig =
     let typelist name =
