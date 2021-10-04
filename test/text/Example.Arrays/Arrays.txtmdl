@@ -12,7 +12,7 @@
       (argument $argv 0)
       (local $l0 $sig_int32))
     ; TODO: Just have a for loop that sums the lengths of each argv string
-    (const.i32 1 $l0)
+    (obj.arr.len $argv $l0)
     (ret $l0)
   )
 
