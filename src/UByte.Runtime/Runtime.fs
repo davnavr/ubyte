@@ -160,7 +160,7 @@ module Interpreter =
     open UByte.Format.Model.InstructionSet
 
     let private copyRegisterValues (source: ImmutableArray<RuntimeRegister>) (dest: ImmutableArray<RuntimeRegister>) =
-        if source.Length > dest.Length then failwith "TODO: Error, more source registers than destination registers"
+        if source.Length > dest.Length then failwith "TODO: Error, more source registers than destination registers" // TODO: Have validation of arguments lengths be the caller's problem.
         for i = 0 to dest.Length - 1 do source.[i].CopyValueTo dest.[i]
 
     let private numericFieldAccess frame field =
@@ -265,9 +265,12 @@ module Interpreter =
     let interpret returns arguments (entrypoint: RuntimeMethod) =
         let mutable frame: RuntimeStackFrame voption = ValueNone
 
-        let inline invoke returns arguments (method: RuntimeMethod) =
+        let inline invoke returns (arguments: ImmutableArray<_>) (method: RuntimeMethod) =
             method.SetupStackFrame(returns, &frame)
-            copyRegisterValues arguments frame.Value.ArgumentRegisters
+            let arguments' = frame.Value.ArgumentRegisters
+            if arguments.Length <> arguments'.Length then
+                failwithf "TODO: Error for argument array lengths do not match, expected %i got %i" arguments'.Length arguments.Length
+            copyRegisterValues arguments arguments'
 
         invoke returns arguments entrypoint
 
@@ -419,6 +422,8 @@ type RuntimeMethod (rmodule: RuntimeModule, method: Method) =
     member val Visibility = method.MethodVisibility
 
     member val DeclaringType = rmodule.InitializeType method.MethodOwner
+
+    member val Signature = rmodule.MethodSignatureAt method.Signature
 
     member _.IsInstance = isFlagSet MethodFlags.Instance flags
 
@@ -736,7 +741,38 @@ type RuntimeModule (m: Module, moduleImportResolver: ModuleIdentifier -> Runtime
         match m.EntryPoint with
         | ValueSome ei ->
             let main = this.InitializeMethod ei
-            let arguments = ImmutableArray.Empty // TODO: Check signature of method to determine if argv should be passed.
+            let signature = main.Signature
+
+            let arguments =
+                match signature.ParameterTypes.Length with
+                | 0 -> ImmutableArray.Empty
+                | 1 ->
+                    match this.TypeSignatureAt signature.ParameterTypes.[0] with
+                    | AnyType.ReferenceType(ReferenceType.Vector tstring) ->
+                        match tstring with
+                        | ReferenceOrValueType.Reference(ReferenceType.Vector tchar) ->
+                            let inline characterArrayArguments convert =
+                                Array.init argv.Length (fun i -> convert argv.[i])
+                                |> RuntimeObject.ObjectVector
+                                |> ref
+                                |> RuntimeRegister.RRef
+                                |> ImmutableArray.Create
+
+                            match tchar with // TODO: Create a Char8 type for UTF-8 strings
+                            | ReferenceOrValueType.Value(ValueType.Primitive PrimitiveType.Char16) ->
+                                characterArrayArguments <| fun arg ->
+                                    Array.init arg.Length (fun i -> uint16 arg.[i]) |> RuntimeObject.ShortVector
+                            | ReferenceOrValueType.Value(ValueType.Primitive PrimitiveType.Char32) ->
+                                let buffer = List()
+                                characterArrayArguments <| fun arg ->
+                                    buffer.Clear()
+                                    for cu in arg.EnumerateRunes() do buffer.Add(uint32 cu.Value)
+                                    buffer.ToArray() |> RuntimeObject.IntVector
+                            | bad -> failwithf "TODO: Invalid character type %A" bad
+                        | bad -> failwithf "TODO: Invalid string type %A" bad
+                    | bad -> failwithf "TODO: Error for invalid entrypoint argument type %A" bad
+                | _ -> failwith "TODO: Error for invalid number of arguments for entrypoint"
+
             let result = ref 0u // TODO: Check that entry point does not return more than 1 value.
 
             Interpreter.interpret (ImmutableArray.Create(RuntimeRegister.R4 result)) arguments main
