@@ -111,6 +111,10 @@ let instruction endianness i dest =
     | Instruction.Ret registers ->
         opcode Opcode.ret dest
         vector index registers dest
+    | (InstructionSet.Incr reg & Opcode Opcode.incr op)
+    | (InstructionSet.Decr reg & Opcode Opcode.decr op) ->
+        opcode op dest
+        index reg dest
     | (Instruction.Call(method, aregs, rregs) & Opcode Opcode.call op)
     | (Instruction.Call_virt(method, aregs, rregs) & Opcode Opcode.``call.virt`` op)
     | (Instruction.Call_ret(method, aregs, rregs) & Opcode Opcode.``call.ret`` op)
@@ -121,7 +125,8 @@ let instruction endianness i dest =
         vector index rregs dest
     | (Instruction.Reg_copy(reg1, reg2) & Opcode Opcode.``reg.copy`` op)
     | (Instruction.Rotl(reg1, reg2) & Opcode Opcode.rotl op)
-    | (Instruction.Rotr(reg1, reg2) & Opcode Opcode.rotr op) ->
+    | (Instruction.Rotr(reg1, reg2) & Opcode Opcode.rotr op)
+    | (Instruction.Obj_arr_len(reg1, reg2) & Opcode Opcode.``obj.arr.len`` op) ->
         opcode op dest
         index reg1 dest
         index reg2 dest
@@ -133,7 +138,9 @@ let instruction endianness i dest =
     | (Instruction.Or(xreg, yreg, rreg) & Opcode Opcode.``or`` op)
     | (Instruction.Not(xreg, yreg, rreg) & Opcode Opcode.``not`` op)
     | (Instruction.Xor(xreg, yreg, rreg) & Opcode Opcode.xor op)
-    | (Instruction.Rem(xreg, yreg, rreg) & Opcode Opcode.rem op) ->
+    | (Instruction.Rem(xreg, yreg, rreg) & Opcode Opcode.rem op)
+    | (Instruction.Obj_arr_get(xreg, yreg, rreg) & Opcode Opcode.``obj.arr.get`` op)
+    | (Instruction.Obj_arr_set(xreg, yreg, rreg) & Opcode Opcode.``obj.arr.set`` op) ->
         opcode op dest
         index xreg dest
         index yreg dest
@@ -177,6 +184,11 @@ let instruction endianness i dest =
         index field dest
         index typei dest
         index reg dest
+    | Instruction.Obj_arr_new(typei, lreg, rreg) ->
+        opcode Opcode.``obj.arr.new`` dest
+        index typei dest
+        index lreg dest
+        index rreg dest
     | _ -> failwithf "TODO: Cannot write unsupported instruction %A" i
 
 let toStream (stream: Stream) (md: Module) =
@@ -203,32 +215,59 @@ let toStream (stream: Stream) (md: Module) =
         lengthEncodedVector buffer stream md.TypeSignatures <| fun signature dest ->
             let inline ttag (t: Tag.Type) = dest.WriteByte(uint8 t)
 
+            let rec vtype =
+                function
+                | ValueType.Primitive prim ->
+                    match prim with
+                    | PrimitiveType.S8 -> Tag.Type.S8
+                    | PrimitiveType.S16 -> Tag.Type.S16
+                    | PrimitiveType.S32 -> Tag.Type.S32
+                    | PrimitiveType.S64 -> Tag.Type.S64
+                    | PrimitiveType.U8 -> Tag.Type.U8
+                    | PrimitiveType.U16 -> Tag.Type.U16
+                    | PrimitiveType.U32 -> Tag.Type.U32
+                    | PrimitiveType.U64 -> Tag.Type.U64
+                    | PrimitiveType.UNative -> Tag.Type.UNative
+                    | PrimitiveType.SNative -> Tag.Type.UNative
+                    | PrimitiveType.F32 -> Tag.Type.F32
+                    | PrimitiveType.F64 -> Tag.Type.F64
+                    | PrimitiveType.Char16 -> Tag.Type.Char16
+                    | PrimitiveType.Char32 -> Tag.Type.Char32
+                    | PrimitiveType.Bool -> Tag.Type.Bool
+                    | PrimitiveType.Unit -> Tag.Type.Unit
+                    |> ttag
+                | ValueType.Defined tindex ->
+                    ttag Tag.Type.DefinedStruct
+                    index tindex dest
+                | ValueType.UnsafePointer ttype ->
+                    ttag Tag.Type.UnsafePointer
+                    vtype ttype
+
+            let rec rtype =
+                function
+                | ReferenceType.Defined tindex ->
+                    ttag Tag.Type.RefDefinedType
+                    index tindex dest
+                | ReferenceType.BoxedValueType btype ->
+                    ttag Tag.Type.RefBoxed
+                    vtype btype
+                | ReferenceType.Vector etype ->
+                    ttag Tag.Type.RefVector
+                    rvtype etype
+                | ReferenceType.Any ->
+                    ttag Tag.Type.RefAny
+
+            and rvtype =
+                function
+                | ReferenceOrValueType.Reference rt -> rtype rt
+                | ReferenceOrValueType.Value vt -> vtype vt
+
             match signature with
-            | Primitive prim ->
-                match prim with
-                | PrimitiveType.S8 -> Tag.Type.S8
-                | PrimitiveType.S16 -> Tag.Type.S16
-                | PrimitiveType.S32 -> Tag.Type.S32
-                | PrimitiveType.S64 -> Tag.Type.S64
-                | PrimitiveType.U8 -> Tag.Type.U8
-                | PrimitiveType.U16 -> Tag.Type.U16
-                | PrimitiveType.U32 -> Tag.Type.U32
-                | PrimitiveType.U64 -> Tag.Type.U64
-                | PrimitiveType.UNative -> Tag.Type.UNative
-                | PrimitiveType.SNative -> Tag.Type.UNative
-                | PrimitiveType.F32 -> Tag.Type.F32
-                | PrimitiveType.F64 -> Tag.Type.F64
-                | PrimitiveType.Char16 -> Tag.Type.Char16
-                | PrimitiveType.Char32 -> Tag.Type.Char32
-                | PrimitiveType.Bool -> Tag.Type.Bool
-                | PrimitiveType.Unit -> Tag.Type.Unit
-                |> ttag
-            | ObjectReference ReferenceType.Any ->
-                ttag Tag.Type.RefAny
-            | ObjectReference(ReferenceType.Defined tindex) ->
-                ttag Tag.Type.RefDefinedType
-                index tindex dest
-            | _ -> failwithf "TODO: Unsupported type %A" signature
+            | ValueType vt -> vtype vt
+            | ReferenceType rt -> rtype rt
+            | SafePointer t ->
+                ttag Tag.Type.SafePointer
+                rvtype t
 
         lengthEncodedVector buffer stream md.MethodSignatures <| fun signature dest ->
             vector index signature.ReturnTypes dest

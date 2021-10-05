@@ -1,0 +1,45 @@
+﻿(module (format 0 0) (name "Arrays") (version 0 1 0)
+  (identifier $id_namespace "Example")
+  (identifier $id_class "Arrays")
+  (identifier $id_entry_point "main")
+
+  (signature $sig_int32 (type s32))
+  (signature $sig_string32 (type (ref vector char32)))
+  (signature $sig_argv (type (ref vector (ref vector char32))))
+  (signature $sig_main (method (returns $sig_int32) (parameters $sig_argv)))
+
+  (code $code_main
+    (registers
+      (argument $argv 0)
+      (local $lindex $sig_int32)
+      (local $llength $sig_int32)
+      (local $larg $sig_string32)
+      (local $lacc $sig_int32)
+      (local $lsum $sig_int32))
+
+    (const.i32 0 $lindex)
+    (obj.arr.len $argv $llength)
+    (br.eq $lindex $llength 6)
+    (obj.arr.get $argv $lindex $larg)
+    (obj.arr.len $larg $lacc)
+    (add $lsum $lacc $lsum)
+    (incr $lindex)
+    (br -5)
+    (ret $lsum)
+  )
+
+  (namespace $namespace (name $id_namespace))
+
+  (type $class (name $id_class) (namespace $namespace)
+    (visibility public)
+    (class base)
+  )
+
+  (method $method_main (name $id_entry_point) (visibility public)
+    (signature $sig_main)
+    (defined $code_main)
+    (owner $class)
+  )
+
+  (entrypoint $method_main)
+)

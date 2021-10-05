@@ -293,10 +293,15 @@ let instruction endianness source =
     | Opcode.``obj.ldfd`` -> index3 Obj_ldfd
     | Opcode.``obj.stfd`` -> index3 Obj_stfd
 
+    | Opcode.``obj.arr.new`` -> index3 Obj_arr_new
+    | Opcode.``obj.arr.len`` -> index2 Obj_arr_len
+    | Opcode.``obj.arr.get`` -> index3 Obj_arr_get
+    | Opcode.``obj.arr.set`` -> index3 Obj_arr_set
+
     | Opcode.``call.ret`` -> callargs Call_ret
     | Opcode.``call.virt.ret`` -> callargs Call_virt_ret
 
-    | bad -> failwithf "TODO: Unrecognized opcode 0x08%X" (uint32 bad)
+    | bad -> failwithf "TODO: Unrecognized opcode 0x%08X (%A)" (uint32 bad) bad
 
 let fromBytes (source: #IByteSequence) =
     let magic' = magic source
@@ -314,24 +319,54 @@ let fromBytes (source: #IByteSequence) =
       Namespaces = lengthEncodedVector source (fun ns -> vector ns index)
       TypeSignatures =
         lengthEncodedVector source <| fun tsig ->
+            let inline valtype t = ValueType t
+            let inline reftype t = ReferenceType t
+            let inline primitive t = valtype (ValueType.Primitive t)
+
+            let rec parsedValueType tag success continuation =
+                let inline primitive t = success (ValueType.Primitive t)
+
+                match tag with
+                | Tag.Type.Unit -> primitive PrimitiveType.Unit
+                | Tag.Type.S8 -> primitive PrimitiveType.S8
+                | Tag.Type.S16 -> primitive PrimitiveType.S16
+                | Tag.Type.S32 -> primitive PrimitiveType.S32
+                | Tag.Type.S64 -> primitive PrimitiveType.S64
+                | Tag.Type.U8 -> primitive PrimitiveType.U8
+                | Tag.Type.U16 -> primitive PrimitiveType.U16
+                | Tag.Type.U32 -> primitive PrimitiveType.U32
+                | Tag.Type.U64 -> primitive PrimitiveType.U64
+                | Tag.Type.F32 -> primitive PrimitiveType.F32
+                | Tag.Type.F64 -> primitive PrimitiveType.F64
+                | Tag.Type.Bool -> primitive PrimitiveType.Bool
+                | Tag.Type.Char16 -> primitive PrimitiveType.Char16
+                | Tag.Type.Char32 -> primitive PrimitiveType.Char32
+                | bad -> continuation bad
+
+            // Explicit instantiation gets around "less generic" errors with mutually recursive functions.
+            let parsedReferenceOrValueType' = ref Unchecked.defaultof<_ -> (_ -> ReferenceOrValueType) -> ReferenceOrValueType>
+
+            let parsedReferenceType tag (success: _ -> 'T) continuation = // TODO: Bad less generic errors because of recursive stuff
+                match tag with
+                | Tag.Type.RefAny -> success ReferenceType.Any
+                | Tag.Type.RefDefinedType -> success (ReferenceType.Defined(index tsig))
+                | Tag.Type.RefVector -> success (ReferenceType.Vector(parsedReferenceOrValueType'.contents (bits1 tsig) id))
+                | bad -> continuation bad
+
+            let parsedReferenceOrValueType tag (success: ReferenceOrValueType -> 'T): 'T =
+                parsedReferenceType tag (ReferenceOrValueType.Reference >> success) <| fun tag ->
+                    parsedValueType tag (ReferenceOrValueType.Value >> success) <| fun tag ->
+                        failwithf "TODO: Error for type is not a valid reference or value type %A" tag
+
+            parsedReferenceOrValueType' := parsedReferenceOrValueType
+
             match bits1 tsig with
-            | Tag.Type.Unit -> Primitive PrimitiveType.Unit
-            | Tag.Type.S8 -> Primitive PrimitiveType.S8
-            | Tag.Type.S16 -> Primitive PrimitiveType.S16
-            | Tag.Type.S32 -> Primitive PrimitiveType.S32
-            | Tag.Type.S64 -> Primitive PrimitiveType.S64
-            | Tag.Type.U8 -> Primitive PrimitiveType.U8
-            | Tag.Type.U16 -> Primitive PrimitiveType.U16
-            | Tag.Type.U32 -> Primitive PrimitiveType.U32
-            | Tag.Type.U64 -> Primitive PrimitiveType.U64
-            | Tag.Type.F32 -> Primitive PrimitiveType.F32
-            | Tag.Type.F64 -> Primitive PrimitiveType.F64
-            | Tag.Type.Bool -> Primitive PrimitiveType.Bool
-            | Tag.Type.Char16 -> Primitive PrimitiveType.Char16
-            | Tag.Type.Char32 -> Primitive PrimitiveType.Char32
-            | Tag.Type.RefAny -> ObjectReference ReferenceType.Any
-            | Tag.Type.RefDefinedType -> ObjectReference(ReferenceType.Defined(index tsig))
-            | bad -> failwithf "TODO: Invalid type (0x%02X) %A" (uint8 bad) bad
+            | Tag.Type.SafePointer -> parsedReferenceOrValueType (bits1 tsig) SafePointer
+            | tag ->
+                parsedReferenceOrValueType tag <| fun t ->
+                    match t with
+                    | ReferenceOrValueType.Reference rt -> ReferenceType rt
+                    | ReferenceOrValueType.Value vt -> ValueType vt
       MethodSignatures =
         lengthEncodedVector source <| fun msig ->
             { ReturnTypes = vector msig index

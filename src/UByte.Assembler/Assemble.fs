@@ -150,9 +150,6 @@ type MethodLookup = SharedIdentifierLookup<IndexKinds.Method, UnresolvedMethodIm
 [<NoComparison; NoEquality; IsReadOnly; Struct>]
 type UnresolvedMethodSignature = { ReturnTypes: (Position * Name) list; ParameterTypes: (Position * Name) list }
 
-type UnresolvedInstruction =
-    (Name -> RegisterIndex voption) -> FieldLookup -> MethodLookup -> Result<InstructionSet.Instruction, AssemblerError list>
-
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
 type UnresolvedRegisterType =
     | Local of Position * Name
@@ -161,11 +158,15 @@ type UnresolvedRegisterType =
 [<NoComparison; NoEquality; IsReadOnly; Struct>]
 type UnresolvedCodeRegister = { RegisterName: Position * Name; RegisterType: UnresolvedRegisterType }
 
+
+
 [<NoComparison; NoEquality; IsReadOnly; Struct>]
 type UnresolvedCode = { Registers: UnresolvedCodeRegister list; Instructions: UnresolvedInstruction list }
 
-[<NoComparison; NoEquality>]
-type IncompleteModule =
+and UnresolvedInstruction =
+    (Name -> RegisterIndex voption) -> IncompleteModule -> Result<InstructionSet.Instruction, AssemblerError list>
+
+and [<NoComparison; NoEquality>] IncompleteModule =
     { ModuleFormatVersion: VersionNumbers voption ref
       mutable ModuleHeaderName: Name voption
       ModuleHeaderVersion: VersionNumbers voption ref
@@ -254,30 +255,58 @@ let tidentifier =
                 { state with Errors = errorDuplicateIdentifier "identifier" id pos :: state.Errors }
 
 let ttypesig =
-    keyword "type" >>. choice [
+    let types, types' = createParserForwardedToRef()
+
+    types'.contents <- choice [
         choiceL
             [
+                skipString "bool" >>. preturn PrimitiveType.Bool
+                skipString "u8" >>. preturn PrimitiveType.U8
+                skipString "s8" >>. preturn PrimitiveType.S8
+                skipString "u16" >>. preturn PrimitiveType.U16
+                skipString "s16" >>. preturn PrimitiveType.S16
+                skipString "char16" >>. preturn PrimitiveType.Char16
+                skipString "u32" >>. preturn PrimitiveType.U32
                 skipString "s32" >>. preturn PrimitiveType.S32
+                skipString "char32" >>. preturn PrimitiveType.Char32
+                skipString "u64" >>. preturn PrimitiveType.U64
+                skipString "s64" >>. preturn PrimitiveType.S64
+                skipString "unative" >>. preturn PrimitiveType.UNative
+                skipString "snative" >>. preturn PrimitiveType.SNative
+                skipString "f32" >>. preturn PrimitiveType.F32
+                skipString "f64" >>. preturn PrimitiveType.F64
             ]
             "primitive type"
-        |>> fun prim -> fun _ -> Result.Ok(AnyType.Primitive prim)
+        |>> fun prim -> fun _ -> Result.Ok(ValueType(ValueType.Primitive prim))
 
         choice [
-            keyword "ref" >>. choice [
-                keyword "any" >>. preturn (fun _ -> Result.Ok ReferenceType.Any)
+            keyword "ref" >>. choiceL
+                [
+                    keyword "any" >>. preturn (fun _ -> Result.Ok ReferenceType.Any)
 
-                keyword "def" >>. getPosition .>>. identifier |>> fun (pos, id) -> fun lookup ->
-                    match lookup id with
-                    | ValueSome tindex ->
-                        Result.Ok(ReferenceType.Defined tindex)
-                    | ValueNone ->
-                        Result.Error(errorIdentifierUndefined "type definition" id pos)
-            ]
-            <?> "reference type"
-            |>> fun o -> fun lookup -> Result.map AnyType.ObjectReference (o lookup)
+                    keyword "def" >>. getPosition .>>. identifier |>> fun (pos, id) -> fun lookup ->
+                        match lookup id with
+                        | ValueSome tindex ->
+                            Result.Ok(ReferenceType.Defined tindex)
+                        | ValueNone ->
+                            Result.Error(errorIdentifierUndefined "type definition" id pos)
+
+                    keyword "vector" >>. getPosition .>>. types |>> fun (pos, etype) -> fun lookup ->
+                        match etype lookup with
+                        | Result.Ok(ReferenceType rt) -> Result.Ok(ReferenceType.Vector(ReferenceOrValueType.Reference rt))
+                        | Result.Ok(ValueType vt) -> Result.Ok(ReferenceType.Vector(ReferenceOrValueType.Value vt))
+                        | Result.Ok(SafePointer _) ->
+                            Result.Error(ValidationError("Cannot create a vector type of safe pointers", pos))
+                        | Result.Error error ->
+                            Result.Error error
+                ]
+                "reference type"
+            |>> fun o -> fun lookup -> Result.map ReferenceType (o lookup)
         ]
         |> sexpression
     ]
+
+    keyword "type" >>. types
 
 let tmethodsig =
     let typelist name =
@@ -358,19 +387,30 @@ let tcode =
         | [] -> Result.Ok(Unsafe.As<RegisterIndex[], ImmutableArray<RegisterIndex>> &resolved)
         | _ -> Result.Error errors
 
-    let lookupMethodName (mlookup: MethodLookup) (pos, name) =
-        match mlookup.Find name with
+    let lookupMethodName (lookup: MethodLookup) (pos, name) =
+        match lookup.Find name with
         | ValueSome mindex -> Result.Ok mindex
         | ValueNone -> Result.Error [ errorIdentifierUndefined "method" name pos ]
+
+    let lookupTypeSignature (lookup: TypeSignatureLookup) (pos, name) =
+        match lookup.FromIdentifier name with
+        | ValueSome index -> Result.Ok index
+        | ValueNone -> Result.Error [ errorIdentifierUndefined "type signature" name pos ]
 
     let body: Parser<UnresolvedInstruction list, _> =
         choice [
             choice [
-                keyword "ret" >>. many (getPosition .>>. identifier) |>> fun names -> fun registers _ _ ->
+                keyword "ret" >>. many (getPosition .>>. identifier) |>> fun names -> fun registers _ ->
                     Result.map InstructionSet.Ret (lookupRegisterList registers names)
 
+                let unaryOpInstruction name instr =
+                    keyword name >>. parray 2 (getPosition .>>. identifier) |>> fun names -> fun registers _ ->
+                        Result.map
+                            (fun (registers': ImmutableArray<_>) -> instr(registers'.[0], registers'.[1]))
+                            (lookupRegisterArray registers names)
+
                 let binaryOpInstruction name instr =
-                    keyword name >>. parray 3 (getPosition .>>. identifier) |>> fun names -> fun registers _ _ ->
+                    keyword name >>. parray 3 (getPosition .>>. identifier) |>> fun names -> fun registers _ ->
                         Result.map
                             (fun (registers': ImmutableArray<_>) -> instr(registers'.[0], registers'.[1], registers'.[2]))
                             (lookupRegisterArray registers names)
@@ -380,6 +420,9 @@ let tcode =
                 binaryOpInstruction "mul" InstructionSet.Mul
                 binaryOpInstruction "div" InstructionSet.Div
 
+                keyword "incr" >>. getPosition .>>. identifier |>> fun name -> fun registers _ ->
+                    Result.map InstructionSet.Incr (lookupRegisterName registers name) |> Result.mapError List.singleton
+
                 let inline guardIntegerRange min max convert value =
                     if value >= int64 min && value <= int64 max
                     then ValueSome(convert value)
@@ -388,7 +431,7 @@ let tcode =
                 keyword "const.i32"
                 >>. (getPosition .>>. integerlit)
                 .>>. (getPosition .>>. identifier)
-                |>> fun (value, name) -> fun registers _ _ ->
+                |>> fun (value, name) -> fun registers _ ->
                     match guardIntegerRange Int32.MinValue Int32.MaxValue int32 (snd value) with
                     | ValueSome value' ->
                         lookupRegisterName registers name
@@ -397,7 +440,7 @@ let tcode =
                     | ValueNone ->
                         Result.Error [ ValidationError(string (snd value) + " is not a valid 32-bit integer literal", fst value) ]
 
-                keyword "obj.null" >>. getPosition .>>. identifier |>> fun r -> fun registers _ _ ->
+                keyword "obj.null" >>. getPosition .>>. identifier |>> fun r -> fun registers _ ->
                     lookupRegisterName registers r
                     |> Result.map InstructionSet.Obj_null
                     |> Result.mapError List.singleton
@@ -406,20 +449,35 @@ let tcode =
                     (getPosition .>>. identifier)
                     (declaration "arguments" (many (getPosition .>>. identifier)))
                     (declaration "returns" (getPosition .>>. identifier))
-                |>> fun (mname, args, ret) -> fun registers _ mlookup ->
-                    validated {
-                        let! args' = lookupRegisterList registers args
-                        let! ret' = lookupRegisterName registers ret |> Result.mapError List.singleton
-                        let! constructor = lookupMethodName mlookup mname
-                        return InstructionSet.Obj_new(constructor, args', ret')
-                    }
+                |>> fun (mname, args, ret) -> fun registers { IncompleteModule.ModuleMethods = methods } -> validated {
+                    let! args' = lookupRegisterList registers args
+                    let! ret' = lookupRegisterName registers ret |> Result.mapError List.singleton
+                    let! constructor = lookupMethodName methods mname
+                    return InstructionSet.Obj_new(constructor, args', ret')
+                }
+
+                keyword "obj.arr.new" >>. tuple3
+                    (getPosition .>>. identifier)
+                    (getPosition .>>. identifier)
+                    (getPosition .>>. identifier)
+                |>> fun (etype, lreg, rreg) -> fun registers { IncompleteModule.ModuleTypeSignatures = types } -> validated {
+                    let! etype' = lookupTypeSignature types etype
+                    let! lreg' = lookupRegisterName registers lreg |> Result.mapError List.singleton
+                    let! rreg' = lookupRegisterName registers rreg |> Result.mapError List.singleton
+                    return InstructionSet.Obj_arr_new(etype', lreg', rreg')
+                }
+                |> attempt
+
+                unaryOpInstruction "obj.arr.len" InstructionSet.Obj_arr_len |> attempt
+                binaryOpInstruction "obj.arr.get" InstructionSet.Obj_arr_get |> attempt
+                binaryOpInstruction "obj.arr.set" InstructionSet.Obj_arr_set |> attempt
 
                 let objectFieldInstruction name instr =
                     keyword name >>. tuple3
                         (getPosition .>>. identifier)
                         (getPosition .>>. identifier)
                         (getPosition .>>. identifier)
-                    |>> fun (field, oreg, reg) -> fun registers (flookup: FieldLookup) _ ->
+                    |>> fun (field, oreg, reg) -> fun registers { IncompleteModule.ModuleFields = flookup } ->
                         validated {
                             let! field' =
                                 match flookup.Find(snd field) with
@@ -443,7 +501,7 @@ let tcode =
                             (getPosition .>>. identifier)
                             (declaration "arguments" registers)
                             (declaration "returns" registers)
-                        |>> fun (mname, args, rets) -> fun registers _ mlookup ->
+                        |>> fun (mname, args, rets) -> fun registers { IncompleteModule.ModuleMethods = mlookup } ->
                             validated {
                                 let! args' = lookupRegisterList registers args
                                 let! rets' = lookupRegisterList registers rets
@@ -469,7 +527,7 @@ let tcode =
                         (getPosition .>>. identifier)
                         (getPosition .>>. identifier)
                         rawoffset
-                    |>> fun (xreg, yreg, i) ->  fun registers _ _ ->
+                    |>> fun (xreg, yreg, i) ->  fun registers _ ->
                         validated {
                             let! xreg' = lookupRegisterName registers xreg |> Result.mapError List.singleton
                             let! yreg' = lookupRegisterName registers yreg |> Result.mapError List.singleton
@@ -478,13 +536,13 @@ let tcode =
 
                 comparisonBranchInstruction "br.eq" InstructionSet.Br_eq
                 comparisonBranchInstruction "br.ne" InstructionSet.Br_ne
-                comparisonBranchInstruction "br.lt" InstructionSet.Br_lt
-                comparisonBranchInstruction "br.gt" InstructionSet.Br_gt
+                comparisonBranchInstruction "br.lt" InstructionSet.Br_lt |> attempt
+                comparisonBranchInstruction "br.gt" InstructionSet.Br_gt |> attempt
                 comparisonBranchInstruction "br.le" InstructionSet.Br_le
                 comparisonBranchInstruction "br.ge" InstructionSet.Br_ge
 
                 let ifBranchInstruction name (instr: _ -> InstructionSet.Instruction): Parser<_, _> =
-                    keyword name >>. (getPosition .>>. identifier) .>>. rawoffset |>> fun (reg, i) -> fun registers _ _ ->
+                    keyword name >>. (getPosition .>>. identifier) .>>. rawoffset |>> fun (reg, i) -> fun registers _ ->
                         validated {
                             let! reg' = lookupRegisterName registers reg |> Result.mapError List.singleton
                             return! Result.Ok(instr(reg', i))
@@ -493,12 +551,12 @@ let tcode =
                 ifBranchInstruction "br.true" InstructionSet.Br_true
                 ifBranchInstruction "br.false" InstructionSet.Br_false
                 ifBranchInstruction "br.zero" InstructionSet.Br_false
-                keyword "br" >>. rawoffset |>> fun i -> fun _ _ _ -> Result.Ok(InstructionSet.Br i)
+                keyword "br" >>. rawoffset |>> fun i -> fun _ _ -> Result.Ok(InstructionSet.Br i)
             ]
             |> sexpression
 
             let noOperandInstruction name instr =
-                keyword name >>. preturn (fun _ _ _ -> Result.Ok instr)
+                keyword name >>. preturn (fun _ _ -> Result.Ok instr)
 
             noOperandInstruction "ret" (InstructionSet.Ret ImmutableArray.Empty)
             noOperandInstruction "nop" InstructionSet.Nop
@@ -1086,7 +1144,7 @@ let buildCodeRegisters (types: TypeSignatureLookup) =
             inner 0 lookup locals List.empty
         | Result.Error errors -> Result.Error errors
 
-let buildCodeInstructions fields methods =
+let buildCodeInstructions md =
     let builder = ImmutableArray.CreateBuilder()
 
     fun (registers: IReadOnlyDictionary<_, _>) ->
@@ -1101,7 +1159,7 @@ let buildCodeInstructions fields methods =
             | [], _ -> Result.Error errors
             | (instr: UnresolvedInstruction) :: remaining, _ ->
                 let errors' =
-                    match instr lookupRegisterName fields methods with
+                    match instr lookupRegisterName md with
                     | Result.Ok instr' ->
                         builder.Add instr'
                         errors
@@ -1216,7 +1274,7 @@ let tmodule: Parser<AssemblerResult, State> =
 
                 let! codes =
                     let getCodeRegisters = buildCodeRegisters state.ModuleTypeSignatures
-                    let getCodeInstructions = buildCodeInstructions state.ModuleFields state.ModuleMethods
+                    let getCodeInstructions = buildCodeInstructions state
                     tryMapLookup state.ModuleCode <| fun code ->
                         validated {
                             let! (rlookup, registers) = getCodeRegisters code.Registers

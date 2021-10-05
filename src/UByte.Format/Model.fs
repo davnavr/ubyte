@@ -153,6 +153,10 @@ module InstructionSet =
         | ``obj.ldfd`` = 0x72u
         | ``obj.stfd`` = 0x73u
         | ``obj.throw`` = 0x74u
+        | ``obj.arr.new`` = 0x7Au
+        | ``obj.arr.len`` = 0x7Bu
+        | ``obj.arr.get`` = 0x7Cu
+        | ``obj.arr.set`` = 0x7Eu
         | ``call.ret`` = 0x90u
         | ``call.virt.ret`` = 0x91u
 
@@ -192,6 +196,10 @@ module InstructionSet =
         | Obj_null of destination: RegisterIndex
         | Obj_ldfd of field: FieldIndex * object: RegisterIndex * destination: RegisterIndex
         | Obj_stfd of field: FieldIndex * object: RegisterIndex * source: RegisterIndex
+        | Obj_arr_new of etype: TypeSignatureIndex * length: RegisterIndex * result: RegisterIndex
+        | Obj_arr_len of array: RegisterIndex * result: RegisterIndex
+        | Obj_arr_get of array: RegisterIndex * index: RegisterIndex * result: RegisterIndex
+        | Obj_arr_set of array: RegisterIndex * index: RegisterIndex * source: RegisterIndex
         | Call_ret of method: MethodIndex * arguments: vector<RegisterIndex> * results: vector<RegisterIndex>
         | Call_virt_ret of method: MethodIndex * arguments: vector<RegisterIndex> * results: vector<RegisterIndex>
 
@@ -230,12 +238,14 @@ module Tag =
         | SNative = 0x49uy
         | UNative = 0x55uy
         | U64 = 0x80uy
-        | ValueType = 0xA1uy
+        | DefinedStruct = 0xA1uy
         | RefAny = 0xAAuy
         | Bool = 0xB0uy
+        | RefBoxed = 0xBBuy
         | Char16 = 0xC2uy
         | Char32 = 0xC4uy
         | UnsafePointer = 0xCCuy
+        | SafePointer = 0xCEuy
         | RefDefinedType = 0xDEuy
         | F32 = 0xF4uy
         | F64 = 0xF8uy
@@ -260,15 +270,27 @@ type PrimitiveType =
     | Unit
 
 [<RequireQualifiedAccess>]
+type ValueType =
+    | Primitive of PrimitiveType
+    | Defined of TypeDefinitionIndex
+    | UnsafePointer of ValueType
+
+[<RequireQualifiedAccess>]
 type ReferenceType =
     | Defined of TypeDefinitionIndex
+    | BoxedValueType of ValueType
     | Any
+    | Vector of ReferenceOrValueType
 
-and [<NoComparison; StructuralEquality>]  AnyType =
-    | Primitive of PrimitiveType
-    | ObjectReference of ReferenceType
-    | UnsafePointer of AnyType
-    | ValueType of TypeDefinitionIndex
+and [<RequireQualifiedAccess; NoComparison; StructuralEquality>] ReferenceOrValueType =
+    | Reference of ReferenceType
+    | Value of ValueType
+
+[<NoComparison; StructuralEquality>]
+type AnyType =
+    | ValueType of ValueType
+    | ReferenceType of ReferenceType
+    | SafePointer of ReferenceOrValueType
 
 [<NoComparison; StructuralEquality>]
 type MethodSignature = { ReturnTypes: vector<TypeSignatureIndex>; ParameterTypes: vector<TypeSignatureIndex> }
