@@ -179,6 +179,9 @@ module Interpreter =
         )
         |> raise
 
+    let private nullReferenceArrayAccess frame =
+        raise (RuntimeException(frame, "Attempted to access an array element with a null array reference"))
+
     [<RequireQualifiedAccess>]
     module private Arithmetic =
         let inline private unaryOp opu8 opu16 opu32 opu64 opunative register =
@@ -285,16 +288,34 @@ module Interpreter =
             let inline (|Register|) rindex = frame'.RegisterAt rindex
             let inline (|Method|) mindex: RuntimeMethod = frame'.CurrentMethod.Module.InitializeMethod mindex
             let inline (|Field|) findex: RuntimeField = frame'.CurrentMethod.Module.InitializeField findex
+            let inline (|TypeSignature|) tindex: AnyType = frame'.CurrentMethod.Module.TypeSignatureAt tindex
             let inline (|BranchTarget|) (target: InstructionOffset) = Checked.(-) target 1
 
-            let inline fieldAccessInstruction field object register execute =
+            let inline fieldAccessInstruction field object access =
                 match object with
                 | RuntimeRegister.RRef { contents = RuntimeObject.Null } -> nullReferenceFieldAccess frame' field
                 | RuntimeRegister.RRef { contents = RuntimeObject.TypeInstance(_, data) }
-                | RuntimeRegister.RStruct data -> execute data
+                | RuntimeRegister.RStruct data -> access data
                 | RuntimeRegister.RRef { contents = _ } ->
                     failwith "TODO: Error when attempted to access object field using reference to array"
                 | _ -> numericFieldAccess frame' field
+
+            let inline arrayAccessInstruction array index accu8 accu16 accu32 accu64 accun accstr accobj =
+                let index' =
+                    match index with
+                    | RuntimeRegister.R4 { contents = i } -> Checked.int32 i
+                    | _ -> failwith "TODO: Convert to int32 and check bounds when getting index to array element"
+                match array with
+                | RuntimeRegister.RRef { contents = RuntimeObject.Null } -> nullReferenceArrayAccess frame
+                | RuntimeRegister.RRef { contents = RuntimeObject.ByteVector array' } -> accu8 array' array'.[index']
+                | RuntimeRegister.RRef { contents = RuntimeObject.ShortVector array' } -> accu16 array' array'.[index']
+                | RuntimeRegister.RRef { contents = RuntimeObject.IntVector array' } -> accu32 array' array'.[index']
+                | RuntimeRegister.RRef { contents = RuntimeObject.LongVector array' } -> accu64 array' array'.[index']
+                | RuntimeRegister.RRef { contents = RuntimeObject.NativeIntVector array' } -> accun array' array'.[index']
+                | RuntimeRegister.RRef { contents = RuntimeObject.StructVector array' } -> accstr array' array'.[index']
+                | RuntimeRegister.RRef { contents = RuntimeObject.ObjectVector array' } -> accobj array' array'.[index']
+                | _ ->
+                    failwith "TODO: Error for expected object reference to array but got value type"
 
             (*
             match ex with
@@ -361,7 +382,7 @@ module Interpreter =
                 | Obj_ldfd(Field field, Register object, Register destination) ->
                     field.CheckMutate frame'
 
-                    fieldAccessInstruction field object destination <| fun fields ->
+                    fieldAccessInstruction field object <| fun fields ->
                         match destination with // TODO: How to respect endianness when reading values from struct
                         | RuntimeRegister.R1 destination' ->
                             destination'.contents <- fields.ReadRaw<uint8> field.Offset
@@ -378,7 +399,7 @@ module Interpreter =
                         | RuntimeRegister.RRef destination' ->
                             destination'.contents <- fields.ReadRef(field.Offset)
                 | Obj_stfd(Field field, Register object, Register source) ->
-                    fieldAccessInstruction field object source <| fun fields ->
+                    fieldAccessInstruction field object <| fun fields ->
                         match source with
                         | RuntimeRegister.R1 { contents = value } -> fields.WriteRaw(field.Offset, value)
                         | RuntimeRegister.R2 { contents = value } -> fields.WriteRaw(field.Offset, value)
@@ -388,6 +409,54 @@ module Interpreter =
                         | RuntimeRegister.RStruct _ ->
                             failwith "// TODO: How to store structs stored inside other structs?"
                         | RuntimeRegister.RRef { contents = value } -> fields.WriteRef(field.Offset, value)
+                | Obj_arr_new(TypeSignature etype, Register length, Register destination) ->
+                    let length' =
+                        match length with // TODO: Really need to keep track if an integer register is signed or not to determine array length
+                        | RuntimeRegister.R1 { contents = value } -> int32 value
+                        | RuntimeRegister.R2 { contents = value } -> int32 value
+                        | RuntimeRegister.R4 { contents = value } -> int32 value
+                        | RuntimeRegister.R8 { contents = value } -> int32 value
+                        | RuntimeRegister.RNative { contents = value } -> int32 value
+
+                    match destination with
+                    | RuntimeRegister.RRef destination' ->
+                        match etype with
+                        | ValueType vt ->
+                            match vt with
+                            | ValueType.Primitive PrimitiveType.Char32 ->
+                                destination'.contents <- RuntimeObject.IntVector(Array.zeroCreate length')
+                        | ReferenceType _ ->
+                            destination'.contents <- RuntimeObject.ObjectVector(Array.zeroCreate length')
+                        | SafePointer _ ->
+                            failwith "TODO: Error for cannont instantiate array containing safe pointers"
+                    | _ -> failwith "TODO: Error for cannot store object reference to array here"
+                | Obj_arr_len(Register array, Register length) ->
+                    // TODO: Make common function for assuming register contains object reference
+                    match array with
+                    | RuntimeRegister.RRef { contents = o } ->
+                        let inline (|Length|) array = ((^T) : (member Length : int32) array)
+                        match o with
+                        | RuntimeObject.ByteVector(Length len)
+                        | RuntimeObject.ShortVector(Length len)
+                        | RuntimeObject.IntVector(Length len)
+                        | RuntimeObject.LongVector(Length len)
+                        | RuntimeObject.NativeIntVector(Length len)
+                        | RuntimeObject.StructVector(Length len)
+                        | RuntimeObject.ObjectVector(Length len) ->
+                            Const.i32 len length
+                        | _ -> failwith "TODO: Error for cannot get length of array when object reference is not to an array"
+                    | _ -> failwith "TODO: Error for expected object reference to array but got value type"
+                | Obj_arr_get(Register array, Register index, Register destination) ->
+                    arrayAccessInstruction array index
+                        (fun _ _ -> failwith "TODO: Array u8 element not supported")
+                        (fun _ _ -> failwith "TODO: Array u16 element not supported")
+                        (fun _ i -> Const.i32 (int32 i) destination) // TODO: Should store an unsigned integer instead.
+                        (fun _ _ -> failwith "TODO: Array u64 element not supported")
+                        (fun _ _ -> failwith "TODO: Array unative element not supported")
+                        (fun _ _ -> failwith "TODO: Array struct element not supported")
+                        (fun _ i -> RuntimeRegister.RRef(ref i).CopyValueTo(destination)) // TODO: Define a Const.obj function instead
+                | Obj_arr_set(Register array, Register index, Register source) ->
+                    failwith "TODO: Define helper functions for reading values registers"
                 | Nop -> ()
                 | bad -> failwithf "TODO: Unsupported instruction %A" bad
 

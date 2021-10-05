@@ -418,7 +418,7 @@ module InstructionSet =
         | Obj_arr_len of array: RegisterIndex * result: RegisterIndex
         | Obj_arr_get of array: RegisterIndex * index: RegisterIndex * result: RegisterIndex
 
-        | Obj_arr_set of array: RegisterIndex * index: RegisterIndex * result: RegisterIndex
+        | Obj_arr_set of array: RegisterIndex * index: RegisterIndex * source: RegisterIndex
 
         | Call_ret of method: MethodIndex * arguments: vector<RegisterIndex> * results: vector<RegisterIndex>
         | Call_virt_ret of method: MethodIndex * arguments: vector<RegisterIndex> * results: vector<RegisterIndex>
