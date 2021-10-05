@@ -289,7 +289,7 @@ module Interpreter =
             let inline (|Method|) mindex: RuntimeMethod = frame'.CurrentMethod.Module.InitializeMethod mindex
             let inline (|Field|) findex: RuntimeField = frame'.CurrentMethod.Module.InitializeField findex
             let inline (|TypeSignature|) tindex: AnyType = frame'.CurrentMethod.Module.TypeSignatureAt tindex
-            let inline (|BranchTarget|) (target: InstructionOffset) = Checked.(-) target 1
+            let inline (|BranchTarget|) (target: InstructionOffset) = Checked.(-) (Checked.(+) frame'.InstructionIndex target) 1
 
             let inline fieldAccessInstruction field object access =
                 match object with
