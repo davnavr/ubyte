@@ -301,7 +301,7 @@ let instruction endianness source =
     | Opcode.``call.ret`` -> callargs Call_ret
     | Opcode.``call.virt.ret`` -> callargs Call_virt_ret
 
-    | bad -> failwithf "TODO: Unrecognized opcode 0x08%X" (uint32 bad)
+    | bad -> failwithf "TODO: Unrecognized opcode 0x%08X (%A)" (uint32 bad) bad
 
 let fromBytes (source: #IByteSequence) =
     let magic' = magic source

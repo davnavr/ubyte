@@ -420,6 +420,9 @@ let tcode =
                 binaryOpInstruction "mul" InstructionSet.Mul
                 binaryOpInstruction "div" InstructionSet.Div
 
+                keyword "incr" >>. getPosition .>>. identifier |>> fun name -> fun registers _ ->
+                    Result.map InstructionSet.Incr (lookupRegisterName registers name) |> Result.mapError List.singleton
+
                 let inline guardIntegerRange min max convert value =
                     if value >= int64 min && value <= int64 max
                     then ValueSome(convert value)
@@ -463,10 +466,11 @@ let tcode =
                     let! rreg' = lookupRegisterName registers rreg |> Result.mapError List.singleton
                     return InstructionSet.Obj_arr_new(etype', lreg', rreg')
                 }
+                |> attempt
 
-                unaryOpInstruction "obj.arr.len" InstructionSet.Obj_arr_len
-                binaryOpInstruction "obj.arr.get" InstructionSet.Obj_arr_get
-                binaryOpInstruction "obj.arr.set" InstructionSet.Obj_arr_set
+                unaryOpInstruction "obj.arr.len" InstructionSet.Obj_arr_len |> attempt
+                binaryOpInstruction "obj.arr.get" InstructionSet.Obj_arr_get |> attempt
+                binaryOpInstruction "obj.arr.set" InstructionSet.Obj_arr_set |> attempt
 
                 let objectFieldInstruction name instr =
                     keyword name >>. tuple3
@@ -532,8 +536,8 @@ let tcode =
 
                 comparisonBranchInstruction "br.eq" InstructionSet.Br_eq
                 comparisonBranchInstruction "br.ne" InstructionSet.Br_ne
-                comparisonBranchInstruction "br.lt" InstructionSet.Br_lt
-                comparisonBranchInstruction "br.gt" InstructionSet.Br_gt
+                comparisonBranchInstruction "br.lt" InstructionSet.Br_lt |> attempt
+                comparisonBranchInstruction "br.gt" InstructionSet.Br_gt |> attempt
                 comparisonBranchInstruction "br.le" InstructionSet.Br_le
                 comparisonBranchInstruction "br.ge" InstructionSet.Br_ge
 

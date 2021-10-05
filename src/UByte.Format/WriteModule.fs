@@ -111,6 +111,10 @@ let instruction endianness i dest =
     | Instruction.Ret registers ->
         opcode Opcode.ret dest
         vector index registers dest
+    | (InstructionSet.Incr reg & Opcode Opcode.incr op)
+    | (InstructionSet.Decr reg & Opcode Opcode.decr op) ->
+        opcode op dest
+        index reg dest
     | (Instruction.Call(method, aregs, rregs) & Opcode Opcode.call op)
     | (Instruction.Call_virt(method, aregs, rregs) & Opcode Opcode.``call.virt`` op)
     | (Instruction.Call_ret(method, aregs, rregs) & Opcode Opcode.``call.ret`` op)

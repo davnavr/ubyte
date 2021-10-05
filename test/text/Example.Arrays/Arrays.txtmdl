@@ -4,16 +4,28 @@
   (identifier $id_entry_point "main")
 
   (signature $sig_int32 (type s32))
+  (signature $sig_string32 (type (ref vector char32)))
   (signature $sig_argv (type (ref vector (ref vector char32))))
   (signature $sig_main (method (returns $sig_int32) (parameters $sig_argv)))
 
   (code $code_main
     (registers
       (argument $argv 0)
-      (local $l0 $sig_int32))
-    ; TODO: Just have a for loop that sums the lengths of each argv string
-    (obj.arr.len $argv $l0)
-    (ret $l0)
+      (local $lindex $sig_int32)
+      (local $llength $sig_int32)
+      (local $larg $sig_string32)
+      (local $lacc $sig_int32)
+      (local $lsum $sig_int32))
+
+    (const.i32 0 $lindex)
+    (obj.arr.len $argv $llength)
+    (br.eq $lindex $llength 6)
+    (obj.arr.get $argv $lindex $larg)
+    (obj.arr.len $larg $lacc)
+    (add $lsum $lacc $lsum)
+    (incr $lindex)
+    (br -5)
+    (ret $lsum)
   )
 
   (namespace $namespace (name $id_namespace))
