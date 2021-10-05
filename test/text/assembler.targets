@@ -23,38 +23,39 @@
   </Target>
 
   <Target Name="Build" AfterTargets="Clean" Inputs="@(Compile)" Outputs="%(Compile.OutputPath)">
-    
+
     <PropertyGroup>
       <AssemblerArguments>--input &quot;%(Compile.FullPath)&quot; --output &quot;%(Compile.OutputPath)&quot;</AssemblerArguments>
     </PropertyGroup>
-    
+
     <Exec
       Command="dotnet run -p &quot;$(RootDirectory)\src\asmdl\asmdl.fsproj&quot; -- $(AssemblerArguments)"
       ConsoleToMsBuild="true"
       LogStandardErrorAsError="true" />
-  
+
   </Target>
 
   <Target Name="WriteRunScript" AfterTargets="Clean" Inputs="@(Compile)" Outputs="%(Compile.ScriptPath)">
-    
+
     <PropertyGroup>
       <ScriptContents>
         <![CDATA[
 param (
-    [switch]$LaunchInterpreterDebugger
+  [switch]$LaunchInterpreterDebugger,
+  [string[]]$ApplicationArguments
 )
 
 $arguments = @("run", "--project", "$(InterpreterExecutable)", "--", "--import-directory", "$(OutputDirectory)", "--program", "%(Compile.OutputPath)")
-
 if ($LaunchInterpreterDebugger) { $arguments += "--launch-interpreter-debugger" }
-
+if ($ApplicationArguments.Length -ge 0) { $arguments += "--" }
+$arguments += $ApplicationArguments
 & "dotnet" $arguments
 ]]>
       </ScriptContents>
     </PropertyGroup>
 
     <WriteLinesToFile File="%(Compile.ScriptPath)" Lines="$(ScriptContents)" Overwrite="true" />
-  
+
   </Target>
 
   <Target Name="Rebuild" DependsOnTargets="Clean;Build;WriteRunScript" />
