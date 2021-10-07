@@ -1,0 +1,43 @@
+﻿.module HelloWorld
+.format 0 0
+.version 0 1 0
+
+.identifier @id_namespace Example
+.identifier @id_class Hello
+.identifier @id_entry_point main
+
+.signature @sig_int type s32
+
+// Method that takes no parameters and returns a 32-bit integer
+.signature @sig_main method (@sig_int) ()
+
+.code @code_main {
+    // Define registers containing values of the specified type
+    .locals {
+        .type @sig_int
+        .local @l0
+        .local @l1
+    }
+
+    // return 9 + 10;
+    const.i32 9 @l0
+    const.i32 10 @l1
+    add @l0 @l1 @l0
+    ret @l0
+}
+
+.namespace @namespace_example {
+    .name @id_namespace
+}
+
+.type public @class_hello base {
+    .name @id_class
+    .namespace @namespace_example
+
+    .method public @method_main defined @code_main {
+        .signature @sig_main
+        .name @id_entry_point
+    }
+}
+
+.entrypoint @method_main
