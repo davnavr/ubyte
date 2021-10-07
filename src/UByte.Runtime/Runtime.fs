@@ -476,6 +476,18 @@ module Interpreter =
         let inline private decrement value = oneop (-) value
         let decr reg = unop decrement decrement decrement decrement decrement decrement decrement decrement decrement decrement decrement decrement reg
 
+        [<RequireQualifiedAccess>]
+        module Checked =
+            open Microsoft.FSharp.Core.Operators.Checked
+
+            let add xreg yreg rreg = binop (+) (+) (+) (+) (+) (+) (+) (+) (+) (+) (+) (+) xreg yreg rreg
+            let sub xreg yreg rreg = binop (-) (-) (-) (-) (-) (-) (-) (-) (-) (-) (-) (-) xreg yreg rreg
+            let mul xreg yreg rreg = binop (*) (*) (*) (*) (*) (*) (*) (*) (*) (*) (*) (*) xreg yreg rreg
+            let inline private increment value = oneop (+) value
+            let incr reg = unop increment increment increment increment increment increment increment increment increment increment increment increment reg
+            let inline private decrement value = oneop (-) value
+            let decr reg = unop decrement decrement decrement decrement decrement decrement decrement decrement decrement decrement decrement decrement reg
+
     /// Contains functions for comparing the values stored in registers.
     [<RequireQualifiedAccess>]
     module private Compare =
@@ -626,6 +638,11 @@ module Interpreter =
                 | Xor(Register x, Register y, Register r) -> Arithmetic.xor x y r
                 | Incr(Register register) -> Arithmetic.incr register
                 | Decr(Register register) -> Arithmetic.decr register
+                | Add_ovf(Register x, Register y, Register r) -> Arithmetic.Checked.add x y r
+                | Sub_ovf(Register x, Register y, Register r) -> Arithmetic.Checked.sub x y r
+                | Mul_ovf(Register x, Register y, Register r) -> Arithmetic.Checked.mul x y r
+                | Incr_ovf(Register register) -> Arithmetic.Checked.incr register
+                | Decr_ovf(Register register) -> Arithmetic.Checked.decr register
                 | Const_i32(value, Register dest) -> Const.i32 (uint32 value) dest
                 | Const_true(Register dest) -> Const.``true`` dest
                 | Const_false(Register dest)
