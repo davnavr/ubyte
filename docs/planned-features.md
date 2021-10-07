@@ -5,9 +5,8 @@ Features further down the list are ones I think are more difficult or will take 
 - Comparison instructions
 - Importing fields
 - Labels in text format
-- Unsigned arithimetic operations (maybe just have registers keep track of whether they are signed or unsigned)
-- Overflow checking arithmetic operations
 - Exception handling (`try`, `catch`, and `finally`)
+- Change assembly language syntax `(s (expressions (are (difficult))))`
 - Inline `name`, signature (`type` and `method`), and `code` in text format
 - Methods marked as being implemented elsewhere (such as an interpreter or being provided at transpile time)
 - Virtual method calls
