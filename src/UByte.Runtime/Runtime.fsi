@@ -9,9 +9,6 @@ open UByte.Format
 [<NoComparison; NoEquality>]
 type RuntimeRegister
 
-type RuntimeRegister with
-    member CopyValueTo : destination: RuntimeRegister -> unit
-
 [<Sealed>]
 type RuntimeStackFrame =
     member ArgumentRegisters : ImmutableArray<RuntimeRegister>

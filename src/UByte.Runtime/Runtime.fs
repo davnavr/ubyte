@@ -11,39 +11,134 @@ open UByte.Format.Model
 
 let inline isFlagSet flag value = value &&& flag = flag
 
+[<IsReadOnly; Struct; NoComparison; NoEquality>]
+type OffsetArray<'T> =
+    val Start: int32
+    val Items: 'T[]
+
+    new (start, items) = { Start = start; Items = items }
+    new (items) = OffsetArray(0, items)
+    new (length) = OffsetArray(Array.zeroCreate<'T> length)
+
+    member this.Length = this.Items.Length - this.Start
+
+    member this.ToSpan() = Span<'T>(this.Items).Slice this.Start
+
+    member this.CopyTo(destination: OffsetArray<'T>) = this.ToSpan().CopyTo(destination.ToSpan())
+
 [<RequireQualifiedAccess>]
 type RuntimeRegister =
-    | R1 of uint8 ref
-    | R2 of uint16 ref
-    | R4 of uint32 ref
-    | R8 of uint64 ref
-    | RNative of unativeint ref
-    | RStruct of RuntimeStruct
-    | RRef of RuntimeObject ref
-    //| RSafePointer of _ -> _
+    | S8 of int8 ref
+    | U8 of uint8 ref
+    | S16 of int16 ref
+    | U16 of uint16 ref
+    | S32 of int32 ref
+    | U32 of uint32 ref
+    | S64 of int64 ref
+    | U64 of uint64 ref
+    | SNative of nativeint ref
+    | UNative of unativeint ref
+    | F32 of single ref
+    | F64 of double ref
+    | Struct of RuntimeStruct
+    | Object of RuntimeObject ref
+    //| SafePointer of _ -> _
 
+[<RequireQualifiedAccess>]
+module Cast =
+    let inline (|U8|) value = uint8 value
+    let inline (|U16|) value = uint16 value
+    let inline (|U32|) value = uint32 value
+    let inline (|U64|) value = uint64 value
+    let inline (|UNative|) value = unativeint value
+    let inline (|S8|) value = int8 value
+    let inline (|S16|) value = int16 value
+    let inline (|S32|) value = int32 value
+    let inline (|S64|) value = int64 value
+    let inline (|SNative|) value = nativeint value
+    let inline (|F32|) value = single value
+    let inline (|F64|) value = double value
+
+[<RequireQualifiedAccess>]
+module Reinterpret =
+    let inline (|F32|) value: uint32 =
+        let mutable value = value
+        Unsafe.As<single, uint32> &value
+
+    let inline (|U32|) value: single =
+        let mutable value = value
+        Unsafe.As<uint32, single> &value
+
+    let inline (|F64|) value: uint64 =
+        let mutable value = value
+        Unsafe.As<double, uint64> &value
+
+    let inline (|U64|) value: double =
+        let mutable value = value
+        Unsafe.As<uint64, double> &value
+
+[<RequireQualifiedAccess>]
+module private Const =
+    let private expectedNumericRegister() =
+        failwith "TODO: Error for cannot store integer into a register containing an object reference"
+
+    let inline private integer value destination =
+        match destination with
+        | RuntimeRegister.S8 dest' -> dest'.contents <- int8 value
+        | RuntimeRegister.U8 dest' -> dest'.contents <- uint8 value
+        | RuntimeRegister.S16 dest' -> dest'.contents <- int16 value
+        | RuntimeRegister.U16 dest' -> dest'.contents <- uint16 value
+        | RuntimeRegister.S32 dest' -> dest'.contents <- int32 value
+        | RuntimeRegister.U32 dest' -> dest'.contents <- uint32 value
+        | RuntimeRegister.S64 dest' -> dest'.contents <- int64 value
+        | RuntimeRegister.U64 dest' -> dest'.contents <- uint64 value
+        | RuntimeRegister.SNative dest' -> dest'.contents <- nativeint value
+        | RuntimeRegister.UNative dest' -> dest'.contents <- unativeint value
+        | RuntimeRegister.F32 dest' -> dest'.contents <- Reinterpret.(|U32|) (uint32 value)
+        | RuntimeRegister.F64 dest' -> dest'.contents <- Reinterpret.(|U64|) (uint64 value)
+        | RuntimeRegister.Object _ | RuntimeRegister.Struct _ -> expectedNumericRegister()
+        // TODO: Figure out how to handle coyping when floating-point numbers are involved.
+
+    let inline private real value destination =
+        match destination with
+        | RuntimeRegister.F32 dest' -> dest'.contents <- single value
+        | RuntimeRegister.F64 dest' -> dest'.contents <- double value
+        | RuntimeRegister.Object _ | RuntimeRegister.Struct _ -> expectedNumericRegister()
+
+    let i8 (value: uint8) destination = integer value destination
+    let i16 (value: uint16) destination = integer value destination
+    let i32 (value: uint32) destination = integer value destination
+    let i64 (value: uint64) destination = integer value destination
+    let inative (value: unativeint) destination = integer value destination
+    let inline ``true`` destination = i8 1uy destination
+    let inline ``false`` destination = i8 0uy destination
+    let f32 (value: single) destination = real value destination
+    let f64 (value: double) destination = real value destination
+
+    let obj value destination =
+        match destination with
+        | RuntimeRegister.Object destination' -> destination'.contents <- value
+        | _ -> failwith "TODO: Error for cannot store object into a register containing a value type"
+
+    let value value destination =
+        match destination with
+        | RuntimeRegister.Struct destination' ->
+            value.RawData.CopyTo destination'.RawData
+            value.References.CopyTo destination'.References
+        | _ -> failwith "TODO: Cannot store struct into a register containing a numeric type"
+
+type RuntimeRegister with
     member source.CopyValueTo destination =
-        match source, destination with
-        | R1 { contents = value }, R1 dest -> dest.contents <- value
-        | R1 { contents = value }, R2 dest -> dest.contents <- uint16 value
-        | R1 { contents = value }, R4 dest -> dest.contents <- uint32 value
-        | R1 { contents = value }, R8 dest -> dest.contents <- uint64 value
-        | R2 { contents = value }, R2 dest -> dest.contents <- value
-        | R2 { contents = value }, R4 dest -> dest.contents <- uint32 value
-        | R2 { contents = value }, R8 dest -> dest.contents <- uint64 value
-        | R4 { contents = value }, R4 dest -> dest.contents <- value
-        | R4 { contents = value }, R8 dest -> dest.contents <- uint64 value
-        | R8 { contents = value }, R8 dest -> dest.contents <- value
-        | RNative { contents = value }, RNative dest -> dest.contents <- value
-        | R2 _, R1 _
-        | R4 _, R2 _
-        | R4 _, R1 _
-        | R8 _, R4 _
-        | R8 _, R2 _
-        | R8 _, R1 _ -> failwith "TODO: Truncating not yet supported"
-        | RRef { contents = value }, RRef dest -> dest.contents <- value
-        | RRef _, _
-        | _, RRef _ -> failwith "TODO: Error for cannot mix integers and reference types"
+        match source with
+        | S8 { contents = Cast.U8 value } | U8 { contents = value } -> Const.i8 value destination
+        | S16 { contents = Cast.U16 value } | U16 { contents = value } -> Const.i16 value destination
+        | S32 { contents = Cast.U32 value } | U32 { contents = value } -> Const.i32 value destination
+        | S64 { contents = Cast.U64 value } | U64 { contents = value } -> Const.i64 value destination
+        | SNative { contents = Cast.UNative value } | UNative { contents = value } -> Const.inative value destination
+        | F32 { contents = value } -> Const.f32 value destination
+        | F64 { contents = value } -> Const.f64 value destination
+        | Object { contents = value } -> Const.obj value destination
+        | Struct value -> Const.value value destination
 
 [<Sealed>]
 type RuntimeStackFrame
@@ -90,19 +185,6 @@ type FieldAccessException (frame, message, field: RuntimeField) =
 
 [<Sealed>]
 type NullReferenceFieldAccessException (frame, message, field) = inherit FieldAccessException(frame, message, field)
-
-[<IsReadOnly; Struct; NoComparison; NoEquality>]
-type OffsetArray<'T> =
-    val Start: int32
-    val Items: 'T[]
-
-    new (start, items) = { Start = start; Items = items }
-    new (items) = OffsetArray(0, items)
-    new (length) = OffsetArray(Array.zeroCreate<'T> length)
-
-    member this.Length = this.Items.Length - this.Start
-
-    member this.ToSpan() = Span<'T>(this.Items).Slice this.Start
 
 [<Sealed>]
 type StructVector (stype: RuntimeTypeDefinition, length) =
@@ -155,6 +237,9 @@ type RuntimeStruct =
 [<Sealed>]
 type MissingReturnInstructionException (frame, message) = inherit RuntimeException(frame, message)
 
+[<Sealed>]
+type InvalidComparisonException (message) = inherit RuntimeException(ValueNone, message)
+
 [<RequireQualifiedAccess>]
 module Interpreter =
     open UByte.Format.Model.InstructionSet
@@ -182,83 +267,301 @@ module Interpreter =
     let private nullReferenceArrayAccess frame =
         raise (RuntimeException(frame, "Attempted to access an array element with a null array reference"))
 
+    /// Contains functions for retrieving numeric values from registers.
+    module private NumberValue =
+        let invalidNumericValue() = failwith "TODO: Error for cannot convert object or struct to numeric value"
+
+        let f32 register =
+            match register with
+            | RuntimeRegister.U8 { contents = Cast.F32 value }
+            | RuntimeRegister.S8 { contents = Cast.F32 value }
+            | RuntimeRegister.U16 { contents = Cast.F32 value }
+            | RuntimeRegister.S16 { contents = Cast.F32 value }
+            | RuntimeRegister.U32 { contents = Cast.F32 value }
+            | RuntimeRegister.S32 { contents = Cast.F32 value }
+            | RuntimeRegister.S64 { contents = Cast.F32 value }
+            | RuntimeRegister.U64 { contents = Cast.F32 value }
+            | RuntimeRegister.SNative { contents = Cast.F32 value }
+            | RuntimeRegister.UNative { contents = Cast.F32 value }
+            | RuntimeRegister.F32 { contents = value }
+            | RuntimeRegister.F64 { contents = Cast.F32 value } -> value
+            | RuntimeRegister.Object _ | RuntimeRegister.Struct _ -> invalidNumericValue()
+
+        let f64 register =
+            match register with
+            | RuntimeRegister.U8 { contents = Cast.F64 value }
+            | RuntimeRegister.S8 { contents = Cast.F64 value }
+            | RuntimeRegister.U16 { contents = Cast.F64 value }
+            | RuntimeRegister.S16 { contents = Cast.F64 value }
+            | RuntimeRegister.U32 { contents = Cast.F64 value }
+            | RuntimeRegister.S32 { contents = Cast.F64 value }
+            | RuntimeRegister.S64 { contents = Cast.F64 value }
+            | RuntimeRegister.U64 { contents = Cast.F64 value }
+            | RuntimeRegister.SNative { contents = Cast.F64 value }
+            | RuntimeRegister.UNative { contents = Cast.F64 value }
+            | RuntimeRegister.F32 { contents = Cast.F64 value }
+            | RuntimeRegister.F64 { contents = value } -> value
+            | RuntimeRegister.Object _ | RuntimeRegister.Struct _ -> invalidNumericValue()
+
+        let u16 register =
+            match register with
+            | RuntimeRegister.U8 { contents = Cast.U16 value }
+            | RuntimeRegister.S8 { contents = Cast.U16 value }
+            | RuntimeRegister.U16 { contents = value }
+            | RuntimeRegister.S16 { contents = Cast.U16 value }
+            | RuntimeRegister.U32 { contents = Cast.U16 value }
+            | RuntimeRegister.S32 { contents = Cast.U16 value }
+            | RuntimeRegister.S64 { contents = Cast.U16 value }
+            | RuntimeRegister.U64 { contents = Cast.U16 value }
+            | RuntimeRegister.SNative { contents = Cast.U16 value }
+            | RuntimeRegister.UNative { contents = Cast.U16 value }
+            | RuntimeRegister.F32 { contents = Cast.U16 value }
+            | RuntimeRegister.F64 { contents = Cast.U16 value } -> value
+            | RuntimeRegister.Object _ | RuntimeRegister.Struct _ -> invalidNumericValue()
+
+        let s16 register =
+            match register with
+            | RuntimeRegister.U8 { contents = Cast.S16 value }
+            | RuntimeRegister.S8 { contents = Cast.S16 value }
+            | RuntimeRegister.U16 { contents = Cast.S16 value }
+            | RuntimeRegister.S16 { contents = value }
+            | RuntimeRegister.U32 { contents = Cast.S16 value }
+            | RuntimeRegister.S32 { contents = Cast.S16 value }
+            | RuntimeRegister.S64 { contents = Cast.S16 value }
+            | RuntimeRegister.U64 { contents = Cast.S16 value }
+            | RuntimeRegister.SNative { contents = Cast.S16 value }
+            | RuntimeRegister.UNative { contents = Cast.S16 value }
+            | RuntimeRegister.F32 { contents = Cast.S16 value }
+            | RuntimeRegister.F64 { contents = Cast.S16 value } -> value
+            | RuntimeRegister.Object _ | RuntimeRegister.Struct _ -> invalidNumericValue()
+
+        let u32 register =
+            match register with
+            | RuntimeRegister.U8 { contents = Cast.U32 value }
+            | RuntimeRegister.S8 { contents = Cast.U32 value }
+            | RuntimeRegister.U16 { contents = Cast.U32 value }
+            | RuntimeRegister.S16 { contents = Cast.U32 value }
+            | RuntimeRegister.U32 { contents = value }
+            | RuntimeRegister.S32 { contents = Cast.U32 value }
+            | RuntimeRegister.S64 { contents = Cast.U32 value }
+            | RuntimeRegister.U64 { contents = Cast.U32 value }
+            | RuntimeRegister.SNative { contents = Cast.U32 value }
+            | RuntimeRegister.UNative { contents = Cast.U32 value }
+            | RuntimeRegister.F32 { contents = Cast.U32 value }
+            | RuntimeRegister.F64 { contents = Cast.U32 value } -> value
+            | RuntimeRegister.Object _ | RuntimeRegister.Struct _ -> invalidNumericValue()
+
+        let s32 register =
+            match register with
+            | RuntimeRegister.U8 { contents = Cast.S32 value }
+            | RuntimeRegister.S8 { contents = Cast.S32 value }
+            | RuntimeRegister.U16 { contents = Cast.S32 value }
+            | RuntimeRegister.S16 { contents = Cast.S32 value }
+            | RuntimeRegister.U32 { contents = Cast.S32 value }
+            | RuntimeRegister.S32 { contents = value }
+            | RuntimeRegister.S64 { contents = Cast.S32 value }
+            | RuntimeRegister.U64 { contents = Cast.S32 value }
+            | RuntimeRegister.SNative { contents = Cast.S32 value }
+            | RuntimeRegister.UNative { contents = Cast.S32 value }
+            | RuntimeRegister.F32 { contents = Cast.S32 value }
+            | RuntimeRegister.F64 { contents = Cast.S32 value } -> value
+            | RuntimeRegister.Object _ | RuntimeRegister.Struct _ -> invalidNumericValue()
+
+        let u64 register =
+            match register with
+            | RuntimeRegister.U8 { contents = Cast.U64 value }
+            | RuntimeRegister.S8 { contents = Cast.U64 value }
+            | RuntimeRegister.U16 { contents = Cast.U64 value }
+            | RuntimeRegister.S16 { contents = Cast.U64 value }
+            | RuntimeRegister.U32 { contents = Cast.U64 value }
+            | RuntimeRegister.S32 { contents = Cast.U64 value }
+            | RuntimeRegister.S64 { contents = Cast.U64 value }
+            | RuntimeRegister.U64 { contents = value }
+            | RuntimeRegister.SNative { contents = Cast.U64 value }
+            | RuntimeRegister.UNative { contents = Cast.U64 value }
+            | RuntimeRegister.F32 { contents = Cast.U64 value }
+            | RuntimeRegister.F64 { contents = Cast.U64 value } -> value
+            | RuntimeRegister.Object _ | RuntimeRegister.Struct _ -> invalidNumericValue()
+
+        let s64 register =
+            match register with
+            | RuntimeRegister.U8 { contents = Cast.S64 value }
+            | RuntimeRegister.S8 { contents = Cast.S64 value }
+            | RuntimeRegister.U16 { contents = Cast.S64 value }
+            | RuntimeRegister.S16 { contents = Cast.S64 value }
+            | RuntimeRegister.U32 { contents = Cast.S64 value }
+            | RuntimeRegister.S32 { contents = Cast.S64 value }
+            | RuntimeRegister.S64 { contents = value }
+            | RuntimeRegister.U64 { contents = Cast.S64 value }
+            | RuntimeRegister.SNative { contents = Cast.S64 value }
+            | RuntimeRegister.UNative { contents = Cast.S64 value }
+            | RuntimeRegister.F32 { contents = Cast.S64 value }
+            | RuntimeRegister.F64 { contents = Cast.S64 value } -> value
+            | RuntimeRegister.Object _ | RuntimeRegister.Struct _ -> invalidNumericValue()
+
+        let unative register =
+            match register with
+            | RuntimeRegister.U8 { contents = Cast.UNative value }
+            | RuntimeRegister.S8 { contents = Cast.UNative value }
+            | RuntimeRegister.U16 { contents = Cast.UNative value }
+            | RuntimeRegister.S16 { contents = Cast.UNative value }
+            | RuntimeRegister.U32 { contents = Cast.UNative value }
+            | RuntimeRegister.S32 { contents = Cast.UNative value }
+            | RuntimeRegister.S64 { contents = Cast.UNative value }
+            | RuntimeRegister.U64 { contents = Cast.UNative value }
+            | RuntimeRegister.SNative { contents = Cast.UNative value }
+            | RuntimeRegister.UNative { contents = value }
+            | RuntimeRegister.F32 { contents = Cast.UNative value }
+            | RuntimeRegister.F64 { contents = Cast.UNative value } -> value
+            | RuntimeRegister.Object _ | RuntimeRegister.Struct _ -> invalidNumericValue()
+
+        let snative register =
+            match register with
+            | RuntimeRegister.U8 { contents = Cast.SNative value }
+            | RuntimeRegister.S8 { contents = Cast.SNative value }
+            | RuntimeRegister.U16 { contents = Cast.SNative value }
+            | RuntimeRegister.S16 { contents = Cast.SNative value }
+            | RuntimeRegister.U32 { contents = Cast.SNative value }
+            | RuntimeRegister.S32 { contents = Cast.SNative value }
+            | RuntimeRegister.S64 { contents = Cast.SNative value }
+            | RuntimeRegister.U64 { contents = Cast.SNative value }
+            | RuntimeRegister.SNative { contents = value }
+            | RuntimeRegister.UNative { contents = Cast.SNative value }
+            | RuntimeRegister.F32 { contents = Cast.SNative value }
+            | RuntimeRegister.F64 { contents = Cast.SNative value } -> value
+            | RuntimeRegister.Object _ | RuntimeRegister.Struct _ -> invalidNumericValue()
+
+    /// Contains functions for performing arithmetic on the values stored in registers.
     [<RequireQualifiedAccess>]
     module private Arithmetic =
-        let inline private unaryOp opu8 opu16 opu32 opu64 opunative register =
+        // Performs an operation on two integers and stores a result value, with no overflow checks.
+        let inline private binop opu8 ops8 opu16 ops16 opu32 ops32 opu64 ops64 opunative opsnative opf32 opf64 xreg yreg rreg =
+            match rreg with
+            | RuntimeRegister.U32 r -> r.contents <- opu32 (NumberValue.u32 xreg) (NumberValue.u32 yreg)
+            | RuntimeRegister.S32 r -> r.contents <- ops32 (NumberValue.s32 xreg) (NumberValue.s32 yreg)
+            | RuntimeRegister.U64 r -> r.contents <- opu64 (NumberValue.u64 xreg) (NumberValue.u64 yreg)
+            | RuntimeRegister.S64 r -> r.contents <- ops64 (NumberValue.s64 xreg) (NumberValue.s64 yreg)
+            | RuntimeRegister.F32 r -> r.contents <- opf32 (NumberValue.f32 xreg) (NumberValue.f32 yreg)
+            | RuntimeRegister.F64 r -> r.contents <- opf64 (NumberValue.f64 xreg) (NumberValue.f64 yreg)
+
+        let inline private unop opu8 ops8 opu16 ops16 opu32 ops32 opu64 ops64 opunative opsnative opf32 opf64 register =
             match register with
-            | RuntimeRegister.R1 r -> r.contents <- opu8 r.contents
-            | RuntimeRegister.R2 r -> r.contents <- opu16 r.contents
-            | RuntimeRegister.R4 r -> r.contents <- opu32 r.contents
-            | RuntimeRegister.R8 r -> r.contents <- opu64 r.contents
-            | RuntimeRegister.RNative r -> r.contents <- opunative r.contents
+            | RuntimeRegister.S8 r -> r.contents <- ops8 r.contents
+            | RuntimeRegister.U8 r -> r.contents <- opu8 r.contents
+            | RuntimeRegister.S16 r -> r.contents <- ops16 r.contents
+            | RuntimeRegister.U16 r -> r.contents <- opu16 r.contents
+            | RuntimeRegister.S32 r -> r.contents <- ops32 r.contents
+            | RuntimeRegister.U32 r -> r.contents <- opu32 r.contents
+            | RuntimeRegister.S64 r -> r.contents <- ops64 r.contents
+            | RuntimeRegister.U64 r -> r.contents <- opu64 r.contents
+            | RuntimeRegister.SNative r -> r.contents <- opsnative r.contents
+            | RuntimeRegister.UNative r -> r.contents <- opunative r.contents
+            | RuntimeRegister.F32 r -> r.contents <- opf32 r.contents
+            | RuntimeRegister.F64 r -> r.contents <- opf64 r.contents
 
-        let inline private binaryOp opu8 opu16 opu32 opu64 opunative xreg yreg rreg =
-            match xreg, yreg, rreg with
-            | RuntimeRegister.R1 { contents = x }, RuntimeRegister.R1 { contents = y }, RuntimeRegister.R1 result ->
-                result.contents <- opu8 x y
-            | RuntimeRegister.R2 { contents = x }, RuntimeRegister.R2 { contents = y }, RuntimeRegister.R2 result ->
-                result.contents <- opu16 x y
-            | RuntimeRegister.R4 { contents = x }, RuntimeRegister.R4 { contents = y }, RuntimeRegister.R4 result ->
-                result.contents <- opu32 x y
-            | RuntimeRegister.R8 { contents = x }, RuntimeRegister.R8 { contents = y }, RuntimeRegister.R8 result ->
-                result.contents <- opu64 x y
-            | RuntimeRegister.RNative { contents = x }, RuntimeRegister.RNative { contents = y }, RuntimeRegister.RNative result ->
-                result.contents <- opunative x y
+        let add xreg yreg rreg = binop (+) (+) (+) (+) (+) (+) (+) (+) (+) (+) (+) (+) xreg yreg rreg
+        let sub xreg yreg rreg = binop (-) (-) (-) (-) (-) (-) (-) (-) (-) (-) (-) (-) xreg yreg rreg
+        let mul xreg yreg rreg = binop (*) (*) (*) (*) (*) (*) (*) (*) (*) (*) (*) (*) xreg yreg rreg
 
-        let add xreg yreg rreg = binaryOp (+) (+) (+) (+) (+) xreg yreg rreg
-        let sub xreg yreg rreg = binaryOp (-) (-) (-) (-) (-) xreg yreg rreg
-        let mul xreg yreg rreg = binaryOp (*) (*) (*) (*) (*) xreg yreg rreg
+        let private bitf32 operation = fun (Reinterpret.F32 x) (Reinterpret.F32 y) -> Reinterpret.(|U32|) (operation x y)
+        let private bitf64 operation = fun (Reinterpret.F64 x) (Reinterpret.F64 y) -> Reinterpret.(|U64|) (operation x y)
+        let ``and`` xreg yreg rreg = binop (&&&) (&&&) (&&&) (&&&) (&&&) (&&&) (&&&) (&&&) (&&&) (&&&) (bitf32 (&&&)) (bitf64 (&&&)) xreg yreg rreg
+        let ``or`` xreg yreg rreg = binop (|||) (|||) (|||) (|||) (|||) (|||) (|||) (|||) (|||) (|||) (bitf32 (|||)) (bitf64 (|||)) xreg yreg rreg
+        //let ``not`` xreg yreg rreg = unop (~~~) (~~~) (~~~) (~~~) (~~~) (~~~) (~~~) (~~~) (~~~) (~~~) xreg yreg rreg
+        let xor xreg yreg rreg = binop (^^^) (^^^) (^^^) (^^^) (^^^) (^^^) (^^^) (^^^) (^^^) (^^^) (bitf32 (^^^)) (bitf64 (^^^)) xreg yreg rreg
 
-        let ``and`` xreg yreg rreg = binaryOp (&&&) (&&&) (&&&) (&&&) (&&&) xreg yreg rreg
-        let ``or`` xreg yreg rreg = binaryOp (|||) (|||) (|||) (|||) (|||) xreg yreg rreg
-        //let ``not`` xreg yreg rreg = unaryOp (~~~) (~~~) (~~~) (~~~) (~~~) xreg yreg rreg
-        let xor xreg yreg rreg = binaryOp (^^^) (^^^) (^^^) (^^^) (^^^) xreg yreg rreg
-        let incr reg = unaryOp ((+) 1uy) ((+) 1us) ((+) 1u) ((+) 1UL) ((+) 1un) reg
-        let decr reg = unaryOp ((-) 1uy) ((-) 1us) ((-) 1u) ((-) 1UL) ((-) 1un) reg
+        let inline private oneop (op: _ -> _ -> _) = op LanguagePrimitives.GenericOne
+        let inline private increment value = oneop (+) value
+        let incr reg = unop increment increment increment increment increment increment increment increment increment increment increment increment reg
+        let inline private decrement value = oneop (-) value
+        let decr reg = unop decrement decrement decrement decrement decrement decrement decrement decrement decrement decrement decrement decrement reg
 
-    [<RequireQualifiedAccess>]
-    module private Const =
-        let inline private store value destination =
-            match destination with
-            | RuntimeRegister.R1 dest' -> dest'.contents <- uint8 value
-            | RuntimeRegister.R2 dest' -> dest'.contents <- uint16 value
-            | RuntimeRegister.R4 dest' -> dest'.contents <- uint32 value
-            | RuntimeRegister.R8 dest' -> dest'.contents <- uint64 value
-            | RuntimeRegister.RNative dest' -> dest'.contents <- unativeint value
-            //"Cannot store integer into a register containing an object reference"
+        [<RequireQualifiedAccess>]
+        module Checked =
+            open Microsoft.FSharp.Core.Operators.Checked
 
-        let i32 (value: int32) destination = store value destination
-        let u8 (value: uint8) destination = store value destination
-        let inline ``true`` destination = u8 1uy destination
-        let inline ``false`` destination = u8 0uy destination
+            let add xreg yreg rreg = binop (+) (+) (+) (+) (+) (+) (+) (+) (+) (+) (+) (+) xreg yreg rreg
+            let sub xreg yreg rreg = binop (-) (-) (-) (-) (-) (-) (-) (-) (-) (-) (-) (-) xreg yreg rreg
+            let mul xreg yreg rreg = binop (*) (*) (*) (*) (*) (*) (*) (*) (*) (*) (*) (*) xreg yreg rreg
+            let inline private increment value = oneop (+) value
+            let incr reg = unop increment increment increment increment increment increment increment increment increment increment increment increment reg
+            let inline private decrement value = oneop (-) value
+            let decr reg = unop decrement decrement decrement decrement decrement decrement decrement decrement decrement decrement decrement decrement reg
 
+    /// Contains functions for comparing the values stored in registers.
     [<RequireQualifiedAccess>]
     module private Compare =
-        let inline comparison cu8 cu16 cu32 cu64 cunative cref xreg yreg =
+        let inline private comparison s8 u8 s16 u16 s32 u32 s64 u64 snative unative f32 f64 obj xreg yreg =
             match xreg, yreg with
-            | RuntimeRegister.R1 { contents = x }, RuntimeRegister.R1 { contents = y } -> cu8 x y
-            | RuntimeRegister.R4 { contents = x }, RuntimeRegister.R4 { contents = y } -> cu32 x y
+            | RuntimeRegister.Object { contents = x }, RuntimeRegister.Object { contents = y } -> obj x y
+            | RuntimeRegister.Object _, _ | _, RuntimeRegister.Object _ ->
+                failwith "TODO: Error for comparisons between objects and numeric values are prohibited"
+            | RuntimeRegister.Struct _, _ | _, RuntimeRegister.Struct _ ->
+                raise(NotImplementedException "Comparisons of structs may be implemented in the future")
+            | RuntimeRegister.F64 { contents = x }, _ -> f64 x (NumberValue.f64 yreg)
+            | _, RuntimeRegister.F64 { contents = y } -> f64 (NumberValue.f64 xreg) y
+            | RuntimeRegister.F32 { contents = x }, _ -> f32 x (NumberValue.f32 yreg)
+            | _, RuntimeRegister.F32 { contents = y } -> f32 (NumberValue.f32 xreg) y
+            | RuntimeRegister.SNative { contents = x }, RuntimeRegister.UNative { contents = y } ->
+                if x < 0n then failwith "TODO: How to compare long and ulong?" else unative (unativeint x) y
+            | RuntimeRegister.UNative { contents = x }, RuntimeRegister.SNative { contents = y } ->
+                if y < 0n then failwith "TODO: How to compare long and ulong?" else unative x (unativeint y)
+            | RuntimeRegister.UNative { contents = x }, _ -> unative x (NumberValue.unative yreg)
+            | _, RuntimeRegister.UNative { contents = y } -> unative (NumberValue.unative xreg) y
+            | RuntimeRegister.SNative { contents = x }, _ -> snative x (NumberValue.snative yreg)
+            | _, RuntimeRegister.SNative { contents = y } -> snative (NumberValue.snative xreg) y
+            | RuntimeRegister.S64 { contents = x }, RuntimeRegister.U64 { contents = y } ->
+                if x < 0L then failwith "TODO: How to compare long and ulong?" else u64 (uint64 x) y
+            | RuntimeRegister.U64 { contents = x }, RuntimeRegister.S64 { contents = y } ->
+                if y < 0L then failwith "TODO: How to compare long and ulong?" else u64 x (uint64 y)
+            | RuntimeRegister.U64 { contents = x }, _ -> u64 x (NumberValue.u64 yreg)
+            | _, RuntimeRegister.U64 { contents = y } -> u64 (NumberValue.u64 xreg) y
+            | RuntimeRegister.S64 { contents = x }, _ -> s64 x (NumberValue.s64 yreg)
+            | _, RuntimeRegister.S64 { contents = y } -> s64 (NumberValue.s64 xreg) y
+            | RuntimeRegister.S32 { contents = Cast.S64 x }, RuntimeRegister.U32 { contents = Cast.S64 y }
+            | RuntimeRegister.U32 { contents = Cast.S64 x }, RuntimeRegister.S32 { contents = Cast.S64 y } -> s64 x y
+            | RuntimeRegister.U32 { contents = x }, _ -> u32 x (NumberValue.u32 yreg)
+            | _, RuntimeRegister.U32 { contents = y } -> u32 (NumberValue.u32 xreg) y
+            | RuntimeRegister.S32 { contents = x }, _ -> s32 x (NumberValue.s32 yreg)
+            | _, RuntimeRegister.S32 { contents = y } -> s32 (NumberValue.s32 xreg) y
+            | RuntimeRegister.S16 { contents = Cast.S32 x }, RuntimeRegister.U16 { contents = Cast.S32 y }
+            | RuntimeRegister.U16 { contents = Cast.S32 x }, RuntimeRegister.S16 { contents = Cast.S32 y } -> s32 x y
+            | RuntimeRegister.U16 { contents = x }, _ -> u16 x (NumberValue.u16 yreg)
+            | _, RuntimeRegister.U16 { contents = y } -> u16 (NumberValue.u16 xreg) y
+            | RuntimeRegister.S16 { contents = x }, _ -> s16 x (NumberValue.s16 yreg)
+            | _, RuntimeRegister.S16{ contents = y } -> s16 (NumberValue.s16 xreg) y
+            | RuntimeRegister.S8 { contents = Cast.S16 x }, RuntimeRegister.U8 { contents = Cast.S16 y }
+            | RuntimeRegister.U8 { contents = Cast.S16 x }, RuntimeRegister.S8 { contents = Cast.S16 y } -> s16 x y
+            | RuntimeRegister.S8 { contents = x }, RuntimeRegister.S8 { contents = y } -> s8 x y
+            | RuntimeRegister.U8 { contents = x }, RuntimeRegister.U8 { contents = y } -> u8 x y
 
         let isTrueValue register =
             match register with
-            | RuntimeRegister.R1 { contents = 0uy }
-            | RuntimeRegister.R2 { contents = 0us }
-            | RuntimeRegister.R4 { contents = 0u }
-            | RuntimeRegister.R8 { contents = 0UL }
-            | RuntimeRegister.RNative { contents = 0un }
-            | RuntimeRegister.RRef { contents = RuntimeObject.Null } -> false
-            | RuntimeRegister.RStruct _ -> failwith "TODO: How to determine if a struct is truthy"
+            | RuntimeRegister.S8 { contents = 0y }
+            | RuntimeRegister.U8 { contents = 0uy }
+            | RuntimeRegister.S16 { contents = 0s }
+            | RuntimeRegister.U16 { contents = 0us }
+            | RuntimeRegister.S32 { contents = 0 }
+            | RuntimeRegister.U32 { contents = 0u }
+            | RuntimeRegister.S64 { contents = 0L }
+            | RuntimeRegister.U64 { contents = 0UL }
+            | RuntimeRegister.SNative { contents = 0n }
+            | RuntimeRegister.UNative { contents = 0un }
+            | RuntimeRegister.F32 { contents = 0.0f }
+            | RuntimeRegister.F64 { contents = 0.0 }
+            | RuntimeRegister.Object { contents = RuntimeObject.Null } -> false
+            | RuntimeRegister.Struct _ -> failwith "TODO: How to determine if a struct is truthy"
             | _ -> true
 
         let inline isFalseValue register = not(isTrueValue register)
 
-        let isLessThan xreg yreg = comparison (<) (<) (<) (<) (<) (fun _ _ -> false) xreg yreg
-        let isGreaterThan xreg yreg = comparison (>) (>) (>) (>) (>) (fun _ _ -> false) xreg yreg
+        let isLessThan xreg yreg = comparison (<) (<) (<) (<) (<) (<) (<) (<) (<) (<) (<) (<) (fun _ _ -> false) xreg yreg
+        let isGreaterThan xreg yreg = comparison (>) (>) (>) (>) (>) (>) (>) (>) (>) (>) (>) (>) (fun _ _ -> false) xreg yreg
         let private refeq a b = Object.ReferenceEquals(a, b)
-        let isEqual xreg yreg = comparison (=) (=) (=) (=) (=) refeq xreg yreg
+        let isEqual xreg yreg = comparison (=) (=) (=) (=) (=) (=) (=) (=) (=) (=) (=) (=) refeq xreg yreg
         let inline isNotEqual xreg yreg = not(isEqual xreg yreg)
-        let isLessOrEqual xreg yreg = comparison (<=) (<=) (<=) (<=) (<=) refeq xreg yreg
-        let isGreaterOrEqual xreg yreg = comparison (>=) (>=) (>=) (>=) (>=) refeq xreg yreg
+        let isLessOrEqual xreg yreg = comparison (<=) (<=) (<=) (<=) (<=) (<=) (<=) (<=) (<=) (<=) (<=) (<=) refeq xreg yreg
+        let isGreaterOrEqual xreg yreg = comparison (>=) (>=) (>=) (>=) (>=) (<=) (<=) (<=) (<=) (<=) (<=) (<=) refeq xreg yreg
 
     let private (|Registers|) (frame: RuntimeStackFrame) (registers: ImmutableArray<RegisterIndex>) =
         let mutable registers' = Array.zeroCreate registers.Length
@@ -293,27 +596,27 @@ module Interpreter =
 
             let inline fieldAccessInstruction field object access =
                 match object with
-                | RuntimeRegister.RRef { contents = RuntimeObject.Null } -> nullReferenceFieldAccess frame' field
-                | RuntimeRegister.RRef { contents = RuntimeObject.TypeInstance(_, data) }
-                | RuntimeRegister.RStruct data -> access data
-                | RuntimeRegister.RRef { contents = _ } ->
+                | RuntimeRegister.Object { contents = RuntimeObject.Null } -> nullReferenceFieldAccess frame' field
+                | RuntimeRegister.Object { contents = RuntimeObject.TypeInstance(_, data) }
+                | RuntimeRegister.Struct data -> access data
+                | RuntimeRegister.Object { contents = _ } ->
                     failwith "TODO: Error when attempted to access object field using reference to array"
                 | _ -> numericFieldAccess frame' field
 
             let inline arrayAccessInstruction array index accu8 accu16 accu32 accu64 accun accstr accobj =
                 let index' =
                     match index with
-                    | RuntimeRegister.R4 { contents = i } -> Checked.int32 i
+                    | RuntimeRegister.S32 { contents = i } -> i
                     | _ -> failwith "TODO: Convert to int32 and check bounds when getting index to array element"
                 match array with
-                | RuntimeRegister.RRef { contents = RuntimeObject.Null } -> nullReferenceArrayAccess frame
-                | RuntimeRegister.RRef { contents = RuntimeObject.ByteVector array' } -> accu8 array' array'.[index']
-                | RuntimeRegister.RRef { contents = RuntimeObject.ShortVector array' } -> accu16 array' array'.[index']
-                | RuntimeRegister.RRef { contents = RuntimeObject.IntVector array' } -> accu32 array' array'.[index']
-                | RuntimeRegister.RRef { contents = RuntimeObject.LongVector array' } -> accu64 array' array'.[index']
-                | RuntimeRegister.RRef { contents = RuntimeObject.NativeIntVector array' } -> accun array' array'.[index']
-                | RuntimeRegister.RRef { contents = RuntimeObject.StructVector array' } -> accstr array' array'.[index']
-                | RuntimeRegister.RRef { contents = RuntimeObject.ObjectVector array' } -> accobj array' array'.[index']
+                | RuntimeRegister.Object { contents = RuntimeObject.Null } -> nullReferenceArrayAccess frame
+                | RuntimeRegister.Object { contents = RuntimeObject.ByteVector array' } -> accu8 array' array'.[index']
+                | RuntimeRegister.Object { contents = RuntimeObject.ShortVector array' } -> accu16 array' array'.[index']
+                | RuntimeRegister.Object { contents = RuntimeObject.IntVector array' } -> accu32 array' array'.[index']
+                | RuntimeRegister.Object { contents = RuntimeObject.LongVector array' } -> accu64 array' array'.[index']
+                | RuntimeRegister.Object { contents = RuntimeObject.NativeIntVector array' } -> accun array' array'.[index']
+                | RuntimeRegister.Object { contents = RuntimeObject.StructVector array' } -> accstr array' array'.[index']
+                | RuntimeRegister.Object { contents = RuntimeObject.ObjectVector array' } -> accobj array' array'.[index']
                 | _ ->
                     failwith "TODO: Error for expected object reference to array but got value type"
 
@@ -335,7 +638,12 @@ module Interpreter =
                 | Xor(Register x, Register y, Register r) -> Arithmetic.xor x y r
                 | Incr(Register register) -> Arithmetic.incr register
                 | Decr(Register register) -> Arithmetic.decr register
-                | Const_i32(value, Register dest) -> Const.i32 value dest
+                | Add_ovf(Register x, Register y, Register r) -> Arithmetic.Checked.add x y r
+                | Sub_ovf(Register x, Register y, Register r) -> Arithmetic.Checked.sub x y r
+                | Mul_ovf(Register x, Register y, Register r) -> Arithmetic.Checked.mul x y r
+                | Incr_ovf(Register register) -> Arithmetic.Checked.incr register
+                | Decr_ovf(Register register) -> Arithmetic.Checked.decr register
+                | Const_i32(value, Register dest) -> Const.i32 (uint32 value) dest
                 | Const_true(Register dest) -> Const.``true`` dest
                 | Const_false(Register dest)
                 | Const_zero(Register dest) -> Const.``false`` dest
@@ -366,14 +674,10 @@ module Interpreter =
                     if Compare.isTrueValue register then frame'.InstructionIndex <- target
                 | Br_false(Register register, BranchTarget target) ->
                     if Compare.isFalseValue register then frame'.InstructionIndex <- target
-                | Obj_null(Register destination) ->
-                    match destination with
-                    | RuntimeRegister.RRef destination' -> destination'.contents <- RuntimeObject.Null
-                    | RuntimeRegister.RNative destination' -> destination'.contents <- 0un
-                    | _ -> raise(RuntimeException(frame, "Unable to store null reference into register"))
+                | Obj_null(Register destination) -> Const.obj RuntimeObject.Null destination
                 | Obj_new(Method constructor, Registers frame' arguments, Register destination) ->
                     match destination with
-                    | RuntimeRegister.RRef o ->
+                    | RuntimeRegister.Object o ->
                         o.contents <- RuntimeObject.TypeInstance(constructor.DeclaringType, constructor.DeclaringType.InitializeObjectFields())
                         // TODO: Check that first argument is an object reference.
                         invoke ImmutableArray.Empty (arguments.Insert(0, destination)) constructor
@@ -384,42 +688,58 @@ module Interpreter =
 
                     fieldAccessInstruction field object <| fun fields ->
                         match destination with // TODO: How to respect endianness when reading values from struct
-                        | RuntimeRegister.R1 destination' ->
+                        | RuntimeRegister.U8 destination' ->
                             destination'.contents <- fields.ReadRaw<uint8> field.Offset
-                        | RuntimeRegister.R2 destination' ->
+                        | RuntimeRegister.U16 destination' ->
                             destination'.contents <- fields.ReadRaw<uint16> field.Offset
-                        | RuntimeRegister.R4 destination' ->
+                        | RuntimeRegister.U32 destination' ->
                             destination'.contents <- fields.ReadRaw<uint32> field.Offset
-                        | RuntimeRegister.R8 destination' ->
+                        | RuntimeRegister.U64 destination' ->
                             destination'.contents <- fields.ReadRaw<uint64> field.Offset
-                        | RuntimeRegister.RNative destination' ->
+                        | RuntimeRegister.UNative destination' ->
                             destination'.contents <- fields.ReadRaw<unativeint> field.Offset
-                        | RuntimeRegister.RStruct _ ->
+                        | RuntimeRegister.S8 destination' ->
+                            destination'.contents <- fields.ReadRaw<int8> field.Offset
+                        | RuntimeRegister.S16 destination' ->
+                            destination'.contents <- fields.ReadRaw<int16> field.Offset
+                        | RuntimeRegister.S32 destination' ->
+                            destination'.contents <- fields.ReadRaw<int32> field.Offset
+                        | RuntimeRegister.S64 destination' ->
+                            destination'.contents <- fields.ReadRaw<int64> field.Offset
+                        | RuntimeRegister.SNative destination' ->
+                            destination'.contents <- fields.ReadRaw<nativeint> field.Offset
+                        | RuntimeRegister.F32 destination' ->
+                            destination'.contents <- fields.ReadRaw<single> field.Offset
+                        | RuntimeRegister.F64 destination' ->
+                            destination'.contents <- fields.ReadRaw<double> field.Offset
+                        | RuntimeRegister.Struct _ ->
                             failwith "// TODO: How to read structs stored inside other structs?"
-                        | RuntimeRegister.RRef destination' ->
+                        | RuntimeRegister.Object destination' ->
                             destination'.contents <- fields.ReadRef(field.Offset)
                 | Obj_stfd(Field field, Register object, Register source) ->
                     fieldAccessInstruction field object <| fun fields ->
                         match source with
-                        | RuntimeRegister.R1 { contents = value } -> fields.WriteRaw(field.Offset, value)
-                        | RuntimeRegister.R2 { contents = value } -> fields.WriteRaw(field.Offset, value)
-                        | RuntimeRegister.R4 { contents = value } -> fields.WriteRaw(field.Offset, value)
-                        | RuntimeRegister.R8 { contents = value } -> fields.WriteRaw(field.Offset, value)
-                        | RuntimeRegister.RNative { contents = value } -> fields.WriteRaw(field.Offset, value)
-                        | RuntimeRegister.RStruct _ ->
+                        | RuntimeRegister.S8 { contents = Cast.U8 value }
+                        | RuntimeRegister.U8 { contents = value } -> fields.WriteRaw(field.Offset, value)
+                        | RuntimeRegister.S16 { contents = Cast.U16 value }
+                        | RuntimeRegister.U16 { contents = value } -> fields.WriteRaw(field.Offset, value)
+                        | RuntimeRegister.S32 { contents = Cast.U32 value }
+                        | RuntimeRegister.F32 { contents = Reinterpret.F32 value }
+                        | RuntimeRegister.U32 { contents = value } -> fields.WriteRaw(field.Offset, value)
+                        | RuntimeRegister.S64 { contents = Cast.U64 value }
+                        | RuntimeRegister.F64 { contents = Reinterpret.F64 value }
+                        | RuntimeRegister.U64 { contents = value } -> fields.WriteRaw(field.Offset, value)
+                        | RuntimeRegister.UNative { contents = value } -> fields.WriteRaw(field.Offset, value)
+                        | RuntimeRegister.Struct _ ->
                             failwith "// TODO: How to store structs stored inside other structs?"
-                        | RuntimeRegister.RRef { contents = value } -> fields.WriteRef(field.Offset, value)
+                        | RuntimeRegister.Object { contents = value } -> fields.WriteRef(field.Offset, value)
                 | Obj_arr_new(TypeSignature etype, Register length, Register destination) ->
                     let length' =
-                        match length with // TODO: Really need to keep track if an integer register is signed or not to determine array length
-                        | RuntimeRegister.R1 { contents = value } -> int32 value
-                        | RuntimeRegister.R2 { contents = value } -> int32 value
-                        | RuntimeRegister.R4 { contents = value } -> int32 value
-                        | RuntimeRegister.R8 { contents = value } -> int32 value
-                        | RuntimeRegister.RNative { contents = value } -> int32 value
+                        match length with
+                        | RuntimeRegister.S32 { contents = value } -> value
 
                     match destination with
-                    | RuntimeRegister.RRef destination' ->
+                    | RuntimeRegister.Object destination' ->
                         match etype with
                         | ValueType vt ->
                             match vt with
@@ -433,7 +753,7 @@ module Interpreter =
                 | Obj_arr_len(Register array, Register length) ->
                     // TODO: Make common function for assuming register contains object reference
                     match array with
-                    | RuntimeRegister.RRef { contents = o } ->
+                    | RuntimeRegister.Object { contents = o } ->
                         let inline (|Length|) array = ((^T) : (member Length : int32) array)
                         match o with
                         | RuntimeObject.ByteVector(Length len)
@@ -443,18 +763,18 @@ module Interpreter =
                         | RuntimeObject.NativeIntVector(Length len)
                         | RuntimeObject.StructVector(Length len)
                         | RuntimeObject.ObjectVector(Length len) ->
-                            Const.i32 len length
+                            Const.i32 (uint32 len) length
                         | _ -> failwith "TODO: Error for cannot get length of array when object reference is not to an array"
                     | _ -> failwith "TODO: Error for expected object reference to array but got value type"
                 | Obj_arr_get(Register array, Register index, Register destination) ->
                     arrayAccessInstruction array index
                         (fun _ _ -> failwith "TODO: Array u8 element not supported")
                         (fun _ _ -> failwith "TODO: Array u16 element not supported")
-                        (fun _ i -> Const.i32 (int32 i) destination) // TODO: Should store an unsigned integer instead.
+                        (fun _ i -> Const.i32 i destination) // TODO: Should store an unsigned integer instead.
                         (fun _ _ -> failwith "TODO: Array u64 element not supported")
                         (fun _ _ -> failwith "TODO: Array unative element not supported")
                         (fun _ _ -> failwith "TODO: Array struct element not supported")
-                        (fun _ i -> RuntimeRegister.RRef(ref i).CopyValueTo(destination)) // TODO: Define a Const.obj function instead
+                        (fun _ i -> RuntimeRegister.Object(ref i).CopyValueTo(destination)) // TODO: Define a Const.obj function instead
                 | Obj_arr_set(Register array, Register index, Register source) ->
                     failwith "TODO: Define helper functions for reading values registers"
                 | Nop -> ()
@@ -502,25 +822,25 @@ type RuntimeMethod (rmodule: RuntimeModule, method: Method) =
         match rmodule.TypeSignatureAt rtype with
         | ValueType vt ->
             match vt with
+            | ValueType.Primitive PrimitiveType.S8 -> fun() -> RuntimeRegister.S8(ref 0y)
             | ValueType.Primitive PrimitiveType.Bool
-            | ValueType.Primitive PrimitiveType.S8
-            | ValueType.Primitive PrimitiveType.U8 -> fun() -> RuntimeRegister.R1(ref 0uy)
-            | ValueType.Primitive PrimitiveType.S16
+            | ValueType.Primitive PrimitiveType.U8 -> fun() -> RuntimeRegister.U8(ref 0uy)
+            | ValueType.Primitive PrimitiveType.S16 -> fun() -> RuntimeRegister.S16(ref 0s)
             | ValueType.Primitive PrimitiveType.U16
-            | ValueType.Primitive PrimitiveType.Char16 -> fun() -> RuntimeRegister.R2(ref 0us)
-            | ValueType.Primitive PrimitiveType.S32
+            | ValueType.Primitive PrimitiveType.Char16 -> fun() -> RuntimeRegister.U16(ref 0us)
+            | ValueType.Primitive PrimitiveType.S32 -> fun() -> RuntimeRegister.S32(ref 0)
             | ValueType.Primitive PrimitiveType.U32
-            | ValueType.Primitive PrimitiveType.F32
-            | ValueType.Primitive PrimitiveType.Char32 -> fun() -> RuntimeRegister.R4(ref 0u)
-            | ValueType.Primitive PrimitiveType.S64
-            | ValueType.Primitive PrimitiveType.U64
-            | ValueType.Primitive PrimitiveType.F64 -> fun() -> RuntimeRegister.R8(ref 0UL)
-            | ValueType.Primitive PrimitiveType.SNative
+            | ValueType.Primitive PrimitiveType.Char32 -> fun() -> RuntimeRegister.U32(ref 0u)
+            | ValueType.Primitive PrimitiveType.S64 -> fun() -> RuntimeRegister.S64(ref 0L)
+            | ValueType.Primitive PrimitiveType.U64 -> fun() -> RuntimeRegister.U64(ref 0UL)
+            | ValueType.Primitive PrimitiveType.F32 -> fun() -> RuntimeRegister.F32(ref 0.0f)
+            | ValueType.Primitive PrimitiveType.F64 -> fun() -> RuntimeRegister.F64(ref 0.0)
+            | ValueType.Primitive PrimitiveType.SNative -> fun() -> RuntimeRegister.SNative(ref 0n)
             | ValueType.Primitive PrimitiveType.UNative
-            | ValueType.UnsafePointer _ -> fun() -> RuntimeRegister.RNative(ref 0un)
+            | ValueType.UnsafePointer _ -> fun() -> RuntimeRegister.UNative(ref 0un)
             | ValueType.Primitive PrimitiveType.Unit -> fun() -> failwith "TODO: Prevent usage of Unit in register types."
             | ValueType.Defined _ -> failwith "TODO: Add support for registers containing structs"
-        | ReferenceType _ -> fun() -> RuntimeRegister.RRef(ref RuntimeObject.Null)
+        | ReferenceType _ -> fun() -> RuntimeRegister.Object(ref RuntimeObject.Null)
         | SafePointer _ -> failwithf "TODO: Safe pointers in registers not yet supported"
 
     member this.CreateArgumentRegisters() =
@@ -824,7 +1144,7 @@ type RuntimeModule (m: Module, moduleImportResolver: ModuleIdentifier -> Runtime
                                 Array.init argv.Length (fun i -> convert argv.[i])
                                 |> RuntimeObject.ObjectVector
                                 |> ref
-                                |> RuntimeRegister.RRef
+                                |> RuntimeRegister.Object
                                 |> ImmutableArray.Create
 
                             match tchar with // TODO: Create a Char8 type for UTF-8 strings
@@ -842,9 +1162,9 @@ type RuntimeModule (m: Module, moduleImportResolver: ModuleIdentifier -> Runtime
                     | bad -> failwithf "TODO: Error for invalid entrypoint argument type %A" bad
                 | _ -> failwith "TODO: Error for invalid number of arguments for entrypoint"
 
-            let result = ref 0u // TODO: Check that entry point does not return more than 1 value.
+            let result = ref 0 // TODO: Check that entry point does not return more than 1 value.
 
-            Interpreter.interpret (ImmutableArray.Create(RuntimeRegister.R4 result)) arguments main
+            Interpreter.interpret (ImmutableArray.Create(RuntimeRegister.S32 result)) arguments main
             int32 result.contents
         | ValueNone -> raise(MissingEntryPointException(this, "The entry point method of the module is not defined"))
 

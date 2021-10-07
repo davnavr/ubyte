@@ -416,8 +416,11 @@ let tcode =
                             (lookupRegisterArray registers names)
 
                 binaryOpInstruction "add" InstructionSet.Add
+                binaryOpInstruction "add.ovf" InstructionSet.Add_ovf
                 binaryOpInstruction "sub" InstructionSet.Sub
+                binaryOpInstruction "sub.ovf" InstructionSet.Sub_ovf
                 binaryOpInstruction "mul" InstructionSet.Mul
+                binaryOpInstruction "mul.ovf" InstructionSet.Mul_ovf
                 binaryOpInstruction "div" InstructionSet.Div
 
                 keyword "incr" >>. getPosition .>>. identifier |>> fun name -> fun registers _ ->

@@ -118,9 +118,6 @@ module InstructionSet =
         | sub = 0x21u
         | mul = 0x22u
         | div = 0x23u
-        | ``add.ovf`` = 0x24u
-        | ``sub.ovf`` = 0x25u
-        | ``mul.ovf`` = 0x26u
         | incr = 0x2Cu
         | ``incr.ovf`` = 0x2Du
         | decr = 0x2Eu
@@ -159,6 +156,9 @@ module InstructionSet =
         | ``obj.arr.set`` = 0x7Eu
         | ``call.ret`` = 0x90u
         | ``call.virt.ret`` = 0x91u
+        | ``add.ovf`` = 0x200Du
+        | ``sub.ovf`` = 0x200Eu
+        | ``mul.ovf`` = 0x200Fu
 
     type Instruction =
         | Nop
@@ -171,7 +171,9 @@ module InstructionSet =
         | Mul of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
         | Div of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
         | Incr of RegisterIndex
+        | Incr_ovf of RegisterIndex
         | Decr of RegisterIndex
+        | Decr_ovf of RegisterIndex
         | Const_i32 of value: int32 * destination: RegisterIndex
         | Const_true of RegisterIndex
         | Const_false of RegisterIndex
@@ -202,6 +204,9 @@ module InstructionSet =
         | Obj_arr_set of array: RegisterIndex * index: RegisterIndex * source: RegisterIndex
         | Call_ret of method: MethodIndex * arguments: vector<RegisterIndex> * results: vector<RegisterIndex>
         | Call_virt_ret of method: MethodIndex * arguments: vector<RegisterIndex> * results: vector<RegisterIndex>
+        | Add_ovf of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
+        | Sub_ovf of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
+        | Mul_ovf of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
 
 [<RequireQualifiedAccess>]
 type IdentifierSection =

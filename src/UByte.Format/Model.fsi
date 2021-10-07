@@ -136,28 +136,16 @@ module InstructionSet =
     type Opcode =
         | nop = 0u
         | ret = 1u
-
-        // Call
         | call = 5u
         | ``call.virt`` = 6u
         // ``call. = 7u
-
-        // Register
         | ``reg.copy`` = 0x17u
-
-        // Global
         //| ``global.ld`` = 0x19u
         //| ``global.st`` = 0x20u
-
-        // Arithmetic
-        // TODO: Should math opcodes get unsigned versions like in CIL?
         | add = 0x20u
         | sub = 0x21u
         | mul = 0x22u
         | div = 0x23u
-        | ``add.ovf`` = 0x24u // TOOD: Move ovf instructions to multi-byte area.
-        | ``sub.ovf`` = 0x25u
-        | ``mul.ovf`` = 0x26u
         //|  = 27u
         //|  = 28u
         //|  = 29u
@@ -189,8 +177,8 @@ module InstructionSet =
         | ``not`` = 0x42u
         | ``xor`` = 0x43u
         | rem = 0x44u
-        //| ``rem.ovf`` = 0x45u
         // TODO: Have operation that stores both division result AND remainder.
+        //| = 0x45u
         //| = 0x46u
         //| = 0x47u
         // TODO: Have oepration for shifting integer bits left and right
@@ -198,11 +186,9 @@ module InstructionSet =
         //| = 0x49u
         //| = 0x4Au
         //| = 0x4Bu
-        // TODO: Have conversion operators (int to float, float to int, etc.) that differ from reg.copy
+        // TODO: Have conversion operators (int to float, float to int, etc.) that differ from reg.copy, and variants with overflow checks
         | rotl = 0x4Cu
         | rotr = 0x4Du
-
-        // Branching
         | br = 0x60u
         | ``br.eq`` = 0x61u
         | ``br.ne`` = 0x62u
@@ -212,8 +198,6 @@ module InstructionSet =
         | ``br.ge`` = 0x66u
         | ``br.true`` = 0x67u
         | ``br.false`` = 0x68u
-
-        // Object
         | ``obj.new`` = 0x70u
         | ``obj.null`` = 0x71u
         | ``obj.ldfd`` = 0x72u
@@ -225,10 +209,11 @@ module InstructionSet =
         | ``obj.arr.get`` = 0x7Cu
         //| ``obj.arr.addr`` = 0x7Du
         | ``obj.arr.set`` = 0x7Eu
-
-        // Tail Call
         | ``call.ret`` = 0x90u
         | ``call.virt.ret`` = 0x91u
+        | ``add.ovf`` = 0x200Du
+        | ``sub.ovf`` = 0x200Eu
+        | ``mul.ovf`` = 0x200Fu
 
     /// <remarks>
     /// Instructions that store integer constants into a register <c>const.</c> are followed by the integer constants in the
@@ -265,8 +250,8 @@ module InstructionSet =
         /// </summary>
         | Add of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
         /// <summary>
-        /// Subtracts the value in register <paramref name="y"/> from register <paramref name="x"/> without an overflow check,
-        /// and stores the difference in the <paramref name="result"/> register.
+        /// Subtracts the value in register <paramref name="y"/> from the value in register <paramref name="x"/> without an
+        /// overflow check, and stores the difference in the <paramref name="result"/> register.
         /// </summary>
         | Sub of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
         /// <summary>
@@ -284,11 +269,13 @@ module InstructionSet =
         /// Increments the value stored in the register by one, without an overflow check.
         /// </summary>
         | Incr of RegisterIndex
+        | Incr_ovf of RegisterIndex
 
         /// <summary>
         /// Decrements the value stored in the register by one, without an overflow check.
         /// </summary>
         | Decr of RegisterIndex
+        | Decr_ovf of RegisterIndex
 
         /// <summary>
         /// Stores a signed or unsigned 32-bit integer <paramref name="value"/> into the specified <paramref name="destination"/>
@@ -422,6 +409,13 @@ module InstructionSet =
 
         | Call_ret of method: MethodIndex * arguments: vector<RegisterIndex> * results: vector<RegisterIndex>
         | Call_virt_ret of method: MethodIndex * arguments: vector<RegisterIndex> * results: vector<RegisterIndex>
+        | Add_ovf of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
+        /// <summary>
+        /// Subtracts the value in register <paramref name="y"/> from the value in register <paramref name="x"/> with an
+        /// overflow check, and stores the difference in the <paramref name="result"/> register.
+        /// </summary>
+        | Sub_ovf of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
+        | Mul_ovf of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
 
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
 type IdentifierSection = // TODO: Rename to something else
