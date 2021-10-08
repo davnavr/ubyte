@@ -7,6 +7,8 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="Parser.fsi" />
+    <Compile Include="Parser.fs" />
     <Compile Include="Assemble.fsi" />
     <Compile Include="Assemble.fs" />
 

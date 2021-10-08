@@ -494,3 +494,7 @@ module VersionNumbers =
     let empty = VersionNumbers ImmutableArray.Empty
     let semver major minor patch = VersionNumbers(ImmutableArray.Create(major, minor, item3 = patch))
     let ofValueOption version = ValueOption.defaultValue empty version
+    let ofList version =
+        match version with
+        | [] -> empty
+        | _ -> VersionNumbers(ImmutableArray.CreateRange version)

@@ -787,6 +787,7 @@ module VersionNumbers =
     val semver : major: uvarint -> minor: uvarint -> patch: uvarint -> VersionNumbers
     val empty : VersionNumbers
     val ofValueOption : version: VersionNumbers voption -> VersionNumbers
+    val ofList : version: uvarint list -> VersionNumbers
 
 [<RequireQualifiedAccess>]
 module MethodSignature =

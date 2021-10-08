@@ -1,6 +1,6 @@
 ﻿.module HelloWorld
-.format 0 0
 .version 0 1 0
+.format 0 0
 
 .identifier @id_namespace Example
 .identifier @id_class Hello
@@ -30,11 +30,11 @@
     .name @id_namespace
 }
 
-.type public @class_hello base {
+.type @class_hello public class {
     .name @id_class
     .namespace @namespace_example
 
-    .method public @method_main defined @code_main {
+    .method @method_main public defined @code_main {
         .signature @sig_main
         .name @id_entry_point
     }
