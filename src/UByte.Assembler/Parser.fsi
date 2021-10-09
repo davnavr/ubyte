@@ -1,4 +1,4 @@
-﻿module internal UByte.Assembler.Parser
+﻿module UByte.Assembler.Parser
 
 open System.Collections.Immutable
 
@@ -80,4 +80,4 @@ type ParsedDeclaration =
     | TypeDefinition of Symbol * ParsedTypeDefinition
     | EntryPoint of Symbol
 
-val declarations : Parser<ParsedDeclaration list, (Position * string) list>
+val declarations : Parser<ParsedDeclaration list, unit> //Parser<ParsedDeclaration list, ParserError list>

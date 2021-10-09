@@ -20,4 +20,6 @@ type State =
 
 type AssemblerResult = Result<Module, AssemblerError list>
 
-val fromInput : input: (Parser<AssemblerResult, State> -> State -> ParserResult<AssemblerResult, State>) -> AssemblerResult
+val fromInput :
+    input: (Parser<Parser.ParsedDeclaration list, unit> -> ParserResult<Parser.ParsedDeclaration list, unit>) ->
+    AssemblerResult

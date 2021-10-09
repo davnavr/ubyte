@@ -8,7 +8,7 @@ open UByte.Format.Model
 
 let whitespace =
     spaces
-    .>> (skipString "//" .>> skipRestOfLine true <?> "single-line comment")
+    .>> optional (skipString "//" .>> skipRestOfLine true <?> "single-line comment")
     .>> spaces
 
 let propen = skipChar '('
@@ -52,7 +52,8 @@ let line (inner: Parser<_, _>): Parser<_, _> =
             if stream.IsEndOfStream || start.Line < current.Line then
                 reply
             else
-                Reply(ReplyStatus.Error, expected "newline")
+                let reply = followedByNewline stream
+                Reply(reply.Status, reply.Error)
         else
             reply
 
@@ -73,7 +74,6 @@ let vernums =
 let namedecl dname pname = declaration dname >>. pname .>> whitespace |> line
 let namedecl' = namedecl "name" symbol
 let verdecl name = name >>. getPosition .>>. vernums |> line
-let verdecl' = verdecl (declaration "version")
 
 type ParsedTypeSignature = (Symbol -> TypeDefinitionIndex voption) -> Result<AnyType, Name>
 
@@ -106,7 +106,7 @@ let typesig: Parser<ParsedTypeSignature, _> = choice [
 ]
 
 let methodsig: Parser<Symbol list * Symbol list, _> =
-    let tlist = propen >>. sepBy (whitespace >>. symbol .>> whitespace) (skipChar ',') .>> prclose
+    let tlist = whitespace >>. propen >>. sepBy (whitespace >>. symbol .>> whitespace) (skipChar ',') .>> prclose
     tlist .>>. tlist
 
 [<Struct>]
@@ -265,11 +265,11 @@ type ParsedDeclaration =
     | TypeDefinition of Symbol * ParsedTypeDefinition
     | EntryPoint of Symbol
 
-let declarations: Parser<ParsedDeclaration list, (Position * string) list> =
+let declarations: Parser<ParsedDeclaration list, unit> =
     let declaration = period >>. choice [
         keyword "module" >>. choice [
             let mdimport =
-                pipe2 (namedecl "name" name) verdecl' <| fun name (_, ver) ->
+                pipe2 (namedecl "name" name) (verdecl (declaration "version")) <| fun name (_, ver) ->
                     { ModuleIdentifier.ModuleName = name; Version = ver }
 
             keyword "extern" >>. symbol .>>. block mdimport |>> ParsedDeclaration.ImportedModule
@@ -277,7 +277,7 @@ let declarations: Parser<ParsedDeclaration list, (Position * string) list> =
         ]
 
         verdecl (keyword "format") |>> ParsedDeclaration.FormatVersion
-        verdecl' |>> ParsedDeclaration.ModuleVersion
+        verdecl (keyword "version") |>> ParsedDeclaration.ModuleVersion
         keyword "identifier" >>. symbol .>>. identifier |>> ParsedDeclaration.Identifier |> line
 
         keyword "signature" >>. symbol .>>. choice [
@@ -297,5 +297,6 @@ let declarations: Parser<ParsedDeclaration list, (Position * string) list> =
 
         keyword "entrypoint" >>. symbol |>> ParsedDeclaration.EntryPoint
     ]
+    // TODO: If declaration could not be parsed, store error and parse the next one
 
-    setUserState List.empty >>. many (whitespace >>. declaration .>> whitespace) .>> eof
+    many (whitespace >>. declaration .>> whitespace) .>> eof
