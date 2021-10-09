@@ -25,10 +25,13 @@ let keyword word = whitespace >>. skipString word .>> separator
 
 let period = skipChar '.'
 
+let declaration word = period >>. keyword word
+
 let idchars = [ asciiLetter; pchar '_' ]
 
 let identifier =
-    choiceL
+    whitespace
+    >>. choiceL
         [
             choice [ asciiLetter; pchar '_' ] |> manyChars
             //between (skipChar '"')
@@ -38,7 +41,7 @@ let identifier =
 
 let name = notEmpty identifier |>> Name.ofStr
 
-let block contents = between bropen brclose contents
+let block contents = between (whitespace >>. bropen .>> whitespace) (whitespace >>. brclose .>> whitespace) contents
 
 let line (inner: Parser<_, _>): Parser<_, _> =
     fun stream ->
@@ -62,10 +65,49 @@ let symbol: Parser<Symbol, _> =
         (fun pos id -> struct(pos, Name.ofStr id))
     .>> separator
 
+let vernums =
+    let num: Parser<uvarint, _> =
+        numberLiteral NumberLiteralOptions.None "version number" |>> fun n -> System.UInt32.Parse n.String
+    whitespace >>. many (num .>> whitespace) |>> VersionNumbers.ofList
+
+let namedecl dname pname = declaration dname >>. pname .>> whitespace |> line
+let namedecl' = namedecl "name" symbol
+let verdecl name = name >>. getPosition .>>. vernums |> line
+let verdecl' = verdecl (declaration "version")
+
+type ParsedTypeSignature = (Symbol -> TypeDefinitionIndex voption) -> Result<AnyType, Name>
+
 [<RequireQualifiedAccess>]
 type ParsedSignature =
-    | Type of ((Symbol -> TypeDefinitionIndex voption) -> Result<AnyType, Name>)
+    | Type of ParsedTypeSignature
     | Method of returnTypes: Symbol list * parameterTypes: Symbol list
+
+let typesig: Parser<ParsedTypeSignature, _> = choice [
+    choiceL
+        [
+            skipString "bool" >>. preturn PrimitiveType.Bool
+            skipString "u8" >>. preturn PrimitiveType.U8
+            skipString "s8" >>. preturn PrimitiveType.S8
+            skipString "u16" >>. preturn PrimitiveType.U16
+            skipString "s16" >>. preturn PrimitiveType.S16
+            skipString "char16" >>. preturn PrimitiveType.Char16
+            skipString "u32" >>. preturn PrimitiveType.U32
+            skipString "s32" >>. preturn PrimitiveType.S32
+            skipString "char32" >>. preturn PrimitiveType.Char32
+            skipString "u64" >>. preturn PrimitiveType.U64
+            skipString "s64" >>. preturn PrimitiveType.S64
+            skipString "unative" >>. preturn PrimitiveType.UNative
+            skipString "snative" >>. preturn PrimitiveType.SNative
+            skipString "f32" >>. preturn PrimitiveType.F32
+            skipString "f64" >>. preturn PrimitiveType.F64
+        ]
+        "primitive type"
+    |>> fun prim -> fun _ -> ValueType.Primitive prim |> AnyType.ValueType |> Result.Ok
+]
+
+let methodsig: Parser<Symbol list * Symbol list, _> =
+    let tlist = propen >>. sepBy (whitespace >>. symbol .>> whitespace) (skipChar ',') .>> prclose
+    tlist .>>. tlist
 
 [<Struct>]
 type ParsedCodeLocals = { LocalsType: Symbol; LocalNames: Symbol list }
@@ -87,7 +129,49 @@ type ParsedInstruction = RegisterLookup -> IInstructionResolver -> InstructionEr
 
 type ParsedCode = { Locals: ParsedCodeLocals; Instructions: ParsedInstruction list }
 
+let code: Parser<ParsedCode, _> =
+    let registers =
+        let register =
+            period >>. keyword "local" >>. whitespace >>. symbol .>> whitespace |> line
+
+        period >>. keyword "type" >>. pipe2
+            (symbol .>> whitespace)
+            (many register)
+            (fun rtype regs -> { ParsedCodeLocals.LocalsType = rtype; LocalNames = regs })
+
+    let instruction: Parser<ParsedInstruction, _> = choice [
+        // TODO: Add back parsing of other instructions (https://github.com/davnavr/ubyte/blob/9fcc545407852a2573f3eb1d9cb568f1b15de26e/src/UByte.Assembler/Assemble.fs#L403)
+
+        let noop name instr = keyword name >>. preturn (fun _ _ _ -> ValueSome instr)
+        noop "ret" (InstructionSet.Ret ImmutableArray.Empty)
+        noop "nop" InstructionSet.Nop
+    ]
+
+    pipe2
+        (period >>. keyword "locals" >>. whitespace >>. block registers)
+        (instruction .>> whitespace |> line |> many)
+        (fun locals instrs -> { ParsedCode.Locals = locals; Instructions = instrs })
+    |> block
+
 type ParsedNamespace = { NamespaceName: Symbol }
+
+let inline attributes (flags: (string * 'Flag) list when 'Flag :> System.Enum): Parser<_, _> =
+    List.map (fun (name, flag) -> keyword name >>. preturn flag) flags
+    |> choice
+    |> many
+    |>> List.fold (fun flags flag -> flags ||| flag) Unchecked.defaultof<_>
+
+let inline flags flags =
+    choice [
+        attributes flags |> attempt
+        preturn Unchecked.defaultof<_>
+    ]
+
+let visibility: Parser<VisibilityFlags, _> =
+    flags [
+        "public", VisibilityFlags.Public
+        "private", VisibilityFlags.Private
+    ]
 
 type ParsedFieldDefinition =
     { FieldVisibility: VisibilityFlags
@@ -109,13 +193,64 @@ type ParsedTypeDefinition =
       DefinedFields: ParsedFieldDefinition list
       DefinedMethods: ParsedMethodDefinition list }
 
-let vernums =
-    let num: Parser<uvarint, _> =
-        numberLiteral NumberLiteralOptions.None "version number" |>> fun n -> System.UInt32.Parse n.String
-    whitespace >>. many (num .>> whitespace) |>> VersionNumbers.ofList
+[<RequireQualifiedAccess; NoComparison; NoEquality>]
+type ParsedFieldOrMethod =
+    | ParsedField of ParsedFieldDefinition
+    | ParsedMethod of ParsedMethodDefinition
 
-let namedecl = period >>. keyword "name" >>. name .>> whitespace |> line
-let verdecl name = keyword name >>. getPosition .>>. vernums |> line
+let tdef: Parser<VisibilityFlags -> ParsedTypeDefinition, _> =
+    //let inherited: Parser<_ list, _> =
+
+    let members = period >>. choice [
+        //keyword "field"
+
+        let mflags = flags [
+            "instance", MethodFlags.Instance
+            "constructor", MethodFlags.Constructor
+        ]
+
+        let mbody = choice [
+            keyword "defined" >>. symbol |>> fun body -> fun lookup ->
+                let struct(_, name) = body
+                match lookup body with
+                | ValueSome codei -> Result.Ok(MethodBody.Defined codei)
+                | ValueNone -> Result.Error name
+        ]
+
+        let mdecls =
+            line (declaration "signature" >>. symbol)
+            .>>. (line (declaration ".name" >>. symbol) |>> ValueSome <|> preturn ValueNone)
+
+        keyword "method" >>. pipe5 symbol visibility mflags mbody (block mdecls) (fun id vis attrs mkind (signature, name) ->
+            { ParsedMethodDefinition.MethodVisibility = vis
+              MethodFlags = attrs
+              MethodBody = mkind
+              MethodSignature = signature
+              MethodName = name }
+            |> ParsedFieldOrMethod.ParsedMethod)
+    ]
+
+    pipe4
+        namedecl'
+        (namedecl "namespace" symbol)
+        pzero //inherited
+        (many members)
+        (fun name ns () members -> fun vis ->
+            { ParsedTypeDefinition.TypeVisibility = vis
+              TypeName = ValueSome name
+              TypeNamespace = ValueSome ns
+              DefinedFields = // TODO: Simplify parsing of inner declarations in types.
+                List.choose
+                    (function
+                    | ParsedFieldOrMethod.ParsedField field -> Some field
+                    | _ -> None)
+                    members
+              DefinedMethods =
+                List.choose
+                    (function
+                    | ParsedFieldOrMethod.ParsedMethod method -> Some method
+                    | _ -> None)
+                    members } )
 
 [<RequireQualifiedAccess>]
 type ParsedDeclaration =
@@ -130,19 +265,37 @@ type ParsedDeclaration =
     | TypeDefinition of Symbol * ParsedTypeDefinition
     | EntryPoint of Symbol
 
-let declarations: Parser<ParsedDeclaration list, _> =
+let declarations: Parser<ParsedDeclaration list, (Position * string) list> =
     let declaration = period >>. choice [
         keyword "module" >>. choice [
-            let mdimport = pipe2 namedecl (verdecl "version") <| fun name (_, ver) ->
-                { ModuleIdentifier.ModuleName = name; Version = ver }
+            let mdimport =
+                pipe2 (namedecl "name" name) verdecl' <| fun name (_, ver) ->
+                    { ModuleIdentifier.ModuleName = name; Version = ver }
 
             keyword "extern" >>. symbol .>>. block mdimport |>> ParsedDeclaration.ImportedModule
-            name .>> whitespace |>> ParsedDeclaration.Module |> line
+            name |>> ParsedDeclaration.Module |> line
         ]
 
-        verdecl "format" |>> ParsedDeclaration.FormatVersion
-        verdecl "version" |>> ParsedDeclaration.ModuleVersion
+        verdecl (keyword "format") |>> ParsedDeclaration.FormatVersion
+        verdecl' |>> ParsedDeclaration.ModuleVersion
         keyword "identifier" >>. symbol .>>. identifier |>> ParsedDeclaration.Identifier |> line
+
+        keyword "signature" >>. symbol .>>. choice [
+            keyword "type" >>. typesig |>> ParsedSignature.Type
+            keyword "method" >>. methodsig |>> ParsedSignature.Method
+        ]
+        |>> ParsedDeclaration.Signature
+        |> line
+
+        keyword "code" >>. symbol .>>. code |>> ParsedDeclaration.Code
+
+        keyword "namespace" >>. pipe2 symbol (block namedecl') (fun id name ->
+            ParsedDeclaration.Namespace(id, { ParsedNamespace.NamespaceName = name }))
+
+        keyword "type" >>. pipe3 symbol visibility (block tdef) (fun id vis tkind ->
+            ParsedDeclaration.TypeDefinition(id, tkind vis))
+
+        keyword "entrypoint" >>. symbol |>> ParsedDeclaration.EntryPoint
     ]
 
     setUserState List.empty >>. many (whitespace >>. declaration .>> whitespace) .>> eof

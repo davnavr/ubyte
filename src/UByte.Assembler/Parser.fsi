@@ -8,9 +8,11 @@ open UByte.Format.Model
 
 type Symbol = System.ValueTuple<Position, Name>
 
+type ParsedTypeSignature = (Symbol -> TypeDefinitionIndex voption) -> Result<AnyType, Name>
+
 [<RequireQualifiedAccess>]
 type ParsedSignature =
-    | Type of ((Symbol -> TypeDefinitionIndex voption) -> Result<AnyType, Name>)
+    | Type of ParsedTypeSignature
     | Method of returnTypes: Symbol list * parameterTypes: Symbol list
 
 [<System.Runtime.CompilerServices.IsReadOnly; Struct; NoComparison; NoEquality>]
