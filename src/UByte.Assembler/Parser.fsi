@@ -10,10 +10,17 @@ type Symbol = System.ValueTuple<Position, Name>
 
 type ParsedTypeSignature = (Symbol -> TypeDefinitionIndex voption) -> Result<AnyType, Name>
 
-[<RequireQualifiedAccess>]
+[<RequireQualifiedAccess; NoComparison; NoEquality>]
 type ParsedSignature =
     | Type of ParsedTypeSignature
     | Method of returnTypes: Symbol list * parameterTypes: Symbol list
+
+type ParsedVersionNumbers = Position * VersionNumbers
+
+[<RequireQualifiedAccess; NoComparison; NoEquality>]
+type ModuleImportDecl =
+    | Name of Name
+    | Version of ParsedVersionNumbers
 
 [<System.Runtime.CompilerServices.IsReadOnly; Struct; NoComparison; NoEquality>]
 type ParsedCodeLocals =
@@ -44,40 +51,50 @@ type ParsedCode =
 type ParsedNamespace =
     { NamespaceName: Symbol }
 
-[<NoComparison; NoEquality>]
-type ParsedFieldDefinition =
-    { FieldVisibility: VisibilityFlags
-      FieldFlags: FieldFlags
-      FieldType: Symbol
-      FieldName: Symbol voption }
+[<RequireQualifiedAccess; NoComparison; NoEquality>]
+type FieldDefAttr =
+    | Visibility of Position * VisibilityFlags
+    | Flag of Position * FieldFlags
 
-[<NoComparison; NoEquality>]
-type ParsedMethodDefinition =
-    { MethodVisibility: VisibilityFlags
-      MethodFlags: MethodFlags
-      MethodBody: (Symbol -> CodeIndex voption) -> Result<MethodBody, Name>
-      MethodSignature: Symbol
-      MethodName: Symbol voption }
+[<RequireQualifiedAccess; NoComparison; NoEquality>]
+type FieldDefDecl =
+    | Type of Symbol
+    | Name of Symbol
 
-[<NoComparison; NoEquality>]
-type ParsedTypeDefinition =
-    { TypeVisibility: VisibilityFlags
-      TypeName: Symbol voption
-      TypeNamespace: Symbol voption
-      DefinedFields: ParsedFieldDefinition list
-      DefinedMethods: ParsedMethodDefinition list }
+[<RequireQualifiedAccess; NoComparison; NoEquality>]
+type MethodDefAttr =
+    | Visibility of Position * VisibilityFlags
+    | Flag of Position * MethodFlags
+    | Body of Position * ((Symbol -> CodeIndex voption) -> Result<MethodBody, Name>)
+
+[<RequireQualifiedAccess; NoComparison; NoEquality>]
+type MethodDefDecl =
+    | Signature of Symbol
+    | Name of Symbol
+
+[<RequireQualifiedAccess; NoComparison; NoEquality>]
+type TypeDefAttr =
+    | Visibility of Position * VisibilityFlags
+    //| Extends of Symbol
+
+[<RequireQualifiedAccess; NoComparison; NoEquality>]
+type TypeDefDecl =
+    | Name of Symbol
+    | Namespace of Symbol
+    | Field of Symbol voption * FieldDefAttr list * FieldDefDecl list
+    | Method of Symbol voption * MethodDefAttr list * MethodDefDecl list
 
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
 type ParsedDeclaration =
-    | Module of (*Symbol * *) Name // TODO: Allow refering to the current module
-    | FormatVersion of Position * VersionNumbers
-    | ModuleVersion of Position * VersionNumbers
+    | Module of Symbol voption * Name
+    | FormatVersion of ParsedVersionNumbers
+    | ModuleVersion of ParsedVersionNumbers
     | Identifier of Symbol * string
     | Signature of Symbol * ParsedSignature
-    | ImportedModule of Symbol * ModuleIdentifier
+    | ImportedModule of Symbol * ModuleImportDecl list
     | Code of Symbol * ParsedCode
     | Namespace of Symbol * ParsedNamespace
-    | TypeDefinition of Symbol * ParsedTypeDefinition
+    | TypeDefinition of Symbol * TypeDefAttr list * TypeDefDecl list
     | EntryPoint of Symbol
 
 val declarations : Parser<ParsedDeclaration list, unit> //Parser<ParsedDeclaration list, ParserError list>

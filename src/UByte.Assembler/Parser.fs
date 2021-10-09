@@ -66,14 +66,17 @@ let symbol: Parser<Symbol, _> =
         (fun pos id -> struct(pos, Name.ofStr id))
     .>> separator
 
+type ParsedVersionNumbers = Position * VersionNumbers
+
 let vernums =
     let num: Parser<uvarint, _> =
         numberLiteral NumberLiteralOptions.None "version number" |>> fun n -> System.UInt32.Parse n.String
     whitespace >>. many (num .>> whitespace) |>> VersionNumbers.ofList
 
-let namedecl dname pname = declaration dname >>. pname .>> whitespace |> line
-let namedecl' = namedecl "name" symbol
-let verdecl name = name >>. getPosition .>>. vernums |> line
+let namedecl dname pname = dname >>. pname .>> whitespace |> line
+let namedecl' = namedecl (keyword "name") symbol
+let verdecl name: Parser<ParsedVersionNumbers, _> = name >>. getPosition .>>. vernums |> line
+let verdecl' = verdecl (keyword "version")
 
 type ParsedTypeSignature = (Symbol -> TypeDefinitionIndex voption) -> Result<AnyType, Name>
 
@@ -173,111 +176,128 @@ let visibility: Parser<VisibilityFlags, _> =
         "private", VisibilityFlags.Private
     ]
 
-type ParsedFieldDefinition =
-    { FieldVisibility: VisibilityFlags
-      FieldFlags: FieldFlags
-      FieldType: Symbol
-      FieldName: Symbol voption }
+[<RequireQualifiedAccess>]
+type TypeDefAttr = | Visibility of Position * VisibilityFlags
 
-type ParsedMethodDefinition =
-    { MethodVisibility: VisibilityFlags
-      MethodFlags: MethodFlags
-      MethodBody: (Symbol -> CodeIndex voption) -> Result<MethodBody, Name>
-      MethodSignature: Symbol
-      MethodName: Symbol voption }
-
-type ParsedTypeDefinition =
-    { TypeVisibility: VisibilityFlags
-      TypeName: Symbol voption
-      TypeNamespace: Symbol voption
-      DefinedFields: ParsedFieldDefinition list
-      DefinedMethods: ParsedMethodDefinition list }
-
-[<RequireQualifiedAccess; NoComparison; NoEquality>]
-type ParsedFieldOrMethod =
-    | ParsedField of ParsedFieldDefinition
-    | ParsedMethod of ParsedMethodDefinition
-
-let tdef: Parser<VisibilityFlags -> ParsedTypeDefinition, _> =
-    //let inherited: Parser<_ list, _> =
-
-    let members = period >>. choice [
-        //keyword "field"
-
-        let mflags = flags [
-            "instance", MethodFlags.Instance
-            "constructor", MethodFlags.Constructor
-        ]
-
-        let mbody = choice [
-            keyword "defined" >>. symbol |>> fun body -> fun lookup ->
-                let struct(_, name) = body
-                match lookup body with
-                | ValueSome codei -> Result.Ok(MethodBody.Defined codei)
-                | ValueNone -> Result.Error name
-        ]
-
-        let mdecls =
-            line (declaration "signature" >>. symbol)
-            .>>. (line (declaration ".name" >>. symbol) |>> ValueSome <|> preturn ValueNone)
-
-        keyword "method" >>. pipe5 symbol visibility mflags mbody (block mdecls) (fun id vis attrs mkind (signature, name) ->
-            { ParsedMethodDefinition.MethodVisibility = vis
-              MethodFlags = attrs
-              MethodBody = mkind
-              MethodSignature = signature
-              MethodName = name }
-            |> ParsedFieldOrMethod.ParsedMethod)
+let tdefattr =
+    choice [
+        getPosition .>>. visibility |>> TypeDefAttr.Visibility
     ]
+    .>> whitespace
+    |> many
 
-    pipe4
-        namedecl'
-        (namedecl "namespace" symbol)
-        pzero //inherited
-        (many members)
-        (fun name ns () members -> fun vis ->
-            { ParsedTypeDefinition.TypeVisibility = vis
-              TypeName = ValueSome name
-              TypeNamespace = ValueSome ns
-              DefinedFields = // TODO: Simplify parsing of inner declarations in types.
-                List.choose
-                    (function
-                    | ParsedFieldOrMethod.ParsedField field -> Some field
-                    | _ -> None)
-                    members
-              DefinedMethods =
-                List.choose
-                    (function
-                    | ParsedFieldOrMethod.ParsedMethod method -> Some method
-                    | _ -> None)
-                    members } )
+[<RequireQualifiedAccess>]
+type FieldDefAttr =
+    | Visibility of Position * VisibilityFlags
+    | Flag of Position * FieldFlags
+
+let fdefattr =
+    choice [
+        getPosition .>>. visibility |>> FieldDefAttr.Visibility
+        getPosition .>>. flags [
+            "mutable", FieldFlags.Mutable
+        ]
+        |>> FieldDefAttr.Flag
+    ]
+    .>> whitespace
+    |> many
+
+[<RequireQualifiedAccess>]
+type FieldDefDecl =
+    | Type of Symbol
+    | Name of Symbol
+
+let fdefdecl =
+    period >>. choice [
+        namedecl' |>> FieldDefDecl.Name
+        keyword "type" >>. symbol |>> FieldDefDecl.Type
+    ]
+    |> line
+    |> many
+
+[<RequireQualifiedAccess>]
+type MethodDefAttr =
+    | Visibility of Position * VisibilityFlags
+    | Flag of Position * MethodFlags
+    | Body of Position * ((Symbol -> CodeIndex voption) -> Result<MethodBody, Name>)
+
+let mdefattr =
+    choice [
+        getPosition .>>. visibility |>> MethodDefAttr.Visibility
+
+        getPosition .>>. flags [
+            "instance", MethodFlags.Instance
+        ]
+        |>> MethodDefAttr.Flag
+
+        keyword "defined" >>. symbol |>> fun _ -> MethodDefAttr.Body(failwith "TODO: Get method body")
+    ]
+    .>> whitespace
+    |> many
+
+[<RequireQualifiedAccess>]
+type MethodDefDecl =
+    | Signature of Symbol
+    | Name of Symbol
+
+let mdefdecl =
+    period >>. choice [
+        namedecl' |>> MethodDefDecl.Name
+        keyword "signature" >>. symbol |>> MethodDefDecl.Signature
+    ]
+    |> line
+    |> many
+
+[<RequireQualifiedAccess>]
+type TypeDefDecl =
+    | Name of Symbol
+    | Namespace of Symbol
+    | Field of Symbol voption * FieldDefAttr list * FieldDefDecl list
+    | Method of Symbol voption * MethodDefAttr list * MethodDefDecl list
+
+let tdefdecl =
+    period >>. choice [
+        namedecl' |>> TypeDefDecl.Name
+        namedecl (keyword "namespace") symbol |>> TypeDefDecl.Namespace
+        keyword "field" >>. tuple3 (symbol |>> ValueSome) fdefattr fdefdecl |>> TypeDefDecl.Field
+        keyword "method" >>. tuple3 (symbol |>> ValueSome) mdefattr mdefdecl |>> TypeDefDecl.Method
+    ]
+    |> line
+    |> many
+
+[<RequireQualifiedAccess>]
+type ModuleImportDecl = | Name of Name | Version of ParsedVersionNumbers
 
 [<RequireQualifiedAccess>]
 type ParsedDeclaration =
-    | Module of Name
-    | FormatVersion of Position * VersionNumbers
-    | ModuleVersion of Position * VersionNumbers
+    | Module of Symbol voption * Name
+    | FormatVersion of ParsedVersionNumbers
+    | ModuleVersion of ParsedVersionNumbers
     | Identifier of Symbol * string
     | Signature of Symbol * ParsedSignature
-    | ImportedModule of Symbol * ModuleIdentifier
+    | ImportedModule of Symbol * ModuleImportDecl list
     | Code of Symbol * ParsedCode
     | Namespace of Symbol * ParsedNamespace
-    | TypeDefinition of Symbol * ParsedTypeDefinition
+    | TypeDefinition of Symbol * TypeDefAttr list * TypeDefDecl list
     | EntryPoint of Symbol
 
 let declarations: Parser<ParsedDeclaration list, unit> =
     let declaration = period >>. choice [
         keyword "module" >>. choice [
             let mdimport =
-                pipe2 (namedecl "name" name) (verdecl (declaration "version")) <| fun name (_, ver) ->
-                    { ModuleIdentifier.ModuleName = name; Version = ver }
+                period >>. choice [
+                    namedecl (keyword "name") name |>> ModuleImportDecl.Name
+                    verdecl' |>> ModuleImportDecl.Version
+                ]
+                |> line
+                |> many
 
             keyword "extern" >>. symbol .>>. block mdimport |>> ParsedDeclaration.ImportedModule
-            name |>> ParsedDeclaration.Module |> line
+            name |>> (fun name -> ParsedDeclaration.Module(ValueNone, name)) |> line
         ]
 
         verdecl (keyword "format") |>> ParsedDeclaration.FormatVersion
-        verdecl (keyword "version") |>> ParsedDeclaration.ModuleVersion
+        verdecl' |>> ParsedDeclaration.ModuleVersion
         keyword "identifier" >>. symbol .>>. identifier |>> ParsedDeclaration.Identifier |> line
 
         keyword "signature" >>. symbol .>>. choice [
@@ -289,12 +309,10 @@ let declarations: Parser<ParsedDeclaration list, unit> =
 
         keyword "code" >>. symbol .>>. code |>> ParsedDeclaration.Code
 
-        keyword "namespace" >>. pipe2 symbol (block namedecl') (fun id name ->
+        keyword "namespace" >>. pipe2 symbol (block (namedecl (declaration "name") symbol)) (fun id name ->
             ParsedDeclaration.Namespace(id, { ParsedNamespace.NamespaceName = name }))
 
-        keyword "type" >>. pipe3 symbol visibility (block tdef) (fun id vis tkind ->
-            ParsedDeclaration.TypeDefinition(id, tkind vis))
-
+        keyword "type" >>. tuple3 symbol tdefattr (block tdefdecl) |>> ParsedDeclaration.TypeDefinition
         keyword "entrypoint" >>. symbol |>> ParsedDeclaration.EntryPoint
     ]
     // TODO: If declaration could not be parsed, store error and parse the next one
