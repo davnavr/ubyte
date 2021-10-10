@@ -65,12 +65,12 @@ type FieldDefDecl =
 type MethodDefAttr =
     | Visibility of Position * VisibilityFlags
     | Flag of Position * MethodFlags
-    | Body of Position * ((Symbol -> CodeIndex voption) -> Result<MethodBody, Name>)
 
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
 type MethodDefDecl =
     | Signature of Symbol
     | Name of Symbol
+    | Body of Position * ((Symbol -> CodeIndex voption) -> Result<MethodBody, Name>)
 
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
 type TypeDefAttr =

@@ -34,9 +34,10 @@
     .name @id_class
     .namespace @namespace_example
 
-    .method @method_main public static defined @code_main {
+    .method @method_main public static {
         .signature @sig_main
         .name @id_entry_point
+        .body defined @code_main
     }
 }
 

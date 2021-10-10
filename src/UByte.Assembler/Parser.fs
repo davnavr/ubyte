@@ -219,7 +219,6 @@ let fdefdecl =
 type MethodDefAttr =
     | Visibility of Position * VisibilityFlags
     | Flag of Position * MethodFlags
-    | Body of Position * ((Symbol -> CodeIndex voption) -> Result<MethodBody, Name>)
 
 let mdefattr =
     choice [
@@ -229,8 +228,6 @@ let mdefattr =
             "instance", MethodFlags.Instance
         ]
         |>> MethodDefAttr.Flag
-
-        keyword "defined" >>. symbol |>> fun _ -> MethodDefAttr.Body(failwith "TODO: Get method body")
     ]
     .>> whitespace
     |> many
@@ -239,11 +236,19 @@ let mdefattr =
 type MethodDefDecl =
     | Signature of Symbol
     | Name of Symbol
+    | Body of Position * ((Symbol -> CodeIndex voption) -> Result<MethodBody, Name>)
 
 let mdefdecl =
     period >>. choice [
         namedecl' |>> MethodDefDecl.Name
         keyword "signature" >>. symbol |>> MethodDefDecl.Signature
+        keyword "body" >>. choice [
+            keyword "defined" >>. symbol |>> fun ((pos, coden) as body) ->
+                MethodDefDecl.Body(pos, fun lookup ->
+                    match lookup body with
+                    | ValueSome codei -> Result.Ok(MethodBody.Defined codei)
+                    | ValueNone -> Result.Error coden)
+        ]
     ]
     |> line
     |> many
