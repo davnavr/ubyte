@@ -1,8 +1,11 @@
 ﻿module UByte.Assembler.Parser
 
+open System
 open System.Collections.Immutable
 
 open FParsec
+
+open UByte.Helpers
 
 open UByte.Format.Model
 
@@ -43,6 +46,8 @@ let name = notEmpty identifier |>> Name.ofStr
 
 let block contents = between (whitespace >>. bropen .>> whitespace) (whitespace >>. brclose .>> whitespace) contents
 
+let integerlit = numberLiteral NumberLiteralOptions.DefaultInteger "integer literal" .>> whitespace
+
 let line (inner: Parser<_, _>): Parser<_, _> =
     fun stream ->
         let start = stream.Position
@@ -70,7 +75,7 @@ type ParsedVersionNumbers = Position * VersionNumbers
 
 let vernums =
     let num: Parser<uvarint, _> =
-        numberLiteral NumberLiteralOptions.None "version number" |>> fun n -> System.UInt32.Parse n.String
+        numberLiteral NumberLiteralOptions.None "version number" |>> fun n -> UInt32.Parse n.String
     whitespace >>. many (num .>> whitespace) |>> VersionNumbers.ofList
 
 let namedecl dname pname = dname >>. pname .>> whitespace |> line
@@ -105,7 +110,7 @@ let typesig: Parser<ParsedTypeSignature, _> = choice [
             skipString "f64" >>. preturn PrimitiveType.F64
         ]
         "primitive type"
-    |>> fun prim -> fun _ -> ValueType.Primitive prim |> AnyType.ValueType |> Result.Ok
+    |>> fun prim _ -> ValueType.Primitive prim |> AnyType.ValueType |> Result.Ok
 ]
 
 let methodsig: Parser<Symbol list * Symbol list, _> =
@@ -119,6 +124,7 @@ type ParsedCodeLocals = { LocalsType: Symbol; LocalNames: Symbol list }
 type InvalidInstructionError =
     | UndefinedRegister of Symbol
     | UndefinedMethod of Symbol
+    | InvalidIntegerLiteral of Position * size: int32 * literal: string
 
 type IInstructionResolver =
     abstract FindField: field: Symbol -> FieldIndex voption
@@ -142,12 +148,85 @@ let code: Parser<ParsedCode, _> =
             (many register)
             (fun rtype regs -> { ParsedCodeLocals.LocalsType = rtype; LocalNames = regs })
 
-    let instruction: Parser<ParsedInstruction, _> = choice [
-        // TODO: Add back parsing of other instructions (https://github.com/davnavr/ubyte/blob/9fcc545407852a2573f3eb1d9cb568f1b15de26e/src/UByte.Assembler/Assemble.fs#L403)
+    let inline addErrorTo (errors: InstructionErrorsBuilder) e =
+        errors.Add e
+        ValueNone
 
-        let noop name instr = keyword name >>. preturn (fun _ _ _ -> ValueSome instr)
-        noop "ret" (InstructionSet.Ret ImmutableArray.Empty)
+    let lookupRegisterName (lookup: RegisterLookup) (errors: InstructionErrorsBuilder) id: RegisterIndex voption =
+        match lookup id with
+        | ValueSome i -> ValueSome i
+        | ValueNone -> addErrorTo errors (InvalidInstructionError.UndefinedRegister id)
+
+    let lookupRegisterList lookup errors names =
+        let rec inner (registers: ImmutableArray<RegisterIndex>.Builder) success names =
+            match names with
+            | [] -> if success then ValueSome(registers.ToImmutable()) else ValueNone
+            | name :: remaining ->
+                let success' =
+                    match lookupRegisterName lookup errors name with
+                    | ValueSome i ->
+                        registers.Add i
+                        success
+                    | ValueNone ->
+                        false
+
+                inner registers success' remaining
+        inner (ImmutableArray.CreateBuilder()) true names
+
+    let lookupRegisterArray lookup names errors =
+        let mutable resolved, success = Array.zeroCreate(Array.length names), true
+
+        for i = 0 to resolved.Length - 1 do
+            match lookupRegisterName lookup errors names.[i] with
+            | ValueSome rindex -> resolved.[i] <- rindex
+            | ValueNone -> success <- false
+
+        if success then
+            ValueSome(System.Runtime.CompilerServices.Unsafe.As<RegisterIndex[], ImmutableArray<RegisterIndex>> &resolved)
+        else
+            ValueNone
+
+    let instruction: Parser<ParsedInstruction, _> = choice [
+        // NOTE: For performance, can be replaced with a lookup table (https://www.quanttec.com/fparsec/users-guide/performance-optimizations.html#low-level-parser-implementations)
+        //let instructions = Dictionary<string, Parser<ParsedInstruction, _>>()
+
+        // TODO: Add parsing of other instructions (https://github.com/davnavr/ubyte/blob/9fcc545407852a2573f3eb1d9cb568f1b15de26e/src/UByte.Assembler/Assemble.fs#L403)
+
+        let noop name instr = keyword name >>. preturn (fun _ _ _ -> ValueSome instr) |> line
         noop "nop" InstructionSet.Nop
+
+        let withRegisterCount name count instr =
+            keyword name >>. parray count symbol |>> fun registers rlookup _ errors -> voptional {
+                let! registers' = lookupRegisterArray rlookup registers errors
+                return instr registers'
+            }
+
+        let withThreeRegisters name instr =
+            withRegisterCount name 2 (fun registers -> instr(registers.[0], registers.[1], registers.[2]))
+
+        withThreeRegisters "add.ovf" InstructionSet.Add_ovf
+        withThreeRegisters "add" InstructionSet.Add
+        withThreeRegisters "sub.ovf" InstructionSet.Sub_ovf
+        withThreeRegisters "sub" InstructionSet.Sub
+        withThreeRegisters "mul.ovf" InstructionSet.Mul_ovf
+        withThreeRegisters "mul" InstructionSet.Mul
+        withThreeRegisters "div" InstructionSet.Div
+
+        keyword "const.i32" >>. pipe3 getPosition integerlit symbol (fun pos value destination rlookup _ errors -> voptional {
+            let! value' =
+                match Int64.TryParse value.String with
+                | true, i when i >= int64 Int32.MinValue && i <= int64 UInt32.MaxValue -> ValueSome(int32 i)
+                | _ -> addErrorTo errors (InvalidInstructionError.InvalidIntegerLiteral(pos, sizeof<int32>, value.String))
+
+            let! destination' = lookupRegisterName rlookup errors destination
+
+            return InstructionSet.Const_i32(value', destination')
+        })
+
+        keyword "ret" >>. many symbol |> line |>> fun registers rlookup _ errors -> voptional {
+            let! registers' = lookupRegisterList rlookup errors registers
+            return InstructionSet.Ret registers'
+        }
     ]
 
     pipe2

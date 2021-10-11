@@ -31,6 +31,7 @@ type ParsedCodeLocals =
 type InvalidInstructionError =
     | UndefinedRegister of Symbol
     | UndefinedMethod of Symbol
+    | InvalidIntegerLiteral of Position * size: int32 * literal: string
 
 type IInstructionResolver =
     abstract FindField: field: Symbol -> FieldIndex voption
