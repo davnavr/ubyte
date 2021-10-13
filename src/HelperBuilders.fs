@@ -14,4 +14,6 @@ type ValueOptionBuilder =
 
     member inline _.ReturnFrom(value: 'T voption) = value
 
+    member inline _.Zero(): 'T voption = ValueNone
+
 let voptional = ValueOptionBuilder()

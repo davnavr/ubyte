@@ -83,7 +83,7 @@ let namedecl' = namedecl (keyword "name") symbol
 let verdecl name: Parser<ParsedVersionNumbers, _> = name >>. getPosition .>>. vernums |> line
 let verdecl' = verdecl (keyword "version")
 
-type ParsedTypeSignature = (Symbol -> TypeDefinitionIndex voption) -> Result<AnyType, Name>
+type ParsedTypeSignature = (Symbol -> TypeDefinitionIndex voption) -> Result<AnyType, Symbol>
 
 [<RequireQualifiedAccess>]
 type ParsedSignature =
@@ -132,11 +132,12 @@ type IInstructionResolver =
 
 type RegisterLookup = Symbol -> RegisterIndex voption
 
-type InstructionErrorsBuilder = ImmutableArray<InvalidInstructionError>.Builder
+type InstructionErrorsBuilder = System.Collections.Generic.ICollection<InvalidInstructionError>
 
 type ParsedInstruction = RegisterLookup -> IInstructionResolver -> InstructionErrorsBuilder -> InstructionSet.Instruction voption
 
-type ParsedCode = { Locals: ParsedCodeLocals; Instructions: ParsedInstruction list }
+[<Struct>]
+type ParsedCode = { Locals: ParsedCodeLocals list; Instructions: ParsedInstruction list }
 
 let code: Parser<ParsedCode, _> =
     let registers =
@@ -230,12 +231,12 @@ let code: Parser<ParsedCode, _> =
     ]
 
     pipe2
-        (period >>. keyword "locals" >>. whitespace >>. block registers)
+        (period >>. keyword "locals" >>. whitespace >>. block registers |> many)
         (instruction .>> whitespace |> line |> many)
         (fun locals instrs -> { ParsedCode.Locals = locals; Instructions = instrs })
     |> block
 
-type ParsedNamespace = { NamespaceName: Symbol }
+type ParsedNamespace = { NamespaceName: Symbol list }
 
 let inline attributes (flags: (string * 'Flag) list when 'Flag :> System.Enum): Parser<_, _> =
     List.map (fun (name, flag) -> keyword name >>. preturn flag) flags
@@ -354,7 +355,7 @@ type ModuleImportDecl = | Name of Name | Version of ParsedVersionNumbers
 
 [<RequireQualifiedAccess>]
 type ParsedDeclaration =
-    | Module of Symbol voption * Name
+    | Module of Position * Symbol voption * Name
     | FormatVersion of ParsedVersionNumbers
     | ModuleVersion of ParsedVersionNumbers
     | Identifier of Symbol * string
@@ -377,7 +378,7 @@ let declarations: Parser<ParsedDeclaration list, unit> =
                 |> many
 
             keyword "extern" >>. symbol .>>. block mdimport |>> ParsedDeclaration.ImportedModule
-            name |>> (fun name -> ParsedDeclaration.Module(ValueNone, name)) |> line
+            pipe2 getPosition name (fun pos name -> ParsedDeclaration.Module(pos, ValueNone, name)) |> line
         ]
 
         verdecl (keyword "format") |>> ParsedDeclaration.FormatVersion
@@ -393,7 +394,7 @@ let declarations: Parser<ParsedDeclaration list, unit> =
 
         keyword "code" >>. symbol .>>. code |>> ParsedDeclaration.Code
 
-        keyword "namespace" >>. pipe2 symbol (block (namedecl (declaration "name") symbol)) (fun id name ->
+        keyword "namespace" >>. pipe2 symbol (block (namedecl (declaration "name") (many symbol))) (fun id name ->
             ParsedDeclaration.Namespace(id, { ParsedNamespace.NamespaceName = name }))
 
         keyword "type" >>. tuple3 symbol tdefattr (block tdefdecl) |>> ParsedDeclaration.TypeDefinition

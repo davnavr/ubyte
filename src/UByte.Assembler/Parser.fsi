@@ -8,7 +8,7 @@ open UByte.Format.Model
 
 type Symbol = System.ValueTuple<Position, Name>
 
-type ParsedTypeSignature = (Symbol -> TypeDefinitionIndex voption) -> Result<AnyType, Name>
+type ParsedTypeSignature = (Symbol -> TypeDefinitionIndex voption) -> Result<AnyType, Symbol>
 
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
 type ParsedSignature =
@@ -39,18 +39,18 @@ type IInstructionResolver =
 
 type RegisterLookup = Symbol -> RegisterIndex voption
 
-type InstructionErrorsBuilder = ImmutableArray<InvalidInstructionError>.Builder
+type InstructionErrorsBuilder = System.Collections.Generic.ICollection<InvalidInstructionError>
 
 type ParsedInstruction = RegisterLookup -> IInstructionResolver -> InstructionErrorsBuilder -> InstructionSet.Instruction voption
 
-[<NoComparison; NoEquality>]
+[<System.Runtime.CompilerServices.IsReadOnly; Struct; NoComparison; NoEquality>]
 type ParsedCode =
-    { Locals: ParsedCodeLocals
+    { Locals: ParsedCodeLocals list
       Instructions: ParsedInstruction list }
 
 [<NoComparison; NoEquality>]
 type ParsedNamespace =
-    { NamespaceName: Symbol }
+    { NamespaceName: Symbol list }
 
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
 type FieldDefAttr =
@@ -87,7 +87,7 @@ type TypeDefDecl =
 
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
 type ParsedDeclaration =
-    | Module of Symbol voption * Name
+    | Module of Position * Symbol voption * Name
     | FormatVersion of ParsedVersionNumbers
     | ModuleVersion of ParsedVersionNumbers
     | Identifier of Symbol * string
