@@ -203,7 +203,7 @@ let code: Parser<ParsedCode, _> =
             }
 
         let withThreeRegisters name instr =
-            withRegisterCount name 2 (fun registers -> instr(registers.[0], registers.[1], registers.[2]))
+            withRegisterCount name 3 (fun registers -> instr(registers.[0], registers.[1], registers.[2]))
 
         withThreeRegisters "add.ovf" InstructionSet.Add_ovf
         withThreeRegisters "add" InstructionSet.Add
