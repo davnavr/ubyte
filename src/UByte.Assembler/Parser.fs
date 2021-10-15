@@ -57,8 +57,8 @@ let line (inner: Parser<_, _>): Parser<_, _> =
             if stream.IsEndOfStream || start.Line < current.Line then
                 reply
             else
-                let reply = followedByNewline stream
-                Reply(reply.Status, reply.Error)
+                let reply' = followedByNewline stream
+                Reply(reply'.Status, reply.Result, reply'.Error)
         else
             reply
 
