@@ -430,7 +430,7 @@ let assemble declarations =
                             match names with
                             | [] when success -> ValueSome count
                             | [] -> ValueNone
-                            | name :: remaining ->
+                            | ((_, name): Symbol) :: remaining ->
                                 inner
                                     remaining
                                     (Checked.(+) 1u count)
@@ -503,7 +503,7 @@ let assemble declarations =
                         ierrors.Clear()
                         inner
                             instructions
-                            (fun register ->
+                            (fun ((_, register): Symbol) ->
                                 match rlookup.TryGetValue register with
                                 | true, i -> ValueSome i
                                 | false, _ -> ValueNone)
