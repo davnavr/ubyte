@@ -238,20 +238,11 @@ let code: Parser<ParsedCode, _> =
 
 type ParsedNamespace = { NamespaceName: Symbol list }
 
-let inline attributes (flags: (string * 'Flag) list when 'Flag :> System.Enum): Parser<_, _> =
-    List.map (fun (name, flag) -> keyword name >>. preturn flag) flags
-    |> choice
-    |> many
-    |>> List.fold (fun flags flag -> flags ||| flag) Unchecked.defaultof<_>
-
-let inline flags flags =
-    choice [
-        attributes flags |> attempt
-        preturn Unchecked.defaultof<_>
-    ]
+let attributes (flags: (string * 'Flag) list when 'Flag :> System.Enum): Parser<_, _> =
+    List.map (fun (name, flag) -> keyword name >>. preturn flag) flags |> choice
 
 let visibility: Parser<VisibilityFlags, _> =
-    flags [
+    attributes [
         "public", VisibilityFlags.Public
         "private", VisibilityFlags.Private
     ]
@@ -274,7 +265,7 @@ type FieldDefAttr =
 let fdefattr =
     choice [
         getPosition .>>. visibility |>> FieldDefAttr.Visibility
-        getPosition .>>. flags [
+        getPosition .>>. attributes [
             "mutable", FieldFlags.Mutable
         ]
         |>> FieldDefAttr.Flag
@@ -304,7 +295,7 @@ let mdefattr =
     choice [
         getPosition .>>. visibility |>> MethodDefAttr.Visibility
 
-        getPosition .>>. flags [
+        getPosition .>>. attributes [
             "instance", MethodFlags.Instance
         ]
         |>> MethodDefAttr.Flag
@@ -342,8 +333,8 @@ type TypeDefDecl =
 
 let tdefdecl =
     period >>. choice [
-        namedecl' |>> TypeDefDecl.Name
         namedecl (keyword "namespace") symbol |>> TypeDefDecl.Namespace
+        namedecl' |>> TypeDefDecl.Name
         keyword "field" >>. tuple3 (symbol |>> ValueSome) fdefattr fdefdecl |>> TypeDefDecl.Field
         keyword "method" >>. tuple3 (symbol |>> ValueSome) mdefattr mdefdecl |>> TypeDefDecl.Method
     ]
