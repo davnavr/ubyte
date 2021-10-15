@@ -335,8 +335,8 @@ let tdefdecl =
     period >>. choice [
         namedecl (keyword "namespace") symbol |>> TypeDefDecl.Namespace
         namedecl' |>> TypeDefDecl.Name
-        keyword "field" >>. tuple3 (symbol |>> ValueSome) fdefattr fdefdecl |>> TypeDefDecl.Field
-        keyword "method" >>. tuple3 (symbol |>> ValueSome) mdefattr mdefdecl |>> TypeDefDecl.Method
+        keyword "field" >>. tuple3 (symbol |>> ValueSome) fdefattr (block fdefdecl) |>> TypeDefDecl.Field
+        keyword "method" >>. tuple3 (symbol |>> ValueSome) mdefattr (block mdefdecl) |>> TypeDefDecl.Method
     ]
     |> line
     |> many
