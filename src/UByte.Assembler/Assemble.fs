@@ -478,7 +478,10 @@ let assemble declarations =
                                 mimports
                                 mdefinitions
                                 (undefinedSymbolMessage "A method definition or import")
-                                symbol }
+                                symbol
+
+                        member _.FindTypeSignature symbol =
+                            findLookupValue tsignatures (undefinedSymbolMessage "A type signature") symbol }
 
                 let resolveCodeInstructions =
                     let instrs = ImmutableArray.CreateBuilder<InstructionSet.Instruction>()
@@ -516,8 +519,14 @@ let assemble declarations =
                             addValidationError (sprintf "A register corresponding to the symbol @%O could not be found" name) pos
                         | InvalidInstructionError.InvalidIntegerLiteral(pos, size, literal) ->
                             addValidationError (sprintf "\"%s\" is not a valid %i-bit integer literal" literal size) pos
+                        | InvalidInstructionError.UnknownInstruction(pos, name) ->
+                            addValidationError (sprintf "%s is not a valid instruction" name) pos
+                        | InvalidInstructionError.UndefinedField(pos, name) ->
+                            addValidationError (undefinedSymbolMessage "A field" name) pos
                         | InvalidInstructionError.UndefinedMethod(pos, name) ->
-                            addValidationError (sprintf "A method corresponding to the symbol @%O could not be found" name) pos
+                            addValidationError (undefinedSymbolMessage "A method" name) pos
+                        | InvalidInstructionError.UndefinedTypeSignature(pos, name) ->
+                            addValidationError (undefinedSymbolMessage "A type signature" name) pos
 
                 mapLookupValues codes <| fun _ code -> voptional {
                     let! (registers, rlookup) = resolveLocalRegisters code.Locals

@@ -33,11 +33,13 @@ type InvalidInstructionError =
     | UndefinedRegister of Symbol
     | UndefinedField of Symbol
     | UndefinedMethod of Symbol
+    | UndefinedTypeSignature of Symbol
     | InvalidIntegerLiteral of Position * size: int32 * literal: string
 
 type IInstructionResolver =
     abstract FindField: field: Symbol -> FieldIndex voption
     abstract FindMethod: method: Symbol -> MethodIndex voption
+    abstract FindTypeSignature: signature: Symbol -> TypeSignatureIndex voption
 
 type RegisterLookup = Symbol -> RegisterIndex voption
 

@@ -126,11 +126,13 @@ type InvalidInstructionError =
     | UndefinedRegister of Symbol
     | UndefinedField of Symbol
     | UndefinedMethod of Symbol
+    | UndefinedTypeSignature of Symbol
     | InvalidIntegerLiteral of Position * size: int32 * literal: string
 
 type IInstructionResolver =
     abstract FindField: field: Symbol -> FieldIndex voption
     abstract FindMethod: method: Symbol -> MethodIndex voption
+    abstract FindTypeSignature: signature: Symbol -> TypeSignatureIndex voption
 
 type RegisterLookup = Symbol -> RegisterIndex voption
 
@@ -160,15 +162,20 @@ let code: Parser<ParsedCode, _> =
         | ValueSome _ as i -> i
         | ValueNone -> addErrorTo errors (InvalidInstructionError.UndefinedRegister id)
 
-    let lookupMethodName (lookup: IInstructionResolver) errors id: _ voption =
+    let lookupMethodName (lookup: IInstructionResolver) errors id =
         match lookup.FindMethod id with
         | ValueSome _ as i -> i
         | ValueNone -> addErrorTo errors (InvalidInstructionError.UndefinedMethod id)
 
-    let lookupFieldName (lookup: IInstructionResolver) errors id: _ voption =
+    let lookupFieldName (lookup: IInstructionResolver) errors id =
         match lookup.FindField id with
         | ValueSome _ as i -> i
         | ValueNone -> addErrorTo errors (InvalidInstructionError.UndefinedField id)
+
+    let lookupTypeSignature (lookup: IInstructionResolver) errors id =
+        match lookup.FindTypeSignature id with
+        | ValueSome _ as i -> i
+        | ValueNone -> addErrorTo errors (InvalidInstructionError.UndefinedTypeSignature id)
 
     let lookupRegisterList lookup errors names =
         let rec inner (registers: ImmutableArray<RegisterIndex>.Builder) success names =
@@ -313,12 +320,17 @@ let code: Parser<ParsedCode, _> =
                 })
         )
 
-        // obj.arr.new // TODO: Lookup type signature
+        instructions.Add("obj.arr.new", pipe3 symbol symbol symbol <| fun etype lreg rreg rlookup resolver errors -> voptional {
+            let! etype' = lookupTypeSignature resolver errors etype
+            let! lreg' = lookupRegisterName rlookup errors lreg
+            let! rreg' = lookupRegisterName rlookup errors rreg
+            return InstructionSet.Obj_arr_new(etype', lreg', rreg')
+        })
 
         getPosition .>>. many1Chars (choice [ asciiLetter; digit; pchar '.' ]) .>> whitespace >>= fun (pos, name) ->
             match instructions.TryGetValue name with
             | true, instr -> instr
-            | false, _ -> unknown pos name
+            | false, _ -> unknown pos name .>> skipRestOfLine true
 
     pipe2
         (period >>. keyword "locals" >>. whitespace >>. block registers |> many)
