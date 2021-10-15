@@ -29,7 +29,9 @@ type ParsedCodeLocals =
 
 [<RequireQualifiedAccess; NoComparison; NoEqualityAttribute>]
 type InvalidInstructionError =
+    | UnknownInstruction of Position * string
     | UndefinedRegister of Symbol
+    | UndefinedField of Symbol
     | UndefinedMethod of Symbol
     | InvalidIntegerLiteral of Position * size: int32 * literal: string
 

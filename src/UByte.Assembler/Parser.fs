@@ -122,7 +122,9 @@ type ParsedCodeLocals = { LocalsType: Symbol; LocalNames: Symbol list }
 
 [<RequireQualifiedAccess>]
 type InvalidInstructionError =
+    | UnknownInstruction of Position * string
     | UndefinedRegister of Symbol
+    | UndefinedField of Symbol
     | UndefinedMethod of Symbol
     | InvalidIntegerLiteral of Position * size: int32 * literal: string
 
@@ -153,10 +155,20 @@ let code: Parser<ParsedCode, _> =
         errors.Add e
         ValueNone
 
-    let lookupRegisterName (lookup: RegisterLookup) (errors: InstructionErrorsBuilder) id: RegisterIndex voption =
+    let lookupRegisterName (lookup: RegisterLookup) errors id: RegisterIndex voption =
         match lookup id with
-        | ValueSome i -> ValueSome i
+        | ValueSome _ as i -> i
         | ValueNone -> addErrorTo errors (InvalidInstructionError.UndefinedRegister id)
+
+    let lookupMethodName (lookup: IInstructionResolver) errors id: _ voption =
+        match lookup.FindMethod id with
+        | ValueSome _ as i -> i
+        | ValueNone -> addErrorTo errors (InvalidInstructionError.UndefinedMethod id)
+
+    let lookupFieldName (lookup: IInstructionResolver) errors id: _ voption =
+        match lookup.FindField id with
+        | ValueSome _ as i -> i
+        | ValueNone -> addErrorTo errors (InvalidInstructionError.UndefinedField id)
 
     let lookupRegisterList lookup errors names =
         let rec inner (registers: ImmutableArray<RegisterIndex>.Builder) success names =
@@ -187,20 +199,37 @@ let code: Parser<ParsedCode, _> =
         else
             ValueNone
 
-    let instruction: Parser<ParsedInstruction, _> = choice [
-        // NOTE: For performance, can be replaced with a lookup table (https://www.quanttec.com/fparsec/users-guide/performance-optimizations.html#low-level-parser-implementations)
-        //let instructions = Dictionary<string, Parser<ParsedInstruction, _>>()
+    let instruction: Parser<ParsedInstruction, _> =
+        let unknown pos name: Parser<ParsedInstruction, _> = preturn <| fun _ _ errors ->
+            errors.Add(InvalidInstructionError.UnknownInstruction(pos, name))
+            ValueNone
 
-        // TODO: Add parsing of other instructions (https://github.com/davnavr/ubyte/blob/9fcc545407852a2573f3eb1d9cb568f1b15de26e/src/UByte.Assembler/Assemble.fs#L403)
+        let instructions = System.Collections.Generic.Dictionary()
 
-        let noop name instr = keyword name >>. preturn (fun _ _ _ -> ValueSome instr) |> line
-        noop "nop" InstructionSet.Nop
+        instructions.Add("nop", preturn (fun _ _ _ -> ValueSome InstructionSet.Nop))
+
+        let withOneRegister name instr =
+            let parser = symbol |>> fun register rlookup _ errors -> voptional {
+                let! register' = lookupRegisterName rlookup errors register
+                return instr register'
+            }
+            instructions.Add(name, parser)
+
+        withOneRegister "incr" InstructionSet.Incr
+        withOneRegister "decr" InstructionSet.Decr
+        withOneRegister "obj.null" InstructionSet.Obj_null
 
         let withRegisterCount name count instr =
-            keyword name >>. parray count symbol |>> fun registers rlookup _ errors -> voptional {
+            let parser = parray count symbol |>> fun registers rlookup _ errors -> voptional {
                 let! registers' = lookupRegisterArray rlookup registers errors
                 return instr registers'
             }
+            instructions.Add(name, parser)
+
+        let withTwoRegisters name instr =
+            withRegisterCount name 2 (fun registers -> instr(registers.[0], registers.[1]))
+
+        withTwoRegisters "obj.arr.len" InstructionSet.Obj_arr_len
 
         let withThreeRegisters name instr =
             withRegisterCount name 3 (fun registers -> instr(registers.[0], registers.[1], registers.[2]))
@@ -212,23 +241,84 @@ let code: Parser<ParsedCode, _> =
         withThreeRegisters "mul.ovf" InstructionSet.Mul_ovf
         withThreeRegisters "mul" InstructionSet.Mul
         withThreeRegisters "div" InstructionSet.Div
+        withThreeRegisters "obj.arr.get" InstructionSet.Obj_arr_get
+        withThreeRegisters "obj.arr.set" InstructionSet.Obj_arr_set
 
-        keyword "const.i32" >>. pipe3 getPosition integerlit symbol (fun pos value destination rlookup _ errors -> voptional {
-            let! value' =
-                match Int64.TryParse value.String with
-                | true, i when i >= int64 Int32.MinValue && i <= int64 UInt32.MaxValue -> ValueSome(int32 i)
-                | _ -> addErrorTo errors (InvalidInstructionError.InvalidIntegerLiteral(pos, sizeof<int32>, value.String))
+        let withConstantNumber name (number: Parser<NumberLiteral, _>) instr num =
+            let parser = pipe3 getPosition number symbol <| fun pos value destination rlookup _ errors -> voptional {
+                let! value' =
+                    match num value with
+                    | Result.Ok i -> ValueSome i
+                    | Result.Error err -> addErrorTo errors (err pos)
 
-            let! destination' = lookupRegisterName rlookup errors destination
+                let! destination' = lookupRegisterName rlookup errors destination
+                return instr(value', destination')
+            }
+            instructions.Add(name, parser)
 
-            return InstructionSet.Const_i32(value', destination')
-        })
+        withConstantNumber "const.i32" integerlit InstructionSet.Const_i32 <| fun value ->
+            match Int64.TryParse value.String with
+            | true, i when i >= int64 Int32.MinValue && i <= int64 UInt32.MaxValue -> Result.Ok(int32 i)
+            | _ -> Result.Error(fun pos -> InvalidInstructionError.InvalidIntegerLiteral(pos, sizeof<int32>, value.String))
 
-        keyword "ret" >>. many symbol |> line |>> fun registers rlookup _ errors -> voptional {
+        let objectFieldInstruction name instr =
+            let parser = pipe3 symbol symbol symbol <| fun field oreg reg rlookup resolver errors -> voptional {
+                let! field' = lookupFieldName resolver errors field
+                let! oreg' = lookupRegisterName rlookup errors oreg
+                let! reg' = lookupRegisterName rlookup errors reg
+                return instr(field', oreg', reg')
+            }
+            instructions.Add(name, parser)
+
+        objectFieldInstruction "obj.ldfd" InstructionSet.Obj_ldfd
+        objectFieldInstruction "obj.stfd" InstructionSet.Obj_stfd
+
+        let callInstructionRegisters name = choice [ keyword name >>. (many symbol); preturn List.empty ]
+        let callInstructionArguments = whitespace >>. callInstructionRegisters "arguments"
+        let callInstructionReturns = whitespace >>. callInstructionRegisters "returns"
+        let callLikeInstruction name instr =
+            let parser =
+                pipe3 symbol callInstructionArguments callInstructionReturns <| fun method args rets rlookup resolver errors ->
+                    voptional {
+                        let! method' = lookupMethodName resolver errors method
+                        let! arguments = lookupRegisterList rlookup errors args
+                        let! returns = lookupRegisterList rlookup errors rets
+                        return instr(method', arguments.ToImmutableArray(), returns.ToImmutableArray())
+                    }
+            instructions.Add(name, parser)
+
+        callLikeInstruction "call.virt" InstructionSet.Call_virt
+        callLikeInstruction "call.ret" InstructionSet.Call_ret
+        callLikeInstruction "call.virt.ret" InstructionSet.Call_virt_ret
+        callLikeInstruction "call" InstructionSet.Call
+
+        // TOOD: Branching instructions https://github.com/davnavr/ubyte/blob/9fcc545407852a2573f3eb1d9cb568f1b15de26e/src/UByte.Assembler/Assemble.fs#L527
+
+        instructions.Add("ret", many symbol |> line |>> fun registers rlookup _ errors -> voptional {
             let! registers' = lookupRegisterList rlookup errors registers
             return InstructionSet.Ret registers'
-        }
-    ]
+        })
+
+        instructions.Add (
+            "obj.new",
+            pipe3
+                symbol
+                callInstructionArguments
+                (whitespace >>. keyword "returns" >>. whitespace >>. symbol)
+                (fun ctor args ret rlookup resolver errors -> voptional {
+                    let! constructor' = lookupMethodName resolver errors ctor
+                    let! arguments = lookupRegisterList rlookup errors args
+                    let! result = lookupRegisterName rlookup errors ret
+                    return InstructionSet.Obj_new(constructor', arguments.ToImmutableArray(), result)
+                })
+        )
+
+        // obj.arr.new // TODO: Lookup type signature
+
+        getPosition .>>. many1Chars (choice [ asciiLetter; digit; pchar '.' ]) .>> whitespace >>= fun (pos, name) ->
+            match instructions.TryGetValue name with
+            | true, instr -> instr
+            | false, _ -> unknown pos name
 
     pipe2
         (period >>. keyword "locals" >>. whitespace >>. block registers |> many)
