@@ -42,14 +42,16 @@ type SymbolDictionary<'IndexKind, 'T when 'IndexKind :> IndexKinds.Kind> () =
     member this.AddNamed(id, item) =
         let (exists, _) = symbols.TryGetValue id
         if not exists then
-            let (Index i) = this.AddAnonymous item
+            let (Index i) as index = this.AddAnonymous item
             symbols.Add(id, Checked.int32 i)
-        not exists
+            ValueSome index
+        else
+            ValueNone
 
     member this.Add(id: Name voption, item) =
         match id with
         | ValueSome symbol -> this.AddNamed(symbol, item)
-        | ValueNone -> this.AddAnonymous item |> ignore; true
+        | ValueNone -> ValueSome(this.AddAnonymous item)
 
     member this.Add(symbol: Symbol voption, item) =
         let id' =
@@ -86,7 +88,7 @@ let assemble declarations =
     let inline addValidationError msg pos = errors.Add(AssemblerError.ValidationError(msg, pos))
 
     let addLookupValue (lookup: SymbolDictionary<_, _>) (struct(pos, id)) value dup =
-        if not (lookup.AddNamed(id, value)) then
+        if lookup.AddNamed(id, value).IsNone then
             addValidationError (dup id) pos
 
     let duplicateSymbolMessage kind: Name -> _ = sprintf "%s declaration corresponding to the symbol @%O already exists" kind
@@ -103,7 +105,7 @@ let assemble declarations =
         for i = 0 to items.Length - 1 do
             match mapping (Index (uint32 i)) (lookup.ValueAt i) with
             | ValueSome value when success -> items.[i] <- value
-            | _ -> ()
+            | _ -> success <- false
         if success then
             ValueSome(Unsafe.As<'U[], ImmutableArray<'U>> &items)
         else
@@ -134,6 +136,11 @@ let assemble declarations =
             values.Clear()
             inner symbols true
 
+    let lookupDefinitionOrImport imports definitions err symbol =
+        match findLookupValue imports err symbol with
+        | ValueSome _ as i -> i
+        | ValueNone -> findLookupValue definitions err symbol
+
     let rec inner declarations =
         match declarations with
         | [] ->
@@ -150,7 +157,7 @@ let assemble declarations =
 
             let lookupID = findLookupValue identifiers (undefinedSymbolMessage "An identifier")
 
-            let lookupDefinedType symbol = // TODO: Make common function that searches imports first, then definitions next.
+            let lookupDefinedType symbol = // TODO: Use lookupDefinitionOrImport
                 //match timports.Find
                 voptional {
                     let! (Index i) =
@@ -347,15 +354,26 @@ let assemble declarations =
                         | TypeDefDecl.Field(id, fattrs, fdecls) :: remaining ->
                             match resolveFieldDefinition owner fattrs fdecls with
                             | ValueSome field ->
-                                failwith "// TODO: Get index of added field"
-                                inner (fdefinitions.Add(id, field)) ns name remaining
+                                let success' =
+                                    match fdefinitions.Add(id, field) with
+                                    | ValueSome i ->
+                                        fields.Add i
+                                        true
+                                    | ValueNone ->
+                                        false
+                                inner success' ns name remaining
                             | ValueNone ->
                                 inner false ns name remaining
                         | TypeDefDecl.Method(id, mattrs, mdecls) :: remaining ->
                             match resolveMethodDefinition owner mattrs mdecls with
                             | ValueSome field ->
-                                failwith "// TODO: Get index of added method"
-                                inner (mdefinitions.Add(id, field)) ns name remaining
+                                let success' =
+                                    match mdefinitions.Add(id, field) with
+                                    | ValueSome i ->
+                                        methods.Add i
+                                        true
+                                    | ValueNone -> false
+                                inner success' ns name remaining
                             | ValueNone ->
                                 inner false ns name remaining
                         | TypeDefDecl.Name((pos, _) as id) :: remaining ->
@@ -448,8 +466,19 @@ let assemble declarations =
 
                 let iresolver =
                     { new IInstructionResolver with
-                        member _.FindField _ = failwith "TODO: Find fields"
-                        member _.FindMethod _ = failwith "TODO: Find methods" }
+                        member _.FindField symbol =
+                            lookupDefinitionOrImport
+                                fimports
+                                fdefinitions
+                                (undefinedSymbolMessage "A field definition or import")
+                                symbol
+
+                        member _.FindMethod symbol =
+                            lookupDefinitionOrImport
+                                mimports
+                                mdefinitions
+                                (undefinedSymbolMessage "A method definition or import")
+                                symbol }
 
                 let resolveCodeInstructions =
                     let instrs = ImmutableArray.CreateBuilder<InstructionSet.Instruction>()
@@ -492,12 +521,13 @@ let assemble declarations =
 
                 mapLookupValues codes <| fun _ code -> voptional {
                     let! (registers, rlookup) = resolveLocalRegisters code.Locals
-                    let! instructions = resolveCodeInstructions code.Instructions rlookup
+                    let instructions = resolveCodeInstructions code.Instructions rlookup
                     addInstructionErrors()
-                    return { Code.RegisterTypes = registers; Instructions = instructions }
+                    let! instructions' = instructions
+                    return { Code.RegisterTypes = registers; Instructions = instructions' }
                 }
 
-            let main' = ValueOption.map (failwith "") mmain
+            let main' = ValueOption.map (findLookupValue mdefinitions (undefinedSymbolMessage "An entrypoint method")) mmain
 
             let result = voptional {
                 let! mname' = mname
