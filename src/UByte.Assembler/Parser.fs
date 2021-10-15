@@ -90,28 +90,44 @@ type ParsedSignature =
     | Type of ParsedTypeSignature
     | Method of returnTypes: Symbol list * parameterTypes: Symbol list
 
-let typesig: Parser<ParsedTypeSignature, _> = choice [
-    choiceL
-        [
-            skipString "bool" >>. preturn PrimitiveType.Bool
-            skipString "u8" >>. preturn PrimitiveType.U8
-            skipString "s8" >>. preturn PrimitiveType.S8
-            skipString "u16" >>. preturn PrimitiveType.U16
-            skipString "s16" >>. preturn PrimitiveType.S16
-            skipString "char16" >>. preturn PrimitiveType.Char16
-            skipString "u32" >>. preturn PrimitiveType.U32
-            skipString "s32" >>. preturn PrimitiveType.S32
-            skipString "char32" >>. preturn PrimitiveType.Char32
-            skipString "u64" >>. preturn PrimitiveType.U64
-            skipString "s64" >>. preturn PrimitiveType.S64
-            skipString "unative" >>. preturn PrimitiveType.UNative
-            skipString "snative" >>. preturn PrimitiveType.SNative
-            skipString "f32" >>. preturn PrimitiveType.F32
-            skipString "f64" >>. preturn PrimitiveType.F64
-        ]
-        "primitive type"
-    |>> fun prim _ -> ValueType.Primitive prim |> AnyType.ValueType |> Result.Ok
-]
+let typesig: Parser<ParsedTypeSignature, _> =
+    let tprimitive =
+        choiceL
+            [
+                keyword "bool" >>. preturn PrimitiveType.Bool
+                keyword "u8" >>. preturn PrimitiveType.U8
+                keyword "s8" >>. preturn PrimitiveType.S8
+                keyword "u16" >>. preturn PrimitiveType.U16
+                keyword "s16" >>. preturn PrimitiveType.S16
+                keyword "char16" >>. preturn PrimitiveType.Char16
+                keyword "u32" >>. preturn PrimitiveType.U32
+                keyword "s32" >>. preturn PrimitiveType.S32
+                keyword "char32" >>. preturn PrimitiveType.Char32
+                keyword "u64" >>. preturn PrimitiveType.U64
+                keyword "s64" >>. preturn PrimitiveType.S64
+                keyword "unative" >>. preturn PrimitiveType.UNative
+                keyword "snative" >>. preturn PrimitiveType.SNative
+                keyword "f32" >>. preturn PrimitiveType.F32
+                keyword "f64" >>. preturn PrimitiveType.F64
+            ]
+            "primitive type"
+
+    let treference =
+        skipChar '&'  >>. choiceL
+            [
+                keyword "any" >>. preturn (fun _ -> Result.Ok ReferenceType.Any)
+                keyword "def" >>. symbol |>> fun tname lookup ->
+                    match lookup tname with
+                    | ValueSome typei -> Result.Ok(ReferenceType.Defined typei)
+                    | ValueNone -> Result.Error tname
+                tprimitive |>> fun primt _ -> ValueType.Primitive primt |> ReferenceType.BoxedValueType |> Result.Ok
+            ]
+            "reference type"
+
+    choice [
+        tprimitive |>> fun prim _ -> ValueType.Primitive prim |> AnyType.ValueType |> Result.Ok
+        treference |>> fun rt lookup -> Result.map AnyType.ReferenceType (rt lookup)
+    ]
 
 let methodsig: Parser<Symbol list * Symbol list, _> =
     let tlist = whitespace >>. propen >>. sepBy (whitespace >>. symbol .>> whitespace) (skipChar ',') .>> prclose
