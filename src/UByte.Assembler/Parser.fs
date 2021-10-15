@@ -470,7 +470,7 @@ let declarations: Parser<ParsedDeclaration list, unit> =
                 |> line
                 |> many
 
-            keyword "extern" >>. symbol .>>. block mdimport |>> ParsedDeclaration.ImportedModule
+            keyword "import" >>. symbol .>>. block mdimport |>> ParsedDeclaration.ImportedModule
             pipe2 getPosition name (fun pos name -> ParsedDeclaration.Module(pos, ValueNone, name)) |> line
         ]
 

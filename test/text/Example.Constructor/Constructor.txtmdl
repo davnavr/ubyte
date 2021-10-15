@@ -1,0 +1,71 @@
+﻿.module Constructor
+.version 0 0 1
+.format 0 0
+
+.identifier @id_namespace Example
+.identifier @id_class MyClass
+.identifier @id_entry_point main
+.identifier @id_field myvalue
+
+.signature @sig_int type s32
+
+// An object reference to an instance of MyClass
+.signature @sig_myclass type &def @class_my
+
+.signature @sig_main method (@sig_int) ()
+
+.signature @sig_constructor method () (@sig_myclass, @sig_int)
+
+.code @code_main {
+    .locals {
+        .type @sig_int
+        .local @l0
+    }
+
+    .locals {
+        .type @sig_myclass
+        .local @l1
+    }
+
+    const.i32 21 @l0
+    obj.new @method_constructor arguments @l0 returns @l1
+    obj.ldfd @field_value @l1 @l0
+    ret @l0
+}
+
+.code @code_constuctor {
+    .arguments {
+        .argument @a_this 0
+        .argument @a_value 1
+    }
+
+    obj.stfd @field_value @a_this @a_value
+    ret
+}
+
+.namespace @namespace_example {
+    .name @id_namespace
+}
+
+.type @class_my public {
+    .name @id_class
+    .namespace @namespace_example
+
+    .method @method_constructor public instance constructor {
+        .signature @sig_constructor
+        .body defined @code_constructor
+    }
+
+    .method @method_main public {
+        .signature @sig_main
+        .body defined @code_main
+        .name @id_entry_point
+    }
+
+    .field @field_value public mutable {
+        .type @sig_int
+        .name @id_field
+    }
+}
+
+.entrypoint @method_main

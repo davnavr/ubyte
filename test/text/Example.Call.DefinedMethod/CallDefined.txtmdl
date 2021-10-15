@@ -1,0 +1,61 @@
+﻿.module CallDefined
+.version 0 1 2 3 4
+.format 0 0
+
+.identifier @id_namespace Example
+.identifier @id_class Program
+.identifier @id_entry_point main
+.identifier @id_helper helper
+
+.signature @sig_int type s32
+.signature @sig_main method (@sig_int) ()
+.signature @sig_helper method (@sig_int) (@sig_int)
+
+.code @code_helper {
+    .arguments {
+        .argument @a0 0
+    }
+
+    .locals {
+        .type @sig_int
+        .local @l_sum
+    }
+
+    const.i32 12 @l_sum
+    add @l_sum @l0 @l_sum
+    ret @l_sum
+}
+
+.code @code_main {
+    .locals {
+        .type @sig_int
+        .local @l0
+    }
+
+    const.i32 9 @l0
+    call @method_helper arguments @l0 returns @l0
+    ret @l0
+}
+
+.namespace @namespace_example {
+    .name @id_namespace
+}
+
+.type @class_program public {
+    .namespace @namespace_example
+    .name @id_class
+
+    .method @method_main public {
+        .name @id_entry_point
+        .signature @sig_main
+        .body defined @code_main
+    }
+
+    .method @method_helper private {
+        .name @id_helper
+        .signature @sig_helper
+        .bod defined @code_helper
+    }
+}
+
+.entrypoint @method_main

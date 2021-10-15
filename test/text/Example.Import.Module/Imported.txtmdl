@@ -1,0 +1,35 @@
+﻿.module Imported
+.version 0 0 8
+.format 0 0
+
+.identifier @id_namespace Example
+.identifier @id_namespace_imported Imported
+.identifier @id_class MyImport
+.identifier @id_helper Helper
+
+.namespace @namespace {
+    .name @id_namespace @id_namespace_imported
+}
+
+.signature $sig_int32 type s32
+.signature $sig_helper method ($sig_int32) ($sig_int32)
+
+.code @code_helper {
+    .arguments {
+        .argument @a0 0
+    }
+
+    incr @a0
+    ret @a0
+  )
+}
+
+.type @class_helper public {
+    .name @id_class
+    .namespace @namespace
+
+    .method @method_helper public {
+        .name @id_helper
+        .body defined @code_helper
+    }
+}
