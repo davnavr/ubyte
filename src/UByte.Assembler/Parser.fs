@@ -18,10 +18,11 @@ let propen = skipChar '('
 let prclose = skipChar ')'
 let bropen = skipChar '{'
 let brclose = skipChar '}'
+let comma = skipChar ','
 
 let separator = choice [
     notEmpty whitespace
-    followedBy (choice [ bropen; brclose; propen; prclose ])
+    followedBy (choice [ bropen; brclose; propen; prclose; comma ])
 ]
 
 let keyword word = whitespace >>. skipString word .>> separator
@@ -130,7 +131,7 @@ let typesig: Parser<ParsedTypeSignature, _> =
     ]
 
 let methodsig: Parser<Symbol list * Symbol list, _> =
-    let tlist = whitespace >>. propen >>. sepBy (whitespace >>. symbol .>> whitespace) (skipChar ',') .>> prclose
+    let tlist = whitespace >>. propen >>. sepBy (whitespace >>. symbol) comma .>> prclose
     tlist .>>. tlist
 
 [<Struct>]
