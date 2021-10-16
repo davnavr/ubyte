@@ -424,6 +424,7 @@ let mdefattr =
 
         getPosition .>>. attributes [
             "instance", MethodFlags.Instance
+            "constructor", MethodFlags.Constructor
         ]
         |>> MethodDefAttr.Flag
     ]
