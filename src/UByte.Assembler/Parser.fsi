@@ -33,6 +33,7 @@ type InvalidInstructionError =
     | UndefinedMethod of Symbol
     | UndefinedTypeSignature of Symbol
     | InvalidIntegerLiteral of Position * size: int32 * literal: string
+    | UndefinedLabel of Position * Name
 
 type IInstructionResolver =
     abstract FindField: field: Symbol -> FieldIndex voption
@@ -43,12 +44,12 @@ type RegisterLookup = Symbol -> RegisterIndex voption
 
 type InstructionErrorsBuilder = System.Collections.Generic.ICollection<InvalidInstructionError>
 
-type CodeLabelsBuilder = (Position * Name) -> InstructionSet.InstructionOffset voption
+type CodeLabelLookup = (Position * Name) -> InstructionSet.InstructionOffset voption
 
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
 type ParsedInstructionOrLabel =
     | Instruction of
-        (RegisterLookup -> IInstructionResolver -> InstructionErrorsBuilder -> CodeLabelsBuilder -> InstructionSet.Instruction voption)
+        (RegisterLookup -> IInstructionResolver -> InstructionErrorsBuilder -> CodeLabelLookup -> InstructionSet.Instruction voption)
     | Label of Position * Name
 
 [<NoComparison; NoEquality>]

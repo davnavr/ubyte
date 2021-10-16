@@ -721,12 +721,12 @@ let assemble declarations = // TODO: Fix, use result so at least one error objec
                             | true, i -> ValueSome i
                             | false, _ -> ValueNone
 
-                        let llookup (pos, name) =
+                        let llookup ((_, name) as label) =
                             match labels.TryGetValue name with
                             | true, offset ->
                                 ValueSome(Checked.(-) index.contents offset)
                             | false, _ ->
-                                addValidationError (undefinedSymbolMessage "A code label" name) pos
+                                ierrors.Add(InvalidInstructionError.UndefinedLabel label)
                                 ValueNone
 
                         for instruction in instrs' do
@@ -755,6 +755,8 @@ let assemble declarations = // TODO: Fix, use result so at least one error objec
                             addValidationError (undefinedSymbolMessage "A method" name) pos
                         | InvalidInstructionError.UndefinedTypeSignature(pos, name) ->
                             addValidationError (undefinedSymbolMessage "A type signature" name) pos
+                        | InvalidInstructionError.UndefinedLabel(pos, name) ->
+                            addValidationError (undefinedSymbolMessage "A code label" name) pos
 
                 mapLookupValues codes <| fun _ code -> voptional {
                     // TODO: Don't forget to change this assembler code if order of registers is changed.

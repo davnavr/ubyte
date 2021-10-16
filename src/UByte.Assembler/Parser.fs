@@ -145,6 +145,7 @@ type InvalidInstructionError =
     | UndefinedMethod of Symbol
     | UndefinedTypeSignature of Symbol
     | InvalidIntegerLiteral of Position * size: int32 * literal: string
+    | UndefinedLabel of Position * Name
 
 type IInstructionResolver =
     abstract FindField: field: Symbol -> FieldIndex voption
@@ -155,12 +156,12 @@ type RegisterLookup = Symbol -> RegisterIndex voption
 
 type InstructionErrorsBuilder = System.Collections.Generic.ICollection<InvalidInstructionError>
 
-type CodeLabelsBuilder = (Position * Name) -> InstructionSet.InstructionOffset voption
+type CodeLabelLookup = (Position * Name) -> InstructionSet.InstructionOffset voption
 
 [<RequireQualifiedAccess>]
 type ParsedInstructionOrLabel =
     | Instruction of
-        (RegisterLookup -> IInstructionResolver -> InstructionErrorsBuilder -> CodeLabelsBuilder -> InstructionSet.Instruction voption)
+        (RegisterLookup -> IInstructionResolver -> InstructionErrorsBuilder -> CodeLabelLookup -> InstructionSet.Instruction voption)
     | Label of Position * Name
 
 type ParsedCode = { Locals: ParsedCodeLocals list; Arguments: Symbol list; Body: ParsedInstructionOrLabel list }
@@ -220,6 +221,14 @@ let code: Parser<ParsedCode, _> =
             ValueSome(System.Runtime.CompilerServices.Unsafe.As<RegisterIndex[], ImmutableArray<RegisterIndex>> &resolved)
         else
             ValueNone
+
+    let lookupCodeLabel (lookup: CodeLabelLookup) errors label =
+        let i = lookup label
+        if i.IsNone then addErrorTo errors (InvalidInstructionError.UndefinedLabel label) |> ignore
+        i
+
+    let instructionOrLabelName = many1Chars (choice [ asciiLetter; digit; pchar '.' ])
+    let codeLabel = getPosition .>>. (instructionOrLabelName |>> Name.ofStr)
 
     let instruction: Parser<ParsedInstructionOrLabel, _> =
         let unknown pos name =
@@ -317,7 +326,39 @@ let code: Parser<ParsedCode, _> =
         callLikeInstruction "call.virt.ret" InstructionSet.Call_virt_ret
         callLikeInstruction "call" InstructionSet.Call
 
-        // TOOD: Branching instructions https://github.com/davnavr/ubyte/blob/9fcc545407852a2573f3eb1d9cb568f1b15de26e/src/UByte.Assembler/Assemble.fs#L527
+        let comparisonBranchInstruction name instr =
+            pipe3 symbol symbol codeLabel <| fun xreg yreg i rlookup _ errors labels -> voptional {
+                let! xreg' = lookupRegisterName rlookup errors xreg
+                let! yreg' = lookupRegisterName rlookup errors yreg
+                let! i' = lookupCodeLabel labels errors i
+                return instr(xreg', yreg', i')
+            }
+            |> addInstructionParser name
+
+        comparisonBranchInstruction "br.eq" InstructionSet.Br_eq
+        comparisonBranchInstruction "br.ne" InstructionSet.Br_ne
+        comparisonBranchInstruction "br.lt" InstructionSet.Br_lt
+        comparisonBranchInstruction "br.gt" InstructionSet.Br_gt
+        comparisonBranchInstruction "br.le" InstructionSet.Br_le
+        comparisonBranchInstruction "br.ge" InstructionSet.Br_ge
+
+        let ifBranchInstruction name instr =
+            pipe2 symbol codeLabel <| fun reg i rlookup _ errors labels -> voptional {
+                let! reg' = lookupRegisterName rlookup errors reg
+                let! i' = lookupCodeLabel labels errors i
+                return instr(reg', i')
+            }
+            |> addInstructionParser name
+
+        ifBranchInstruction "br.true" InstructionSet.Br_true
+        ifBranchInstruction "br.false" InstructionSet.Br_false
+        ifBranchInstruction "br.zero" InstructionSet.Br_false
+
+        codeLabel |>> fun i _ _ errors labels -> voptional {
+            let! i' = lookupCodeLabel labels errors i
+            return InstructionSet.Br i'
+        }
+        |> addInstructionParser "br"
 
         many symbol |>> fun registers rlookup _ errors _ -> voptional {
             let! registers' = lookupRegisterList rlookup errors registers
@@ -347,7 +388,7 @@ let code: Parser<ParsedCode, _> =
 
         let label = skipChar ':' >>. whitespace
 
-        getPosition .>>. many1Chars (choice [ asciiLetter; digit; pchar '.' ]) .>> whitespace >>= fun (pos, name) ->
+        getPosition .>>. instructionOrLabelName .>> whitespace >>= fun (pos, name) ->
             match instructions.TryGetValue name with
             | true, instr -> instr
             | false, _ -> choice [
