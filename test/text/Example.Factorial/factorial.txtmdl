@@ -19,7 +19,7 @@
     br.eq @a0 @l1 RETURN
     br.zero @a0 RETURN
     sub @a0 @l1 @l1
-    call @method_factorial arguments @l1 returns @l1
+    call @method_factorial (@l1) (@l1)
     mul @a0 @l1 @a0
     RETURN:
     ret @a0
@@ -29,7 +29,7 @@
     .locals @sig_int (@l0)
 
     const.i32 9 @l0
-    call @method_factorial arguments @l0 returns @l0
+    call @method_factorial (@l0) (@l0)
     ret @l0
 }
 

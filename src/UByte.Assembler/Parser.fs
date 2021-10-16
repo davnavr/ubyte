@@ -308,15 +308,16 @@ let code: Parser<ParsedCode, _> =
         objectFieldInstruction "obj.ldfd" InstructionSet.Obj_ldfd
         objectFieldInstruction "obj.stfd" InstructionSet.Obj_stfd
 
-        let callInstructionRegisters name = choice [ keyword name >>. (many symbol); preturn List.empty ]
-        let callInstructionArguments = whitespace >>. callInstructionRegisters "arguments" // TODO: Have arguments and returns be in parenthesis instead, to mirror how method signatures are created
-        let callInstructionReturns = whitespace >>. callInstructionRegisters "returns"
+        let callInstructionRegisters = choice [
+            between propen prclose (sepBy (whitespace >>. symbol) comma) .>> whitespace
+            preturn List.empty
+        ]
         let callLikeInstruction name instr =
-            pipe3 symbol callInstructionArguments callInstructionReturns <| fun method args rets rlookup resolver errors _ ->
+            pipe3 symbol callInstructionRegisters callInstructionRegisters <| fun method rets args rlookup resolver errors _ ->
                 voptional {
                     let! method' = lookupMethodName resolver errors method
-                    let! arguments = lookupRegisterList rlookup errors args
                     let! returns = lookupRegisterList rlookup errors rets
+                    let! arguments = lookupRegisterList rlookup errors args
                     return instr(method', arguments.ToImmutableArray(), returns.ToImmutableArray())
                 }
             |> addInstructionParser name
@@ -368,12 +369,12 @@ let code: Parser<ParsedCode, _> =
 
         pipe3
             symbol
-            callInstructionArguments
-            (whitespace >>. keyword "returns" >>. whitespace >>. symbol)
-            (fun ctor args ret rlookup resolver errors _ -> voptional {
+            symbol
+            callInstructionRegisters
+            (fun ctor ret args rlookup resolver errors _ -> voptional {
                 let! constructor' = lookupMethodName resolver errors ctor
-                let! arguments = lookupRegisterList rlookup errors args
                 let! result = lookupRegisterName rlookup errors ret
+                let! arguments = lookupRegisterList rlookup errors args
                 return InstructionSet.Obj_new(constructor', arguments.ToImmutableArray(), result)
             })
         |> addInstructionParser "obj.new"

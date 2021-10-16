@@ -24,7 +24,7 @@
     .locals @sig_int (@l0)
 
     const.i32 9 @l0
-    call @method_helper arguments @l0 returns @l0
+    call @method_helper (@l0) (@l0)
     ret @l0
 }
 

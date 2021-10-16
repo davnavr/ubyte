@@ -21,7 +21,7 @@
     .locals @sig_myclass (@l1)
 
     const.i32 21 @l0
-    obj.new @method_constructor arguments @l0 returns @l1
+    obj.new @method_constructor @l1 (@l0)
     obj.ldfd @field_value @l1 @l0
     ret @l0
 }
