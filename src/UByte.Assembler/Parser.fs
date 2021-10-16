@@ -310,7 +310,7 @@ let code: Parser<ParsedCode, _> =
 
         // TOOD: Branching instructions https://github.com/davnavr/ubyte/blob/9fcc545407852a2573f3eb1d9cb568f1b15de26e/src/UByte.Assembler/Assemble.fs#L527
 
-        instructions.Add("ret", many symbol |> line |>> fun registers rlookup _ errors -> voptional {
+        instructions.Add("ret", many symbol |>> fun registers rlookup _ errors -> voptional {
             let! registers' = lookupRegisterList rlookup errors registers
             return InstructionSet.Ret registers'
         })
@@ -340,6 +340,7 @@ let code: Parser<ParsedCode, _> =
             match instructions.TryGetValue name with
             | true, instr -> instr
             | false, _ -> unknown pos name .>> skipRestOfLine true
+        |> line
 
     let locals =
         period
@@ -349,7 +350,6 @@ let code: Parser<ParsedCode, _> =
             symbol
             (between (propen .>> whitespace) (prclose .>> whitespace) (sepBy1 (whitespace >>. symbol) comma))
             (fun rtype regs -> { ParsedCodeLocals.LocalsType = rtype; LocalNames = regs })
-        |> line
 
     let arguments = choice [
         period >>. keyword "arguments" >>. registers |> line
