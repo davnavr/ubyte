@@ -724,7 +724,7 @@ let assemble declarations = // TODO: Fix, use result so at least one error objec
                         let llookup ((_, name) as label) =
                             match labels.TryGetValue name with
                             | true, offset ->
-                                ValueSome(Checked.(-) index.contents offset)
+                                ValueSome(Checked.(-) offset index.contents)
                             | false, _ ->
                                 ierrors.Add(InvalidInstructionError.UndefinedLabel label)
                                 ValueNone
@@ -737,6 +737,7 @@ let assemble declarations = // TODO: Fix, use result so at least one error objec
                                     success
                                 | ValueNone ->
                                     false
+                            index.contents <- Checked.(+) index.contents 1
 
                         if success then ValueSome(instrs.ToImmutable()) else ValueNone
 
