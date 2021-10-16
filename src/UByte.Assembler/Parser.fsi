@@ -1,7 +1,5 @@
 ﻿module UByte.Assembler.Parser
 
-open System.Collections.Immutable
-
 open FParsec
 
 open UByte.Format.Model
@@ -47,9 +45,10 @@ type InstructionErrorsBuilder = System.Collections.Generic.ICollection<InvalidIn
 
 type ParsedInstruction = RegisterLookup -> IInstructionResolver -> InstructionErrorsBuilder -> InstructionSet.Instruction voption
 
-[<System.Runtime.CompilerServices.IsReadOnly; Struct; NoComparison; NoEquality>]
+[<NoComparison; NoEquality>]
 type ParsedCode =
     { Locals: ParsedCodeLocals list
+      Arguments: Symbol list;
       Instructions: ParsedInstruction list }
 
 [<NoComparison; NoEquality>]

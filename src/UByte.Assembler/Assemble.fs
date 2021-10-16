@@ -422,10 +422,22 @@ let assemble declarations =
                 let resolveTypeSignature =
                     findLookupValue tsignatures (sprintf "A type signature corresponding to the symbol @%O could not be found")
 
+                let resolveArgumentRegisters =
+                    let rec inner index (lookup: Dictionary<Name, RegisterIndex>) registers success =
+                        match registers with
+                        | [] when success -> ValueSome(struct(index, lookup))
+                        | [] -> ValueNone
+                        | struct(pos, name) :: remaining ->
+                            let success' = lookup.TryAdd(name, Index index)
+                            if not success' then addValidationError (duplicateSymbolMessage "An argument register" name) pos
+                            inner (Checked.(+) 1u index) lookup remaining success'
+
+                    fun start registers -> inner start (Dictionary()) registers true
+
                 let resolveLocalRegisters =
                     let registers = ImmutableArray.CreateBuilder<struct(_ * RegisterType)>()
 
-                    let countLocalRegisters (lookup: Dictionary<_, _>) names =
+                    let countLocalRegisters start (lookup: Dictionary<_, _>) names =
                         let rec inner names count success =
                             match names with
                             | [] when success -> ValueSome count
@@ -435,32 +447,32 @@ let assemble declarations =
                                     remaining
                                     (Checked.(+) 1u count)
                                     (success && lookup.TryAdd(name, RegisterIndex.Index(uint32 lookup.Count)))
-                        inner names 0u true
+                        inner names start true
 
-                    let rec inner locals lookup success =
+                    let rec inner start locals lookup success =
                         match locals with
-                        | [] when success -> ValueSome(registers.ToImmutable(), lookup :> IReadOnlyDictionary<_, _>)
+                        | [] when success -> ValueSome(registers.ToImmutable())
                         | [] -> ValueNone
                         | loc :: remaining ->
                             let result = voptional {
                                 let! ltype = resolveTypeSignature loc.LocalsType
-                                let! count = countLocalRegisters lookup loc.LocalNames
+                                let! count = countLocalRegisters start lookup loc.LocalNames
                                 return struct(count, { RegisterType = ltype; RegisterFlags = RegisterFlags.None })
                             }
 
-                            let success' =
+                            let start', success' =
                                 match result with
-                                | ValueSome rt when success ->
+                                | ValueSome ((count, _) as rt) when success ->
                                     registers.Add rt
-                                    true
+                                    start + count, true
                                 | _ ->
-                                    false
+                                    start, false
 
-                            inner remaining lookup success'
+                            inner start remaining lookup success'
 
-                    fun locals ->
+                    fun start lookup locals ->
                         registers.Clear()
-                        inner locals (Dictionary()) true
+                        inner start locals lookup true
 
                 let ierrors = List<InvalidInstructionError> 0
 
@@ -529,7 +541,9 @@ let assemble declarations =
                             addValidationError (undefinedSymbolMessage "A type signature" name) pos
 
                 mapLookupValues codes <| fun _ code -> voptional {
-                    let! (registers, rlookup) = resolveLocalRegisters code.Locals
+                    // TODO: Don't forget to change this assembler code if order of registers is changed.
+                    let! (istart, rlookup) = resolveArgumentRegisters 0u code.Arguments
+                    let! registers = resolveLocalRegisters istart rlookup code.Locals
                     let instructions = resolveCodeInstructions code.Instructions rlookup
                     addInstructionErrors()
                     let! instructions' = instructions

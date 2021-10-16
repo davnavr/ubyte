@@ -157,18 +157,10 @@ type InstructionErrorsBuilder = System.Collections.Generic.ICollection<InvalidIn
 
 type ParsedInstruction = RegisterLookup -> IInstructionResolver -> InstructionErrorsBuilder -> InstructionSet.Instruction voption
 
-[<Struct>]
-type ParsedCode = { Locals: ParsedCodeLocals list; Instructions: ParsedInstruction list }
+type ParsedCode = { Locals: ParsedCodeLocals list; Arguments: Symbol list; Instructions: ParsedInstruction list }
 
 let code: Parser<ParsedCode, _> =
-    let registers =
-        let register =
-            period >>. keyword "local" >>. whitespace >>. symbol .>> whitespace |> line
-
-        period >>. keyword "type" >>. pipe2
-            (symbol .>> whitespace)
-            (many register)
-            (fun rtype regs -> { ParsedCodeLocals.LocalsType = rtype; LocalNames = regs })
+    let registers = between (propen .>> whitespace) prclose (sepBy1 (whitespace >>. symbol) comma)
 
     let inline addErrorTo (errors: InstructionErrorsBuilder) e =
         errors.Add e
@@ -349,10 +341,26 @@ let code: Parser<ParsedCode, _> =
             | true, instr -> instr
             | false, _ -> unknown pos name .>> skipRestOfLine true
 
-    pipe2
-        (period >>. keyword "locals" >>. whitespace >>. block registers |> many)
+    let locals =
+        period
+        >>. keyword "locals"
+        |> attempt
+        >>. pipe2
+            symbol
+            (between (propen .>> whitespace) (prclose .>> whitespace) (sepBy1 (whitespace >>. symbol) comma))
+            (fun rtype regs -> { ParsedCodeLocals.LocalsType = rtype; LocalNames = regs })
+        |> line
+
+    let arguments = choice [
+        period >>. keyword "arguments" >>. registers |> line
+        preturn List.empty
+    ]
+
+    pipe3
+        (many locals .>> whitespace)
+        (arguments .>> whitespace)
         (instruction .>> whitespace |> line |> many)
-        (fun locals instrs -> { ParsedCode.Locals = locals; Instructions = instrs })
+        (fun locals arguments instrs -> { ParsedCode.Locals = locals; Arguments = arguments; Instructions = instrs })
     |> block
 
 type ParsedNamespace = { NamespaceName: Symbol list }

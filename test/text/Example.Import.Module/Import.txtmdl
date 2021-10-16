@@ -15,10 +15,7 @@
 .signature @sig_imported_helper method ($sig_int) ($sig_int)
 
 .code @code_main {
-    .locals {
-        .type @sig_int
-        .local @l0
-    }
+    .locals @sig_int (@l0)
 
     const.i32 63 @l0
     call @method_imported arguments @l0 returns @l0

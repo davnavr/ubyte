@@ -12,12 +12,8 @@
 .signature @sig_main method (@sig_int) ()
 
 .code @code_main {
-    // Define registers containing values of the specified type
-    .locals {
-        .type @sig_int
-        .local @l0
-        .local @l1
-    }
+    // Defines two local registers containing an integer
+    .locals @sig_int (@l0, @l1)
 
     // return 9 + 10;
     const.i32 9 @l0

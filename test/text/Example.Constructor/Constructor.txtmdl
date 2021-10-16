@@ -17,15 +17,8 @@
 .signature @sig_constructor method () (@sig_myclass, @sig_int)
 
 .code @code_main {
-    .locals {
-        .type @sig_int
-        .local @l0
-    }
-
-    .locals {
-        .type @sig_myclass
-        .local @l1
-    }
+    .locals @sig_int (@l0)
+    .locals @sig_myclass (@l1)
 
     const.i32 21 @l0
     obj.new @method_constructor arguments @l0 returns @l1
@@ -34,10 +27,7 @@
 }
 
 .code @code_constuctor {
-    .arguments {
-        .argument @a_this 0
-        .argument @a_value 1
-    }
+    .arguments (@a_this, @a_value)
 
     obj.stfd @field_value @a_this @a_value
     ret

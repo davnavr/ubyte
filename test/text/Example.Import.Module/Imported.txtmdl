@@ -15,9 +15,7 @@
 .signature $sig_helper method ($sig_int32) ($sig_int32)
 
 .code @code_helper {
-    .arguments {
-        .argument @a0 0
-    }
+    .arguments (@a0)
 
     incr @a0
     ret @a0

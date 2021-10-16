@@ -12,14 +12,8 @@
 .signature @sig_helper method (@sig_int) (@sig_int)
 
 .code @code_helper {
-    .arguments {
-        .argument @a0 0
-    }
-
-    .locals {
-        .type @sig_int
-        .local @l_sum
-    }
+    .locals @sig_int (@l_sum)
+    .arguments (@a0)
 
     const.i32 12 @l_sum
     add @l_sum @l0 @l_sum
@@ -27,10 +21,7 @@
 }
 
 .code @code_main {
-    .locals {
-        .type @sig_int
-        .local @l0
-    }
+    .locals @sig_int (@l0)
 
     const.i32 9 @l0
     call @method_helper arguments @l0 returns @l0
