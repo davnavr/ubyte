@@ -43,13 +43,19 @@ type RegisterLookup = Symbol -> RegisterIndex voption
 
 type InstructionErrorsBuilder = System.Collections.Generic.ICollection<InvalidInstructionError>
 
-type ParsedInstruction = RegisterLookup -> IInstructionResolver -> InstructionErrorsBuilder -> InstructionSet.Instruction voption
+type CodeLabelsBuilder = (Position * Name) -> InstructionSet.InstructionOffset voption
+
+[<RequireQualifiedAccess; NoComparison; NoEquality>]
+type ParsedInstructionOrLabel =
+    | Instruction of
+        (RegisterLookup -> IInstructionResolver -> InstructionErrorsBuilder -> CodeLabelsBuilder -> InstructionSet.Instruction voption)
+    | Label of Position * Name
 
 [<NoComparison; NoEquality>]
 type ParsedCode =
     { Locals: ParsedCodeLocals list
       Arguments: Symbol list;
-      Instructions: ParsedInstruction list }
+      Body: ParsedInstructionOrLabel list }
 
 [<NoComparison; NoEquality>]
 type ParsedNamespace =

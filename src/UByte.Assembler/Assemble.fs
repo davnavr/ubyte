@@ -693,32 +693,52 @@ let assemble declarations = // TODO: Fix, use result so at least one error objec
 
                 let resolveCodeInstructions =
                     let instrs = ImmutableArray.CreateBuilder<InstructionSet.Instruction>()
+                    let labels = Dictionary()
+                    let instrs' = List()
 
-                    let rec inner instructions rlookup success =
-                        match instructions with
-                        | [] when success -> ValueSome(instrs.ToImmutable())
-                        | [] -> ValueNone
-                        | i :: remaining ->
-                            let success' =
-                                match i rlookup iresolver (ierrors :> InstructionErrorsBuilder) with
-                                | ValueSome i' when success ->
-                                    instrs.Add(i')
-                                    true
-                                | _ ->
+                    let rec resolveCodeLabels body i success =
+                        match body with
+                        | [] -> success
+                        | ParsedInstructionOrLabel.Label(pos, name) :: remaining ->
+                            let success' = labels.TryAdd(name, i)
+                            if not success' then addValidationError (sprintf "Duplicate code label %O" name) pos
+                            resolveCodeLabels remaining i success'
+                        | ParsedInstructionOrLabel.Instruction instr :: remaining ->
+                            instrs'.Add instr
+                            resolveCodeLabels remaining (Checked.(+) 1 i) success
+
+                    fun body (rlookup: IReadOnlyDictionary<_, _>) ->
+                        instrs.Clear()
+                        instrs'.Clear()
+                        ierrors.Clear()
+                        labels.Clear()
+
+                        let mutable success = resolveCodeLabels body 0 true
+                        let index = ref 0
+
+                        let rlookup' ((_, register): Symbol) =
+                            match rlookup.TryGetValue register with
+                            | true, i -> ValueSome i
+                            | false, _ -> ValueNone
+
+                        let llookup (pos, name) =
+                            match labels.TryGetValue name with
+                            | true, offset ->
+                                ValueSome(Checked.(-) index.contents offset)
+                            | false, _ ->
+                                addValidationError (undefinedSymbolMessage "A code label" name) pos
+                                ValueNone
+
+                        for instruction in instrs' do
+                            success <-
+                                match instruction rlookup' iresolver (ierrors :> InstructionErrorsBuilder) llookup with
+                                | ValueSome instruction' ->
+                                    instrs.Add instruction'
+                                    success
+                                | ValueNone ->
                                     false
 
-                            inner remaining rlookup success'
-
-                    fun instructions (rlookup: IReadOnlyDictionary<_, _>) ->
-                        instrs.Clear()
-                        ierrors.Clear()
-                        inner
-                            instructions
-                            (fun ((_, register): Symbol) ->
-                                match rlookup.TryGetValue register with
-                                | true, i -> ValueSome i
-                                | false, _ -> ValueNone)
-                            true
+                        if success then ValueSome(instrs.ToImmutable()) else ValueNone
 
                 let addInstructionErrors() =
                     for err in ierrors do
@@ -740,7 +760,7 @@ let assemble declarations = // TODO: Fix, use result so at least one error objec
                     // TODO: Don't forget to change this assembler code if order of registers is changed.
                     let! (istart, rlookup) = resolveArgumentRegisters 0u code.Arguments
                     let! registers = resolveLocalRegisters istart rlookup code.Locals
-                    let instructions = resolveCodeInstructions code.Instructions rlookup
+                    let instructions = resolveCodeInstructions code.Body rlookup
                     addInstructionErrors()
                     let! instructions' = instructions
                     return { Code.RegisterTypes = registers; Instructions = instructions' }
