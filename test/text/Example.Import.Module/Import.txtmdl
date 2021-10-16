@@ -48,7 +48,7 @@
 
 .type @class_hello_world public {
     .name @id_main_class
-    .namespace @namespace_importing
+    .namespace @namespace_import
 
     .method @method_main public {
         .name @id_entry_point

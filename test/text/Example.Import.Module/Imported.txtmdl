@@ -19,7 +19,6 @@
 
     incr @a0
     ret @a0
-  )
 }
 
 .type @class_helper public {
@@ -29,5 +28,6 @@
     .method @method_helper public {
         .name @id_helper
         .body defined @code_helper
+        .signature @sig_helper
     }
 }

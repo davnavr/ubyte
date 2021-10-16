@@ -13,17 +13,14 @@ open UByte.Format.Model
 
 open UByte.Assembler.Parser
 
-let emptyIdentifierIndex = IdentifierIndex.Index 0u
-let emptyNamespaceIndex = NamespaceIndex.Index 0u
-
 type AssemblerError =
     | ParserError of string * ParserError
     | ValidationError of string * Position
 
     override this.ToString() =
         match this with
-        | ParserError(msg, _)
-        | ValidationError(msg, _) -> msg
+        | ParserError(msg, _) -> msg
+        | ValidationError(msg, pos) -> sprintf "%s %O" msg pos
 
 [<Sealed>]
 type SymbolDictionary<'IndexKind, 'T when 'IndexKind :> IndexKinds.Kind> () =
@@ -70,20 +67,19 @@ type SymbolDictionary<'IndexKind, 'T when 'IndexKind :> IndexKinds.Kind> () =
 
     member _.ValueAt i = items.[i]
 
-let assemble declarations =
+let assemble declarations = // TODO: Fix, use result so at least one error object is always returned. Using voption means forgetting to add to the error list results in no error message.
     let errors = ImmutableArray.CreateBuilder<AssemblerError>()
     let mutable fversion, mname, mversion, mmain = ValueNone, ValueNone, ValueNone, ValueNone
     let identifiers = SymbolDictionary<IndexKinds.Identifier, string>()
-    do identifiers.AddAnonymous String.Empty |> ignore
+    let emptyIdentifierIndex = identifiers.AddAnonymous String.Empty
     let tsignatures = SymbolDictionary<IndexKinds.TypeSignature, ParsedTypeSignature>()
     let msignatures = SymbolDictionary<IndexKinds.MethodSignature, _>()
-    //mimports
+    let mdimports = SymbolDictionary<IndexKinds.Kind, _>()
     let timports = SymbolDictionary<IndexKinds.Kind, _>()
     let tdefinitions = SymbolDictionary<IndexKinds.Kind, _>()
-
     let codes = SymbolDictionary<IndexKinds.Code, _>()
     let namespaces = SymbolDictionary<IndexKinds.Namespace, Symbol list>()
-    do namespaces.AddAnonymous List.empty |> ignore
+    let emptyNamespaceIndex = namespaces.AddAnonymous List.empty
 
     let inline addValidationError msg pos = errors.Add(AssemblerError.ValidationError(msg, pos))
 
@@ -138,8 +134,11 @@ let assemble declarations =
 
     let lookupDefinitionOrImport imports definitions err symbol =
         match findLookupValue imports err symbol with
-        | ValueSome _ as i -> i
-        | ValueNone -> findLookupValue definitions err symbol
+        | ValueSome(Index i) -> ValueSome(Index i)
+        | ValueNone -> voptional {
+            let! (Index i) = findLookupValue definitions err symbol
+            return Index(Checked.(+) (uint32 imports.Count) i)
+        }
 
     let rec inner declarations =
         match declarations with
@@ -153,20 +152,13 @@ let assemble declarations =
             let inline undefinedSymbolMessage name: Name -> _ =
                 sprintf "%s corresponding to the symbol @%O could not be found" name
 
-            let undefinedTypeSignatureMessage = undefinedSymbolMessage "A type definition"
-
             let lookupID = findLookupValue identifiers (undefinedSymbolMessage "An identifier")
 
-            let lookupDefinedType symbol = // TODO: Use lookupDefinitionOrImport
-                //match timports.Find
-                voptional {
-                    let! (Index i) =
-                        findLookupValue
-                            tdefinitions
-                            undefinedTypeSignatureMessage
-                            symbol
-                    return TypeDefinitionIndex.Index i
-                }
+            let lookupDefinedType =
+                lookupDefinitionOrImport
+                    timports
+                    tdefinitions
+                    (undefinedSymbolMessage "A type definition")
 
             let tsignatures' =
                 mapLookupValues tsignatures <| fun _ t ->
@@ -184,13 +176,212 @@ let assemble declarations =
                     return { MethodSignature.ReturnTypes = rtypes; ParameterTypes = ptypes }
                 }
 
-            let fimports = SymbolDictionary<IndexKinds.Field, _>()
+            let mimports' =
+                let rec resolveModuleDeclarations success name version declarations =
+                    match declarations with
+                    | [] when success ->
+                        match name, version with
+                        | ValueSome name', ValueSome version' ->
+                            ValueSome { ModuleIdentifier.ModuleName = name'; Version = version' }
+                        | _ -> failwith "TODO: Get position for error when module import name or version is missing"
+                    | [] -> ValueNone
+                    | ModuleImportDecl.Name(pos, name') :: remaining ->
+                        match name with
+                        | ValueNone -> resolveModuleDeclarations success (ValueSome name') version remaining
+                        | ValueSome _ ->
+                            addValidationError "Duplicate name declaration in module import" pos
+                            resolveModuleDeclarations false name version remaining
+                    | ModuleImportDecl.Version(pos, version') :: remaining ->
+                        match version with
+                        | ValueNone -> resolveModuleDeclarations success name (ValueSome version') remaining
+                        | ValueSome _ ->
+                            addValidationError "Duplicate version declaration in module import" pos
+                            resolveModuleDeclarations false name version remaining
 
-            let mimports = SymbolDictionary<IndexKinds.Method, _>()
+                mapLookupValues mdimports <| fun _ -> resolveModuleDeclarations true ValueNone ValueNone
 
-            let timports' = ValueSome ImmutableArray.Empty
+            let lookupModuleImport symbol =
+                voptional {
+                    let! (Index i) =
+                        findLookupValue
+                            mdimports
+                            (undefinedSymbolMessage "A module import")
+                            symbol
+                    return ModuleIndex.Index(Checked.(+) 1u i)
+                }
 
             let inline duplicateVisibilityFlag desc pos = addValidationError ("Duplicate visibility flag in " + desc) pos
+
+            let resolveFieldImport = // TODO: Avoid code duplication with resolveFieldDefinition
+                let rec resolveFieldAttributes flags attributes =
+                    match attributes with
+                    | [] -> ValueSome flags
+                    | FieldImportAttr.Flag(_, flag) :: remaining -> resolveFieldAttributes (flags ||| flag) remaining
+
+                let rec resolveFieldDeclarations success flags name ftype declarations =
+                    match declarations with
+                    | [] when success -> ValueSome(name, ftype)
+                    | [] -> ValueNone
+                    | FieldImportDecl.Name((pos, _) as id) :: remaining ->
+                        match name with
+                        | ValueNone ->
+                            match lookupID id with
+                            | ValueSome _ as namei ->
+                                resolveFieldDeclarations success flags namei ftype remaining
+                            | ValueNone ->
+                                resolveFieldDeclarations false flags name ftype remaining
+                        | ValueSome _ ->
+                            addValidationError "Duplicate name declaration in field import" pos
+                            resolveFieldDeclarations false flags name ftype remaining
+                    | FieldImportDecl.Type((pos, _) as id) :: remaining ->
+                        match ftype with
+                        | ValueNone ->
+                            match findLookupValue tsignatures (undefinedSymbolMessage "A type definition") id with
+                            | ValueSome _ as typei -> resolveFieldDeclarations success flags name typei remaining
+                            | ValueNone -> resolveFieldDeclarations false flags name ftype remaining
+                        | ValueSome _ ->
+                            addValidationError "Duplicate type declaration in field import" pos
+                            resolveFieldDeclarations false flags name ftype remaining
+
+                fun owner attrs decls -> voptional {
+                    let! flags = resolveFieldAttributes FieldFlags.ReadOnly attrs
+
+                    match! resolveFieldDeclarations true flags ValueNone ValueNone decls with
+                    | name, ValueSome ftype ->
+                        return
+                            { FieldImport.FieldOwner = owner
+                              FieldName = ValueOption.defaultValue emptyIdentifierIndex name
+                              FieldType = ftype }
+                    | _, ValueNone ->
+                        failwith "TODO: How to get position for field import type missing error"
+                }
+
+            let resolveMethodImport =  // TODO: Avoid code duplication with resolveMethodDefinition
+                let rec resolveMethodAttributes flags attributes =
+                    match attributes with
+                    | [] -> ValueSome flags
+                    | MethodImportAttr.Flag(_, flag) :: remaining ->
+                        resolveMethodAttributes (flags ||| flag) remaining
+
+                let rec resolveMethodDeclarations success flags name signature declarations =
+                    match declarations with
+                    | [] when success -> ValueSome(name, signature)
+                    | [] -> ValueNone
+                    | MethodImportDecl.Name((pos, _) as id) :: remaining ->
+                        match name with
+                        | ValueNone ->
+                            match lookupID id with
+                            | ValueSome _ as namei ->
+                                resolveMethodDeclarations success flags namei signature remaining
+                            | ValueNone ->
+                                resolveMethodDeclarations false flags name signature remaining
+                        | ValueSome _ ->
+                            addValidationError "Duplicate name declaration in method definition" pos
+                            resolveMethodDeclarations false flags name signature remaining
+                    | MethodImportDecl.Signature((pos, _) as id) :: remaining ->
+                        match signature with
+                        | ValueNone ->
+                            match findLookupValue msignatures (undefinedSymbolMessage "A method signature") id with
+                            | ValueSome _ as signature' ->
+                                resolveMethodDeclarations success flags name signature' remaining
+                            | ValueNone ->
+                                resolveMethodDeclarations false flags name signature remaining
+                        | ValueSome _ ->
+                            addValidationError "Duplicate method signature declaration in method definition" pos
+                            resolveMethodDeclarations false flags name signature remaining
+
+                fun owner attrs decls -> voptional {
+                    let! flags = resolveMethodAttributes MethodFlags.Final attrs
+                    let! (name, signature) = resolveMethodDeclarations true flags ValueNone ValueNone decls
+
+                    match signature with
+                    | ValueSome signature' ->
+                        return
+                            { MethodImport.MethodOwner = owner
+                              MethodName = ValueOption.defaultValue emptyIdentifierIndex name
+                              //MethodFlags = flags
+                              TypeParameters = 0u
+                              Signature = signature' }
+                    | ValueNone ->
+                        failwith "TODO: How to get position for missing signature in method import"
+                }
+
+            let fimports = SymbolDictionary<IndexKinds.Field, _>()
+            let mimports = SymbolDictionary<IndexKinds.Method, _>()
+
+            let timports' =
+                let rec resolveTypeDeclarations owner declarations =
+                    // TODO: Avoid code duplication with tdefinitions'
+                    let rec inner success m ns name declarations =
+                        match declarations with
+                        | [] when success -> ValueSome(m, ns, name)
+                        | [] -> ValueNone
+                        | TypeImportDecl.Field((pos, id), fattrs, fdecls) :: remaining ->
+                            match resolveFieldImport owner fattrs fdecls with
+                            | ValueSome field ->
+                                let success' =
+                                    match fimports.AddNamed(id, field) with
+                                    | ValueSome _ -> success
+                                    | ValueNone ->
+                                        addValidationError (duplicateSymbolMessage "A field import" id) pos
+                                        false
+                                inner success' m ns name remaining
+                            | ValueNone ->
+                                inner false m ns name remaining
+                        | TypeImportDecl.Method((pos, id), mattrs, mdecls) :: remaining ->
+                            match resolveMethodImport owner mattrs mdecls with
+                            | ValueSome method ->
+                                let success' =
+                                    match mimports.AddNamed(id, method) with
+                                    | ValueSome _ -> success
+                                    | ValueNone ->
+                                        addValidationError (duplicateSymbolMessage "A method import" id) pos
+                                        false
+                                inner success' m ns name remaining
+                            | ValueNone ->
+                                inner false m ns name remaining
+                        | TypeImportDecl.Module((pos, _) as id) :: remaining ->
+                            match name with
+                            | ValueNone ->
+                                match lookupModuleImport id with
+                                | ValueSome _ as m' -> inner success m' ns name remaining
+                                | ValueNone -> inner false m ns name remaining
+                            | ValueSome _ ->
+                                addValidationError "Duplicate module declaration in type import" pos
+                                inner false m ns name remaining
+                        | TypeImportDecl.Name((pos, _) as id) :: remaining ->
+                            match name with
+                            | ValueNone ->
+                                match lookupID id with
+                                | ValueSome _ as namei -> inner success m ns namei remaining
+                                | ValueNone -> inner false m ns name remaining
+                            | ValueSome _ ->
+                                addValidationError "Duplicate name declaration in type import" pos
+                                inner false m ns name remaining
+                        | TypeImportDecl.Namespace(pos, id) :: remaining ->
+                            match ns with
+                            | ValueNone ->
+                                match namespaces.FromIdentifier id with
+                                | ValueSome _ as id' ->
+                                    inner success m id' name remaining
+                                | ValueNone ->
+                                    addValidationError (undefinedSymbolMessage "A namespace" id) pos
+                                    inner false m ns name remaining
+                            | ValueSome _ ->
+                                addValidationError "Duplicate namespace declaration in type import" pos
+                                inner false m ns name remaining
+
+                    inner true ValueNone ValueNone ValueNone declarations
+
+                mapLookupValues timports <| fun (Index owner) decls -> voptional {
+                    let! (mindex, ns, name) = resolveTypeDeclarations (TypeDefinitionIndex.Index owner) decls
+                    return
+                        { TypeDefinitionImport.Module = ValueOption.defaultValue (Index 0u) mindex
+                          TypeName = ValueOption.defaultValue emptyIdentifierIndex name
+                          TypeNamespace = ValueOption.defaultValue emptyNamespaceIndex ns
+                          IsStruct = false
+                          TypeParameters = 0u }
+                }
 
             let resolveFieldDefinition =
                 let rec resolveFieldAttributes success hasvis visibility flags attributes =
@@ -224,7 +415,7 @@ let assemble declarations =
                     | FieldDefDecl.Type((pos, _) as id) :: remaining ->
                         match ftype with
                         | ValueNone ->
-                            match findLookupValue tsignatures undefinedTypeSignatureMessage id with
+                            match findLookupValue tsignatures (undefinedSymbolMessage "A type definition") id with
                             | ValueSome _ as typei -> resolveFieldDeclarations success visibility flags name typei remaining
                             | ValueNone -> resolveFieldDeclarations false visibility flags name ftype remaining
                         | ValueSome _ ->
@@ -295,7 +486,7 @@ let assemble declarations =
                         | ValueNone ->
                             match findLookupValue msignatures (undefinedSymbolMessage "A method signature") id with
                             | ValueSome _ as signature' ->
-                                resolveMethodDeclarations true visibility flags name signature' body remaining
+                                resolveMethodDeclarations success visibility flags name signature' body remaining
                             | ValueNone ->
                                 resolveMethodDeclarations false visibility flags name signature body remaining
                         | ValueSome _ ->
@@ -358,7 +549,7 @@ let assemble declarations =
                                     match fdefinitions.Add(id, field) with
                                     | ValueSome i ->
                                         fields.Add i
-                                        true
+                                        success
                                     | ValueNone ->
                                         false
                                 inner success' ns name remaining
@@ -371,7 +562,7 @@ let assemble declarations =
                                     match mdefinitions.Add(id, field) with
                                     | ValueSome i ->
                                         methods.Add i
-                                        true
+                                        success
                                     | ValueNone -> false
                                 inner success' ns name remaining
                             | ValueNone ->
@@ -557,11 +748,15 @@ let assemble declarations =
                 let! namespaces' = namespaces'
                 let! tsignatures' = tsignatures'
                 let! msignatures' = msignatures'
-                //let! mimports' = mimports'
+                let! mimports' = mimports'
                 let! timports' = timports'
                 let! tdefinitions' = tdefinitions'
                 let! codes' = codes'
-                let! main' = main'
+                let! main' =
+                    match main' with
+                    | ValueNone -> ValueSome ValueNone
+                    | ValueSome ValueNone -> ValueNone
+                    | ValueSome main'' -> ValueSome main''
                 return
                     { Module.Magic = magic
                       FormatVersion = ValueOption.defaultValue currentFormatVersion fversion
@@ -577,7 +772,7 @@ let assemble declarations =
                       TypeSignatures = tsignatures'
                       MethodSignatures = msignatures'
                       Imports =
-                        { ModuleImports.ImportedModules = ImmutableArray.Empty // TODO: Implement generation of module imports
+                        { ModuleImports.ImportedModules = mimports'
                           ImportedTypes = timports'
                           ImportedFields = fimports.ToVector()
                           ImportedMethods = mimports.ToVector() }
@@ -617,18 +812,20 @@ let assemble declarations =
                 addLookupValue tsignatures id signature (duplicateSymbolMessage "A type signature")
             | ParsedDeclaration.Signature(id, ParsedSignature.Method(rtypes, ptypes)) ->
                 addLookupValue msignatures id (rtypes, ptypes) (duplicateSymbolMessage "A method signature")
-            //| ParsedDeclaration.ModuleImport
+            | ParsedDeclaration.ImportedModule(id, decls) ->
+                addLookupValue mdimports id decls (duplicateSymbolMessage "A module import")
             | ParsedDeclaration.Code(id, code) ->
                 addLookupValue codes id code (duplicateSymbolMessage "A method body")
             | ParsedDeclaration.Namespace(id, ns) ->
                 addLookupValue namespaces id ns.NamespaceName (duplicateSymbolMessage "A namespace")
             | ParsedDeclaration.TypeDefinition(id, attrs, decls) ->
                 addLookupValue tdefinitions id (attrs, decls) (duplicateSymbolMessage "A type definition")
+            | ParsedDeclaration.ImportedTypeDefinition(id, decls) ->
+                addLookupValue timports id decls (duplicateSymbolMessage "A type definition import")
             | ParsedDeclaration.EntryPoint((pos, _) as main) ->
                 match mmain with
                 | ValueNone -> mmain <- ValueSome main
                 | ValueSome _ -> addValidationError "Duplicate method entry point declaration" pos
-            | ParsedDeclaration.ImportedModule _ -> failwith "TODO: Module imports not yet supported"
 
             inner remaining
 

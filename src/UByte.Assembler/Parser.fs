@@ -385,25 +385,22 @@ let tdefattr =
     |> many
 
 [<RequireQualifiedAccess>]
-type FieldDefAttr =
-    | Visibility of Position * VisibilityFlags
-    | Flag of Position * FieldFlags
+type FieldDefAttr = | Visibility of Position * VisibilityFlags | Flag of Position * FieldFlags
+
+let fflags = getPosition .>>. attributes [
+    "mutable", FieldFlags.Mutable
+]
 
 let fdefattr =
     choice [
         getPosition .>>. visibility |>> FieldDefAttr.Visibility
-        getPosition .>>. attributes [
-            "mutable", FieldFlags.Mutable
-        ]
-        |>> FieldDefAttr.Flag
+        fflags |>> FieldDefAttr.Flag
     ]
     .>> whitespace
     |> many
 
 [<RequireQualifiedAccess>]
-type FieldDefDecl =
-    | Type of Symbol
-    | Name of Symbol
+type FieldDefDecl = | Type of Symbol | Name of Symbol
 
 let fdefdecl =
     period >>. choice [
@@ -418,15 +415,15 @@ type MethodDefAttr =
     | Visibility of Position * VisibilityFlags
     | Flag of Position * MethodFlags
 
+let mflags = getPosition .>>. attributes [
+    "instance", MethodFlags.Instance
+    "constructor", MethodFlags.Constructor
+]
+
 let mdefattr =
     choice [
         getPosition .>>. visibility |>> MethodDefAttr.Visibility
-
-        getPosition .>>. attributes [
-            "instance", MethodFlags.Instance
-            "constructor", MethodFlags.Constructor
-        ]
-        |>> MethodDefAttr.Flag
+        mflags |>> MethodDefAttr.Flag
     ]
     .>> whitespace
     |> many
@@ -470,7 +467,73 @@ let tdefdecl =
     |> many
 
 [<RequireQualifiedAccess>]
-type ModuleImportDecl = | Name of Name | Version of ParsedVersionNumbers
+type FieldImportAttr = | Flag of Position * FieldFlags
+
+let fimportattr =
+    choice [
+        // TODO: Avoid code duplication with fdefattr.
+        fflags |>> FieldImportAttr.Flag
+    ]
+    .>> whitespace
+    |> many
+
+[<RequireQualifiedAccess>]
+type FieldImportDecl = | Type of Symbol | Name of Symbol
+
+let fimportdecl =
+    period >>. choice [
+        // TODO: Avoid code duplication with fdefdecl.
+        namedecl' |>> FieldImportDecl.Name
+        keyword "type" >>. symbol |>> FieldImportDecl.Type
+    ]
+    |> line
+    |> many
+
+[<RequireQualifiedAccess>]
+type MethodImportAttr = | Flag of Position * MethodFlags
+
+let mimportattr =
+    choice [
+        // TODO: Avoid code duplication with mdefattr.
+        mflags |>> MethodImportAttr.Flag
+    ]
+    .>> whitespace
+    |> many
+
+[<RequireQualifiedAccess>]
+type MethodImportDecl = | Signature of Symbol | Name of Symbol
+
+let mimportdecl =
+    period >>. choice [
+        // TODO: Avoid code duplication with mdefdecl.
+        namedecl' |>> MethodImportDecl.Name
+        keyword "signature" >>. symbol |>> MethodImportDecl.Signature
+    ]
+    |> line
+    |> many
+
+[<RequireQualifiedAccess>]
+type TypeImportDecl =
+    | Module of Symbol
+    | Name of Symbol
+    | Namespace of Symbol
+    | Field of Symbol * FieldImportAttr list * FieldImportDecl list
+    | Method of Symbol * MethodImportAttr list * MethodImportDecl list
+
+let timportdecl: Parser<TypeImportDecl list, _> =
+    period >>. choice [
+        // TODO: Avoid code duplication with tdefdecl.
+        namedecl (keyword "module") symbol |>> TypeImportDecl.Module
+        namedecl (keyword "namespace") symbol |>> TypeImportDecl.Namespace
+        namedecl' |>> TypeImportDecl.Name
+        keyword "field" >>. tuple3 symbol fimportattr (block fimportdecl) |>> TypeImportDecl.Field
+        keyword "method" >>. tuple3 symbol mimportattr (block mimportdecl) |>> TypeImportDecl.Method
+    ]
+    |> line
+    |> many
+
+[<RequireQualifiedAccess>]
+type ModuleImportDecl = | Name of Position * Name | Version of ParsedVersionNumbers
 
 [<RequireQualifiedAccess>]
 type ParsedDeclaration =
@@ -480,6 +543,7 @@ type ParsedDeclaration =
     | Identifier of Symbol * string
     | Signature of Symbol * ParsedSignature
     | ImportedModule of Symbol * ModuleImportDecl list
+    | ImportedTypeDefinition of Symbol * TypeImportDecl list
     | Code of Symbol * ParsedCode
     | Namespace of Symbol * ParsedNamespace
     | TypeDefinition of Symbol * TypeDefAttr list * TypeDefDecl list
@@ -490,7 +554,7 @@ let declarations: Parser<ParsedDeclaration list, unit> =
         keyword "module" >>. choice [
             let mdimport =
                 period >>. choice [
-                    namedecl (keyword "name") name |>> ModuleImportDecl.Name
+                    getPosition .>>. namedecl (keyword "name") name |>> ModuleImportDecl.Name
                     verdecl' |>> ModuleImportDecl.Version
                 ]
                 |> line
@@ -516,7 +580,12 @@ let declarations: Parser<ParsedDeclaration list, unit> =
         keyword "namespace" >>. pipe2 symbol (block (namedecl (declaration "name") (many symbol))) (fun id name ->
             ParsedDeclaration.Namespace(id, { ParsedNamespace.NamespaceName = name }))
 
-        keyword "type" >>. tuple3 symbol tdefattr (block tdefdecl) |>> ParsedDeclaration.TypeDefinition
+        keyword "type" >>. choice [
+            keyword "import" >>. tuple2 symbol (block timportdecl) |>> ParsedDeclaration.ImportedTypeDefinition
+
+            tuple3 symbol tdefattr (block tdefdecl) |>> ParsedDeclaration.TypeDefinition
+        ]
+
         keyword "entrypoint" >>. symbol |>> ParsedDeclaration.EntryPoint
     ]
     // TODO: If declaration could not be parsed, store error and parse the next one

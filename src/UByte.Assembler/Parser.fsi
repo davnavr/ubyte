@@ -17,7 +17,7 @@ type ParsedVersionNumbers = Position * VersionNumbers
 
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
 type ModuleImportDecl =
-    | Name of Name
+    | Name of Position * Name
     | Version of ParsedVersionNumbers
 
 [<System.Runtime.CompilerServices.IsReadOnly; Struct; NoComparison; NoEquality>]
@@ -89,6 +89,32 @@ type TypeDefDecl =
     | Method of Symbol voption * MethodDefAttr list * MethodDefDecl list
 
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
+type FieldImportAttr =
+    | Flag of Position * FieldFlags
+
+[<RequireQualifiedAccess; NoComparison; NoEquality>]
+type FieldImportDecl =
+    | Type of Symbol
+    | Name of Symbol
+
+[<RequireQualifiedAccess; NoComparison; NoEquality>]
+type MethodImportAttr =
+    | Flag of Position * MethodFlags
+
+[<RequireQualifiedAccess; NoComparison; NoEquality>]
+type MethodImportDecl =
+    | Signature of Symbol
+    | Name of Symbol
+
+[<RequireQualifiedAccess; NoComparison; NoEquality>]
+type TypeImportDecl =
+    | Module of Symbol
+    | Name of Symbol
+    | Namespace of Symbol
+    | Field of Symbol * FieldImportAttr list * FieldImportDecl list
+    | Method of Symbol * MethodImportAttr list * MethodImportDecl list
+
+[<RequireQualifiedAccess; NoComparison; NoEquality>]
 type ParsedDeclaration =
     | Module of Position * Symbol voption * Name
     | FormatVersion of ParsedVersionNumbers
@@ -96,9 +122,10 @@ type ParsedDeclaration =
     | Identifier of Symbol * string
     | Signature of Symbol * ParsedSignature
     | ImportedModule of Symbol * ModuleImportDecl list
+    | ImportedTypeDefinition of Symbol * TypeImportDecl list
     | Code of Symbol * ParsedCode
     | Namespace of Symbol * ParsedNamespace
     | TypeDefinition of Symbol * TypeDefAttr list * TypeDefDecl list
     | EntryPoint of Symbol
 
-val declarations : Parser<ParsedDeclaration list, unit> //Parser<ParsedDeclaration list, ParserError list>
+val declarations : Parser<ParsedDeclaration list, unit>
