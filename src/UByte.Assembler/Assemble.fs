@@ -306,8 +306,8 @@ let assemble declarations = // TODO: Fix, use result so at least one error objec
                         failwith "TODO: How to get position for missing signature in method import"
                 }
 
-            let fimports = SymbolDictionary<IndexKinds.Field, _>()
-            let mimports = SymbolDictionary<IndexKinds.Method, _>()
+            let fimports = SymbolDictionary<IndexKinds.Kind, _>()
+            let mimports = SymbolDictionary<IndexKinds.Kind, _>()
 
             let timports' =
                 let rec resolveTypeDeclarations owner declarations =
@@ -428,8 +428,8 @@ let assemble declarations = // TODO: Fix, use result so at least one error objec
 
                     match! resolveFieldDeclarations true visibility flags ValueNone ValueNone decls with
                     | name, ValueSome ftype ->
-                        return
-                            { Field.FieldOwner = owner
+                        return fun adjust ->
+                            { Field.FieldOwner = adjust owner
                               FieldName = ValueOption.defaultValue emptyIdentifierIndex name
                               FieldVisibility = visibility
                               FieldFlags = flags
@@ -502,8 +502,8 @@ let assemble declarations = // TODO: Fix, use result so at least one error objec
 
                     match signature with
                     | ValueSome signature' ->
-                        return
-                            { Method.MethodOwner = owner
+                        return fun adjust ->
+                            { Method.MethodOwner = adjust owner
                               MethodName = ValueOption.defaultValue emptyIdentifierIndex name
                               MethodVisibility = visibility
                               MethodFlags = flags
@@ -515,12 +515,12 @@ let assemble declarations = // TODO: Fix, use result so at least one error objec
                         failwith "TODO: How to get position for missing signature in method definition"
                 }
 
-            let fdefinitions = SymbolDictionary<IndexKinds.Field, _>()
-            let mdefinitions = SymbolDictionary<IndexKinds.Method, _>()
+            let fdefinitions = SymbolDictionary<IndexKinds.Kind, _>()
+            let mdefinitions = SymbolDictionary<IndexKinds.Kind, _>()
 
             let tdefinitions' =
-                let fields = ImmutableArray.CreateBuilder()
-                let methods = ImmutableArray.CreateBuilder()
+                let fields = ImmutableArray.CreateBuilder<uvarint>() // TODO: Store the index of the first method and keep track of the number of methods instead.
+                let methods = ImmutableArray.CreateBuilder<uvarint>()
 
                 let rec resolveTypeAttributes attributes =
                     let rec inner success hasvis visibility attributes =
@@ -547,7 +547,7 @@ let assemble declarations = // TODO: Fix, use result so at least one error objec
                             | ValueSome field ->
                                 let success' =
                                     match fdefinitions.Add(id, field) with
-                                    | ValueSome i ->
+                                    | ValueSome(Index i) ->
                                         fields.Add i
                                         success
                                     | ValueNone ->
@@ -560,7 +560,7 @@ let assemble declarations = // TODO: Fix, use result so at least one error objec
                             | ValueSome field ->
                                 let success' =
                                     match mdefinitions.Add(id, field) with
-                                    | ValueSome i ->
+                                    | ValueSome(Index i) ->
                                         methods.Add i
                                         success
                                     | ValueNone -> false
@@ -595,8 +595,13 @@ let assemble declarations = // TODO: Fix, use result so at least one error objec
                     fields.Clear()
                     methods.Clear()
                     let! visibility = resolveTypeAttributes attrs
-                    let! (ns, name) = resolveTypeDeclarations (Index(owner + uint32 timports.Count)) decls
-                    return
+                    let! (ns, name) = resolveTypeDeclarations owner decls
+                    let fields', methods' = fields.ToImmutable(), methods.ToImmutable()
+                    let inline adjust (start: uint32) (members: ImmutableArray<uvarint>) =
+                        let mutable members' = Array.zeroCreate members.Length
+                        for i = 0 to members'.Length - 1 do members'.[i] <- Index(Checked.(+) start members.[i])
+                        Unsafe.As<Index<_>[], ImmutableArray<Index<_>>> &members'
+                    return fun fstart mstart ->
                         { TypeDefinition.TypeName = ValueOption.defaultValue emptyIdentifierIndex name
                           TypeNamespace = ValueOption.defaultValue emptyNamespaceIndex ns
                           TypeVisibility = visibility
@@ -605,8 +610,8 @@ let assemble declarations = // TODO: Fix, use result so at least one error objec
                           ImplementedInterfaces = ImmutableArray.Empty
                           TypeParameters = ImmutableArray.Empty
                           TypeAnnotations = ImmutableArray.Empty
-                          Fields = fields.ToImmutable()
-                          Methods = methods.ToImmutable() }
+                          Fields = adjust fstart fields'
+                          Methods = adjust mstart methods' }
                 }
 
             let codes' =
@@ -659,7 +664,7 @@ let assemble declarations = // TODO: Fix, use result so at least one error objec
                                 | _ ->
                                     start, false
 
-                            inner start remaining lookup success'
+                            inner start' remaining lookup success'
 
                     fun start lookup locals ->
                         registers.Clear()
@@ -777,13 +782,24 @@ let assemble declarations = // TODO: Fix, use result so at least one error objec
                           ImportedFields = fimports.ToVector()
                           ImportedMethods = mimports.ToVector() }
                       Definitions =
-                        { ModuleDefinitions.DefinedTypes = tdefinitions'
-                          DefinedFields = fdefinitions.ToVector()
-                          DefinedMethods = mdefinitions.ToVector() }
+                        let adjust index = TypeDefinitionIndex.Index(Checked.(+) (uint32 timports.Count) index)
+                        let adjustDefinedMembers (definitions: SymbolDictionary<IndexKinds.Kind, _ -> 'Member>) =
+                            let members = definitions.ToVector()
+                            let mutable members' = Array.zeroCreate definitions.Count
+                            for i = 0 to members'.Length - 1 do members'.[i] <- members.[i] adjust
+                            Unsafe.As<'Member[], ImmutableArray<'Member>> &members'
+                        { ModuleDefinitions.DefinedTypes =
+                            let mutable definitions = Array.zeroCreate tdefinitions'.Length
+                            let fstart, mstart = uint32 fimports.Count, uint32 mimports.Count
+                            for i = 0 to definitions.Length - 1 do
+                                definitions.[i] <- tdefinitions'.[i] fstart mstart
+                            Unsafe.As<TypeDefinition[], ImmutableArray<TypeDefinition>> &definitions
+                          DefinedFields = adjustDefinedMembers fdefinitions
+                          DefinedMethods = adjustDefinedMembers mdefinitions }
                       // TODO: Implement generation of data
                       Data = ImmutableArray.Empty
                       Code = codes'
-                      EntryPoint = main'
+                      EntryPoint = ValueOption.map (fun (Index i) -> Index(Checked.(+) (uint32 mimports.Count) i)) main'
                       Debug = () }
             }
 
