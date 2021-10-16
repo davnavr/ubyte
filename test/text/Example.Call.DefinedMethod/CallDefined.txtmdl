@@ -16,7 +16,7 @@
     .arguments (@a0)
 
     const.i32 12 @l_sum
-    add @l_sum @l0 @l_sum
+    add @a0 @l_sum @l_sum
     ret @l_sum
 }
 
@@ -45,7 +45,7 @@
     .method @method_helper private {
         .name @id_helper
         .signature @sig_helper
-        .bod defined @code_helper
+        .body defined @code_helper
     }
 }
 

@@ -11,8 +11,8 @@
     .name @id_namespace @id_namespace_imported
 }
 
-.signature $sig_int32 type s32
-.signature $sig_helper method ($sig_int32) ($sig_int32)
+.signature @sig_int32 type s32
+.signature @sig_helper method (@sig_int32) (@sig_int32)
 
 .code @code_helper {
     .arguments (@a0)

@@ -11,8 +11,8 @@
 .identifier @id_imported_method Helper
 
 .signature @sig_int type s32
-.signature @sig_main method ($sig_int) ()
-.signature @sig_imported_helper method ($sig_int) ($sig_int)
+.signature @sig_main method (@sig_int) ()
+.signature @sig_imported_helper method (@sig_int) (@sig_int)
 
 .code @code_main {
     .locals @sig_int (@l0)
