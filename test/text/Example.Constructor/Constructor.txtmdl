@@ -10,7 +10,7 @@
 .signature @sig_int type s32
 
 // An object reference to an instance of MyClass
-.signature @sig_myclass type &def @class_my
+.signature @sig_myclass type class @class_my
 
 .signature @sig_main method (@sig_int) ()
 

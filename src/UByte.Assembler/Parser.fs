@@ -19,10 +19,11 @@ let prclose = skipChar ')'
 let bropen = skipChar '{'
 let brclose = skipChar '}'
 let comma = skipChar ','
+let sbopen = skipChar '['
 
 let separator = choice [
     notEmpty whitespace
-    followedBy (choice [ bropen; brclose; propen; prclose; comma ])
+    followedBy (choice [ bropen; brclose; propen; prclose; comma; sbopen ])
 ]
 
 let keyword word = whitespace >>. skipString word .>> separator
@@ -95,40 +96,77 @@ let typesig: Parser<ParsedTypeSignature, _> =
     let tprimitive =
         choiceL
             [
-                keyword "bool" >>. preturn PrimitiveType.Bool
-                keyword "u8" >>. preturn PrimitiveType.U8
-                keyword "s8" >>. preturn PrimitiveType.S8
-                keyword "u16" >>. preturn PrimitiveType.U16
-                keyword "s16" >>. preturn PrimitiveType.S16
-                keyword "char16" >>. preturn PrimitiveType.Char16
-                keyword "u32" >>. preturn PrimitiveType.U32
-                keyword "s32" >>. preturn PrimitiveType.S32
-                keyword "char32" >>. preturn PrimitiveType.Char32
-                keyword "u64" >>. preturn PrimitiveType.U64
-                keyword "s64" >>. preturn PrimitiveType.S64
-                keyword "unative" >>. preturn PrimitiveType.UNative
-                keyword "snative" >>. preturn PrimitiveType.SNative
-                keyword "f32" >>. preturn PrimitiveType.F32
-                keyword "f64" >>. preturn PrimitiveType.F64
+                keyword "bool" >>% PrimitiveType.Bool
+                keyword "u8" >>% PrimitiveType.U8
+                keyword "s8" >>% PrimitiveType.S8
+                keyword "u16" >>% PrimitiveType.U16
+                keyword "s16" >>% PrimitiveType.S16
+                keyword "char16" >>% PrimitiveType.Char16
+                keyword "u32" >>% PrimitiveType.U32
+                keyword "s32" >>% PrimitiveType.S32
+                keyword "char32" >>% PrimitiveType.Char32
+                keyword "u64" >>% PrimitiveType.U64
+                keyword "s64" >>% PrimitiveType.S64
+                keyword "unative" >>% PrimitiveType.UNative
+                keyword "snative" >>% PrimitiveType.SNative
+                keyword "f32" >>% PrimitiveType.F32
+                keyword "f64" >>% PrimitiveType.F64
             ]
             "primitive type"
 
-    let treference =
-        skipChar '&'  >>. choiceL
+    let tdefined name defined =
+        keyword name >>. symbol |>> fun tname lookup ->
+            match lookup tname with
+            | ValueSome typei -> Result.Ok(defined typei)
+            | ValueNone -> Result.Error tname
+
+    let withTypeModifiers pmodifiers (ptype: Parser<_ -> Result<'Type, _>, _>) =
+        pipe2 ptype (choice pmodifiers |> many) <| fun t modifiers ->
+            List.fold
+                (fun current modifier lookup -> current lookup |> modifier)
+                t
+                modifiers
+
+    let tvalue =
+        choiceL
             [
-                keyword "any" >>. preturn (fun _ -> Result.Ok ReferenceType.Any)
-                keyword "def" >>. symbol |>> fun tname lookup ->
-                    match lookup tname with
-                    | ValueSome typei -> Result.Ok(ReferenceType.Defined typei)
-                    | ValueNone -> Result.Error tname
-                tprimitive |>> fun primt _ -> ValueType.Primitive primt |> ReferenceType.BoxedValueType |> Result.Ok
+                tprimitive |>> fun prim _ -> Result.Ok(ValueType.Primitive prim)
+                tdefined "struct" ValueType.Defined
+            ]
+            "value type"
+        |> withTypeModifiers [
+            skipChar '*' >>% Result.map ValueType.UnsafePointer
+        ]
+
+    let treference =
+        choiceL
+            [
+                keyword "any" >>% fun _ -> Result.Ok ReferenceType.Any
+                tdefined "class" ReferenceType.Defined
+                keyword "boxed" >>. tprimitive |>> fun primt _ ->
+                    ValueType.Primitive primt |> ReferenceType.BoxedValueType |> Result.Ok
             ]
             "reference type"
 
-    choice [
-        tprimitive |>> fun prim _ -> ValueType.Primitive prim |> AnyType.ValueType |> Result.Ok
-        treference |>> fun rt lookup -> Result.map AnyType.ReferenceType (rt lookup)
-    ]
+    let inline mapTypeParser mapping parser = parser |>> fun t lookup -> Result.map mapping (t lookup)
+
+    let tsafe =
+        choice [
+            mapTypeParser ReferenceOrValueType.Reference treference
+            mapTypeParser ReferenceOrValueType.Value tvalue
+        ]
+        |> withTypeModifiers [
+            skipString "[]" >>% Result.map (ReferenceType.Vector >> ReferenceOrValueType.Reference)
+        ]
+
+    mapTypeParser
+        (function
+        | ReferenceOrValueType.Reference rt -> AnyType.ReferenceType rt
+        | ReferenceOrValueType.Value vt -> AnyType.ValueType vt)
+        tsafe
+    //|> withTypeModifiers [
+    //    skipChar '&' >>% Result.map AnyType.SafePointer
+    //]
 
 let methodsig: Parser<Symbol list * Symbol list, _> =
     let tlist = whitespace >>. propen >>. sepBy (whitespace >>. symbol) comma .>> prclose
@@ -393,7 +431,7 @@ let code: Parser<ParsedCode, _> =
             match instructions.TryGetValue name with
             | true, instr -> instr
             | false, _ -> choice [
-                label >>. preturn(ParsedInstructionOrLabel.Label(pos, Name.ofStr name))
+                label >>% ParsedInstructionOrLabel.Label(pos, Name.ofStr name)
                 unknown pos name .>> skipRestOfLine true
             ]
 
@@ -421,7 +459,7 @@ let code: Parser<ParsedCode, _> =
 type ParsedNamespace = { NamespaceName: Symbol list }
 
 let attributes (flags: (string * 'Flag) list when 'Flag :> System.Enum): Parser<_, _> =
-    List.map (fun (name, flag) -> keyword name >>. preturn flag) flags |> choice
+    List.map (fun (name, flag) -> keyword name >>% flag) flags |> choice
 
 let visibility: Parser<VisibilityFlags, _> =
     attributes [
