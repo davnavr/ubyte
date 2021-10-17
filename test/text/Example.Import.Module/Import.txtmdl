@@ -1,0 +1,60 @@
+﻿.module Importing
+.version 0 0 7
+.format 0 0
+
+.identifier @id_namespace Example
+.identifier @id_namespace_importing Importing
+.identifier @id_namespace_imported Imported
+.identifier @id_main_class MyProgram
+.identifier @id_imported_class MyImport
+.identifier @id_entry_point Main
+.identifier @id_imported_method Helper
+
+.signature @sig_int type s32
+.signature @sig_main method (@sig_int) ()
+.signature @sig_imported_helper method (@sig_int) (@sig_int)
+
+.code @code_main {
+    .locals @sig_int (@l0)
+
+    const.i32 63 @l0
+    call @method_imported (@l0) (@l0)
+    ret @l0
+}
+
+.namespace @namespace_imported {
+    .name @id_namespace @id_namespace_imported
+}
+
+.module import @module_imported {
+    .name Imported
+    .version 0 0 8
+}
+
+.type import @class_imported {
+    .module @module_imported
+    .name @id_imported_class
+    .namespace @namespace_imported
+
+    .method @method_imported {
+        .name @id_imported_method
+        .signature @sig_imported_helper
+    }
+}
+
+.namespace @namespace_import {
+    .name @id_namespace @id_namespace_importing
+}
+
+.type @class_hello_world public {
+    .name @id_main_class
+    .namespace @namespace_import
+
+    .method @method_main public {
+        .name @id_entry_point
+        .signature @sig_main
+        .body defined @code_main
+    }
+}
+
+.entrypoint @method_main

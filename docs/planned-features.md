@@ -3,10 +3,7 @@
 Features further down the list are ones I think are more difficult or will take more time to implement.
 
 - Comparison instructions
-- Importing fields
-- Labels in text format
 - Exception handling (`try`, `catch`, and `finally`)
-- Change assembly language syntax `(s (expressions (are (difficult))))`
 - Inline `name`, signature (`type` and `method`), and `code` in text format
 - Methods marked as being implemented elsewhere (such as an interpreter or being provided at transpile time)
 - Virtual method calls

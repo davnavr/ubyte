@@ -1,45 +1,47 @@
-﻿(module (format 0 0) (name "Arrays") (version 0 1 0)
-  (identifier $id_namespace "Example")
-  (identifier $id_class "Arrays")
-  (identifier $id_entry_point "main")
+﻿.module Arrays
+.format 0 0
+.version 1
 
-  (signature $sig_int32 (type s32))
-  (signature $sig_string32 (type (ref vector char32)))
-  (signature $sig_argv (type (ref vector (ref vector char32))))
-  (signature $sig_main (method (returns $sig_int32) (parameters $sig_argv)))
+.identifier @id_namespace Example
+.identifier @id_class Arrays
+.identifier @id_entry_point main
 
-  (code $code_main
-    (registers
-      (argument $argv 0)
-      (local $lindex $sig_int32)
-      (local $llength $sig_int32)
-      (local $larg $sig_string32)
-      (local $lacc $sig_int32)
-      (local $lsum $sig_int32))
+.signature @sig_int32 type s32
+.signature @sig_string32 type char32[]
+.signature @sig_argv type char32[][]
+.signature @sig_main method (@sig_int32) (@sig_argv)
 
-    (const.i32 0 $lindex)
-    (obj.arr.len $argv $llength)
-    (br.eq $lindex $llength 6)
-    (obj.arr.get $argv $lindex $larg)
-    (obj.arr.len $larg $lacc)
-    (add $lsum $lacc $lsum)
-    (incr $lindex)
-    (br -5)
-    (ret $lsum)
-  )
+.code @code_main {
+    .locals @sig_int32 (@l_index, @l_length, @l_acc, @l_sum)
+    .locals @sig_string32 (@l_arg)
+    .arguments (@a_argv)
 
-  (namespace $namespace (name $id_namespace))
+    const.i32 0 @l_index
+    obj.arr.len @a_argv @l_length
+    START:
+    br.eq @l_index @l_length END
+    obj.arr.get @a_argv @l_index @l_arg
+    obj.arr.len @l_arg @l_acc
+    add @l_sum @l_acc @l_sum
+    incr @l_index
+    br START
+    END:
+    ret @l_sum
+}
 
-  (type $class (name $id_class) (namespace $namespace)
-    (visibility public)
-    (class base)
-  )
+.namespace @namespace {
+    .name @id_namespace
+}
 
-  (method $method_main (name $id_entry_point) (visibility public)
-    (signature $sig_main)
-    (defined $code_main)
-    (owner $class)
-  )
+.type @class public {
+    .name @id_class
+    .namespace @namespace
 
-  (entrypoint $method_main)
-)
+    .method @method_main public {
+        .name @id_entry_point
+        .signature @sig_main
+        .body defined @code_main
+    }
+}
+
+.entrypoint @method_main

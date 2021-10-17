@@ -1130,6 +1130,9 @@ type RuntimeModule (m: Module, moduleImportResolver: ModuleIdentifier -> Runtime
         match m.EntryPoint with
         | ValueSome ei ->
             let main = this.InitializeMethod ei
+
+            if main.Module <> this then failwith "TODO: Error for entry point method must be defined in this module"
+
             let signature = main.Signature
 
             let arguments =

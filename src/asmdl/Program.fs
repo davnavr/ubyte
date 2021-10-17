@@ -35,8 +35,8 @@ let main argv =
     use input' = input.OpenRead()
 
     let result =
-        Assemble.fromInput <| fun parser state ->
-            FParsec.CharParsers.runParserOnStream parser state input.Name input' System.Text.Encoding.UTF8
+        Assemble.fromInput <| fun parser ->
+            FParsec.CharParsers.runParserOnStream parser () input.Name input' System.Text.Encoding.UTF8
 
     match result with
     | Ok mdle ->
