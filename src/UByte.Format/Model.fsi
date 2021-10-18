@@ -11,16 +11,24 @@ val (|Magic|) : magic: Magic -> ImmutableArray<byte>
 
 val magic : Magic
 
-/// Represents an array preceded by an LEB128 encoded unsigned integer indicating the number of items.
+/// Represents an array preceded by an variable-length unsigned integer indicating the number of items.
 type vector<'T> = ImmutableArray<'T>
 
-/// Represents a LEB128 encoded unsigned integer.
+/// <summary>Represents a variable-length unsigned integer.</summary>
+/// <remarks>
+/// The variable-length integer is stored in little endian order, with the length of the integers specified by the number of
+/// consecutive ones that are set in the lowest bits of the first byte that is written.
+/// </remarks>
 type uvarint = uint32
 
-/// Represents a LEB128 encoded signed integer.
+/// <summary>Represents a variable-length signed integer.</summary>
+/// <remarks>
+/// Variable-length signed integers are stored similarly to its unsigned counterpart. Signed integers are stored as a 7-bit two's
+/// complement integer when in one byte, as a 14-bit two's complement integer when in two bytes, and so on.
+/// </remarks>
 type varint = int32
 
-/// A length-encoded array of LEB128 encoded unsigned integers used to indicate a version.
+/// A length-encoded array of variable-length unsigned integers used to indicate a version.
 [<IsReadOnly; Struct; CustomComparison; CustomEquality>]
 type VersionNumbers =
     | VersionNumbers of vector<uvarint>
@@ -55,7 +63,7 @@ type Name =
 
 val (|Name|) : name: Name -> ustring
 
-/// Represents data that is preceded by a LEB128 unsigned integer indicating the byte length of the following data.
+/// Represents data that is preceded by a variable-length unsigned integer indicating the byte length of the following data.
 type LengthEncoded<'Data> = 'Data
 
 [<RequireQualifiedAccess>]
@@ -132,7 +140,7 @@ module InstructionSet =
     /// </summary>
     type InstructionOffset = varint
 
-    /// Opcodes are represented as LEB128 encoded unsigned integers.
+    /// Opcodes are represented as variable-length encoded unsigned integers.
     type Opcode =
         | nop = 0u
         | ret = 1u
@@ -728,7 +736,7 @@ type ModuleHeader =
       /// The size of an unsafe pointer or object reference.
       PointerSize: PointerSize }
 
-    /// A LEB128 unsigned integer preceding the header indicating the number of fields in the header.
+    /// A variable-length unsigned integer preceding the header indicating the number of fields in the header.
     member FieldCount: uvarint
 
     member internal Endianness : Endianness
@@ -777,7 +785,7 @@ type Module =
       EntryPoint: LengthEncoded<MethodIndex voption>
       Debug: LengthEncoded<Debug> }
 
-    /// A LEB128 unsigned integer preceding the header indicating the number of data vectors that follow.
+    /// A variable-length unsigned integer preceding the header indicating the number of data vectors that follow.
     member DataVectorCount: uvarint
 
     member Endianness : Endianness

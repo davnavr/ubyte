@@ -10,51 +10,45 @@ open UByte.Format.Model.InstructionSet
 let inline bits1 (value: 'Enum when 'Enum : enum<uint8>) (dest: Stream) = dest.WriteByte(uint8 value)
 
 [<RequireQualifiedAccess>]
-module LEB128 =
-    let [<Literal>] private ContinueMask = 0b1000_0000uy
+module VarInt =
+    let integerOutOfRange value =
+        raise(ArgumentOutOfRangeException(nameof value, value, "Writing of variable-length integer is out of supported range"))
 
-    let inline private unsigned value (dest: Stream) =
-        if value <> LanguagePrimitives.GenericZero then
-            let mutable value = value
-            while value > LanguagePrimitives.GenericZero do
-                let b = uint8 value &&& (~~~ContinueMask)
-                value <- value >>> 7;
-                let cont = if value > LanguagePrimitives.GenericZero then ContinueMask else 0uy
-                dest.WriteByte(b ||| cont)
+    let unsigned (value: uvarint) (dest: Stream) =
+        if value <= 0x7Fu then
+            dest.WriteByte(uint8 value <<< 1)
+        elif value <= 0x3FFFu then
+            let value' = value <<< 2;
+            dest.WriteByte(uint8 value' ||| 0b01uy)
+            dest.WriteByte(uint8(value' >>> 8))
+        elif value <= 0x1FFFFFu then
+            let value' = value <<< 3;
+            dest.WriteByte(uint8 value' ||| 0b011uy)
+            dest.WriteByte(uint8(value' >>> 8))
+            dest.WriteByte(uint8(value' >>> 16))
         else
-            dest.WriteByte 0uy
+            integerOutOfRange value
 
-    let uint value dest = unsigned value dest
-
-    let [<Literal>] private SignMask = 0b0100_0000uy
-
-    let inline private signed unsign uconvert value (dest: Stream) =
-        if value <> LanguagePrimitives.GenericZero then
-            let signed = value < LanguagePrimitives.GenericZero
-            let uvalue = unsign value
-            let mutable bits = uvalue &&& uconvert 0x7FFF_FFFF
-
-            while bits > LanguagePrimitives.GenericZero do
-                let mutable b = uint8 bits &&& (~~~ContinueMask)
-                bits <- bits >>> 7
-                if signed then b <- b ||| SignMask
-                dest.WriteByte b
+    let signed (value: varint) dest =
+        if value >= int32 0xC0y && value <= 0x3F then
+            unsigned (uint32(uint8 value &&& 0b0111_1111uy)) dest
+        elif value >= int32 0xE000s && value <= 0x1FFF then
+            unsigned (uint32(uint16 value &&& 0b0111_1111_1111_1111us)) dest
+        // -524288 (0b0000_1000_0000_0000_0000_0000)
         else
-            dest.WriteByte 0uy
+            integerOutOfRange value
 
-    let int value dest = signed uint32 uint32 value dest
-
-let inline index (Index i) dest = LEB128.uint i dest
+let inline index (Index i) dest = VarInt.unsigned i dest
 
 let vector writer (items: vector<'T>) dest =
-    LEB128.uint (uint32 items.Length) dest
+    VarInt.unsigned (uint32 items.Length) dest
     for i = 0 to items.Length - 1 do
         writer items.[i] dest
 
-let versions (VersionNumbers numbers) dest = vector LEB128.uint numbers dest
+let versions (VersionNumbers numbers) dest = vector VarInt.unsigned numbers dest
 
 let str (chars: string) dest =
-    LEB128.uint (uint32 chars.Length) dest
+    VarInt.unsigned (uint32 chars.Length) dest
     // NOTE: Can write strings more efficeintly by using StreamWriter or Encoder
     dest.Write(ReadOnlySpan(System.Text.Encoding.UTF8.GetBytes chars))
 
@@ -67,7 +61,7 @@ let lengthEncodedData (buffer: MemoryStream) dest writer =
     reset()
     writer buffer
 
-    LEB128.uint (uint32 buffer.Length) dest
+    VarInt.unsigned (uint32 buffer.Length) dest
     buffer.WriteTo dest
 
 let lengthEncodedVector buffer dest items writer = lengthEncodedData buffer dest (vector writer items)
@@ -77,11 +71,11 @@ let moduleID id dest =
     versions id.Version dest
 
 let registerType (struct(count: uvarint, t: RegisterType)) dest =
-    LEB128.uint count dest
+    VarInt.unsigned count dest
     index t.RegisterType dest
     bits1 t.RegisterFlags dest
 
-let inline opcode (code: Opcode) dest = LEB128.uint (uint32 code) dest
+let inline opcode (code: Opcode) dest = VarInt.unsigned (uint32 code) dest
 
 [<RequireQualifiedAccess>]
 module Constant =
@@ -157,7 +151,7 @@ let instruction endianness i dest =
         index reg dest
     | Instruction.Br target ->
         opcode Opcode.br dest
-        LEB128.int target dest
+        VarInt.signed target dest
     | (Instruction.Br_eq(xreg, yreg, target) & Opcode Opcode.``br.eq`` op)
     | (Instruction.Br_ne(xreg, yreg, target) & Opcode Opcode.``br.ne`` op)
     | (Instruction.Br_lt(xreg, yreg, target) & Opcode Opcode.``br.lt`` op)
@@ -167,12 +161,12 @@ let instruction endianness i dest =
         opcode op dest
         index xreg dest
         index yreg dest
-        LEB128.int target dest
+        VarInt.signed target dest
     | (Instruction.Br_true(reg, target) & Opcode Opcode.``br.true`` op)
     | (Instruction.Br_false(reg, target) & Opcode Opcode.``br.false`` op) ->
         opcode op dest
         index reg dest
-        LEB128.int target dest
+        VarInt.signed target dest
     | Instruction.Obj_new(constructor, aregs, rreg) ->
         opcode Opcode.``obj.new`` dest
         index constructor dest
@@ -199,11 +193,11 @@ let toStream (stream: Stream) (md: Module) =
         let (Magic magic) = md.Magic
         stream.Write(magic.AsSpan())
         versions md.FormatVersion stream
-        LEB128.uint md.DataVectorCount stream
+        VarInt.unsigned md.DataVectorCount stream
 
         lengthEncodedData buffer stream <| fun dest ->
             let header = md.Header
-            LEB128.uint header.FieldCount dest
+            VarInt.unsigned header.FieldCount dest
             moduleID header.Module dest
             bits1 header.Flags dest
             bits1 header.PointerSize dest
@@ -283,7 +277,7 @@ let toStream (stream: Stream) (md: Module) =
                 index timport.TypeName dest
                 index timport.TypeNamespace dest
                 dest.WriteByte(if timport.IsStruct then 1uy else 0uy)
-                LEB128.uint timport.TypeParameters dest
+                VarInt.unsigned timport.TypeParameters dest
                 if timport.TypeParameters > 0u then failwith "TODO: Type imports with type parameters are not yet supported"
 
             lengthEncodedVector auxbuf dest md.Imports.ImportedFields <| fun fimport dest ->
@@ -294,7 +288,7 @@ let toStream (stream: Stream) (md: Module) =
             lengthEncodedVector auxbuf dest md.Imports.ImportedMethods <| fun mimport dest ->
                 index mimport.MethodOwner dest
                 index mimport.MethodName dest
-                LEB128.uint mimport.TypeParameters dest
+                VarInt.unsigned mimport.TypeParameters dest
                 if mimport.TypeParameters > 0u then failwith "TODO: Method imports with type parameters are not yet supported"
                 index mimport.Signature dest
 
@@ -367,7 +361,7 @@ let toStream (stream: Stream) (md: Module) =
             lengthEncodedVector auxbuf dest code.Instructions (instruction md.Endianness)
 
         match md.EntryPoint with
-        | ValueNone -> LEB128.uint 0u stream
+        | ValueNone -> VarInt.unsigned 0u stream
         | ValueSome main -> lengthEncodedData buffer stream (index main)
 
         // Debug info not yet supported.

@@ -22,58 +22,37 @@ let inline bits1<'Enum, 'Source when 'Enum : enum<uint8> and 'Source :> IByteSeq
     LanguagePrimitives.EnumOfValue<_, 'Enum>(u1 stream)
 
 [<RequireQualifiedAccess>]
-module LEB128 =
-    let [<Literal>] private ContinueMask = 0b1000_0000uy
+module VarInt =
+    let integerOutOfRange() = raise(NotSupportedException "Cannot parse excessively large integer")
 
-    let inline private unsigned size convert (stream: #IByteSequence) =
-        let mutable cont, n, shifted = true, LanguagePrimitives.GenericZero, 0
-        while cont do
-            let b = u1 stream
-            cont <- b &&& ContinueMask = ContinueMask
-            n <- n ||| (convert (b &&& (~~~ContinueMask)) <<< shifted)
+    let unsigned (stream: #IByteSequence): uvarint =
+        let first = u1 stream
+        if first &&& 1uy = 0uy then
+            uint32(first >>> 1)
+        elif first &&& 0b11uy = 1uy then
+            let second = u1 stream
+            (uint32 first >>> 2) ||| (uint32 second <<< 6)
+        elif first &&& 0b111uy = 0b11uy then
+            let second = u1 stream
+            let third = u1 stream
+            (uint32 first >>> 3) ||| (uint32 second <<< 5) ||| (uint32 third <<< 13)
+        else
+            integerOutOfRange()
 
-            let shifted' =
-                if cont then 7
-                elif b >= 64uy then 6
-                elif b >= 32uy then 5
-                elif b >= 16uy then 4
-                elif b >= 8uy then 3
-                elif b >= 4uy then 2
-                elif b >= 2uy then 1
-                else 0
-
-            shifted <- Checked.(+) shifted shifted'
-            if shifted > size then failwith "TODO: Error for exceeded max allowed value for this kind of LEB128 integer"
-        n
-
-    let uint (source: #_) = unsigned 32 uint32 source
-
-    let [<Literal>] private SignMask = 0b0100_0000uy
-
-    let inline private signed size convert sign unsign negate (stream: #IByteSequence) =
-        let mutable cont, n, shifted = true, LanguagePrimitives.GenericZero, 0
-        while cont do
-            let b = u1 stream
-            cont <- b &&& ContinueMask = ContinueMask
-            if not cont && b ||| SignMask <> 0uy then n <- negate n
-            let mask = ~~~(if not cont then ContinueMask ||| SignMask else ContinueMask)
-            n <- sign(unsign n ||| ((unsign (convert (b &&& mask))) <<< shifted))
-
-            let shifted' =
-                if cont then 7
-                elif b >= 64uy then 6
-                elif b >= 32uy then 5
-                elif b >= 16uy then 4
-                elif b >= 8uy then 3
-                elif b >= 4uy then 2
-                elif b >= 2uy then 1
-                else 0
-
-            shifted <- Checked.(+) shifted shifted'
-            if shifted > size then failwith "TODO: Error for exceeded max allowed value for this kind of LEB128 integer"
-        n
-
-    let int (source: #_) = signed 32 int int uint32 (fun i -> i * -1) source
+    let signed stream: varint =
+        let value = unsigned stream
+        if value <= 0x7Fu then
+            let mutable value' = uint8 value
+            if 0b0100_0000uy &&& value' <> 0uy then
+                value' <- value' ||| 0b1000_0000uy
+            int32(int8 value')
+        elif value <= 0x3FFFu then
+            let mutable value' = uint16 value
+            if 0b0010_0000_0000_0000us &&& value' <> 0us then
+                value' <- value' ||| 0b1100_0000_0000_0000us
+            int32(int16 value')
+        else
+            integerOutOfRange()
 
 [<IsReadOnly; Struct>]
 type StreamWrapper (stream: Stream) =
@@ -91,7 +70,7 @@ let magic (source: #IByteSequence) =
 
 let vector (source: #IByteSequence) parse =
     let mutable items =
-        let length = Checked.int32(LEB128.uint source)
+        let length = Checked.int32(VarInt.unsigned source)
         Array.zeroCreate<'Result> length
 
     for i = 0 to items.Length - 1 do
@@ -99,13 +78,13 @@ let vector (source: #IByteSequence) parse =
 
     Unsafe.As<_, ImmutableArray<'Result>> &items
 
-let inline versions (source: #_) = VersionNumbers(vector source LEB128.uint)
+let inline versions (source: #_) = VersionNumbers(vector source VarInt.unsigned)
 
-let inline index (source: #_) = Index(LEB128.uint source)
+let inline index (source: #_) = Index(VarInt.unsigned source)
 
 let lengthEncodedData (source: #IByteSequence) =
     let mutable data =
-        LEB128.uint source
+        VarInt.unsigned source
         |> Checked.int32
         |> Array.zeroCreate<byte>
     let read = source.Read(Span(data, 0, data.Length))
@@ -131,7 +110,7 @@ let moduleID (source: #_) =
 
 let header (source: #_) =
     let struct(_, header') = lengthEncodedData source
-    let fcount = LEB128.uint header'
+    let fcount = VarInt.unsigned header'
     if fcount <> 3u then failwithf "TODO: Invalid field count %i" fcount
 
     { Module = moduleID header'
@@ -152,7 +131,7 @@ let moduleImports source =
                 let tag = u1 t
                 if tag > 1uy then failwithf "TODO: Invalid type import kind 0x%02X" tag
                 tag = 1uy
-              TypeParameters = LEB128.uint t }
+              TypeParameters = VarInt.unsigned t }
       ImportedFields =
         lengthEncodedVector source <| fun f ->
             { FieldImport.FieldOwner = index f
@@ -162,7 +141,7 @@ let moduleImports source =
         lengthEncodedVector source <| fun m ->
             { MethodImport.MethodOwner = index m
               MethodName = index m
-              TypeParameters = LEB128.uint m
+              TypeParameters = VarInt.unsigned m
               Signature = index m } }
 
 let annotation _ = failwith "TODO: Annotations not yet supported"
@@ -241,10 +220,10 @@ let instruction endianness source =
     let inline index1 instr: Instruction = instr(index source)
     let inline index2 instr: Instruction = instr(index source, index source)
     let inline index3 instr: Instruction = instr(index source, index source, index source)
-    let inline br1 instr: Instruction = instr(index source, LEB128.int source)
-    let inline br2 instr: Instruction = instr(index source, index source, LEB128.int source)
+    let inline br1 instr: Instruction = instr(index source, VarInt.signed source)
+    let inline br2 instr: Instruction = instr(index source, index source, VarInt.signed source)
 
-    match LanguagePrimitives.EnumOfValue(LEB128.uint source) with
+    match LanguagePrimitives.EnumOfValue(VarInt.unsigned source) with
     | Opcode.nop -> Nop
     | Opcode.ret -> Ret(vector source index)
 
@@ -278,7 +257,7 @@ let instruction endianness source =
     | Opcode.rotl -> index2 Rotl
     | Opcode.rotr -> index2 Rotr
 
-    | Opcode.br -> Br(LEB128.int source)
+    | Opcode.br -> Br(VarInt.signed source)
     | Opcode.``br.eq`` -> br2 Br_eq
     | Opcode.``br.ne`` -> br2 Br_ne
     | Opcode.``br.lt`` -> br2 Br_le
@@ -307,7 +286,7 @@ let fromBytes (source: #IByteSequence) =
     let magic' = magic source
     let fversion = versions source
     if fversion <> Model.currentFormatVersion then failwithf "TODO: Error for unsupported version %O" fversion
-    let dcount = LEB128.uint source // TODO: Ensure data vector count is valid.
+    let dcount = VarInt.unsigned source
     if dcount <> currentDataVectorCount then failwithf "TODO: Error for unsupported data vector count %i" dcount
     let header' = header source
 
@@ -386,7 +365,7 @@ let fromBytes (source: #IByteSequence) =
         lengthEncodedVector source  <| fun code ->
             { Code.RegisterTypes =
                 vector code <| fun body ->
-                    let count = LEB128.uint body
+                    let count = VarInt.unsigned body
                     let rtype =
                         { RegisterType = index body
                           RegisterFlags = bits1 body }
