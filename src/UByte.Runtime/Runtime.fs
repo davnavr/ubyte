@@ -816,8 +816,6 @@ module Interpreter =
         | ValueNone -> ()
         | ValueSome _ -> raise(MissingReturnInstructionException(frame.contents, "Reached unexpected end of instructions"))
 
-// TODO: Make a RuntimeArray type.
-
 [<Sealed>]
 type InvalidConstructorException (method: RuntimeMethod, frame, message) =
     inherit RuntimeException(frame, message)
@@ -826,6 +824,9 @@ type InvalidConstructorException (method: RuntimeMethod, frame, message) =
 
 [<RequireQualifiedAccess>]
 module ExternalCode =
+    [<Literal>]
+    let private InternalCall = "runmdl"
+
     let private lookup = Dictionary<struct(string * string), RuntimeStackFrame -> unit>()
 
     let private println (frame: RuntimeStackFrame) =
@@ -837,7 +838,8 @@ module ExternalCode =
         | _ ->
             failwith "TODO: How to print some other thing"
 
-    do lookup.[("runmdl", "testhelperprintln")] <- println
+    do lookup.[(InternalCall, "testhelperprintln")] <- println
+    do lookup.[(InternalCall, "break")] <- fun _ -> System.Diagnostics.Debugger.Launch() |> ignore
 
     let call library name =
         match lookup.TryGetValue(struct(library, name)) with
