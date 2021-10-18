@@ -17,6 +17,7 @@ type RuntimeStackFrame =
     member ReturnRegisters : ImmutableArray<RuntimeRegister>
     member Previous : RuntimeStackFrame voption
     member InstructionIndex : int32 with get
+    member StackTrace : string
 
     member RegisterAt : Model.RegisterIndex -> RuntimeRegister
 
@@ -37,6 +38,8 @@ type RuntimeMethod =
 
     /// Indicates whether the specified method is a constructor.
     member IsConstructor : bool
+
+    override ToString: unit -> string
 
 type InvalidConstructorException with
     /// The method that is not a valid constructor.
@@ -74,6 +77,8 @@ type RuntimeTypeDefinition =
 
     //member InvokeInitializer: unit -> 
 
+    override ToString: unit -> string
+
 type RuntimeMethod with member DeclaringType : RuntimeTypeDefinition
 type RuntimeField with member DeclaringType : RuntimeTypeDefinition
 
@@ -86,6 +91,10 @@ type TypeNotFoundException =
 
 [<Sealed>]
 type RuntimeModule =
+    member Name : string
+
+    member Version : Model.VersionNumbers
+
     member InitializeType : Model.TypeDefinitionIndex -> RuntimeTypeDefinition
 
     member InitializeMethod : Model.MethodIndex -> RuntimeMethod
@@ -97,6 +106,8 @@ type RuntimeModule =
     /// <summary>Invokes the entry point of the program, supplying the specified arguments.</summary>
     /// <exception cref="T:UByte.Interpreter.Runtime.MissingEntryPointException" />
     member InvokeEntryPoint : argv: string[] -> int32
+
+    override ToString: unit -> string
 
 [<Sealed; Class>]
 type MissingEntryPointException =

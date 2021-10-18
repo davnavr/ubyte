@@ -161,6 +161,15 @@ type RuntimeStackFrame
     member _.CurrentMethod = method
     member _.Previous = prev
 
+    member this.StackTrace =
+        let trace = System.Text.StringBuilder()
+        let mutable current = ValueSome this
+        while current.IsSome do
+            let current' = current.Value
+            Printf.bprintf trace "  at %O offset 0x%04X %s" current'.CurrentMethod current'.InstructionIndex Environment.NewLine
+            current <- current'.Previous
+        trace.ToString()
+
     member this.RegisterAt (Index i: RegisterIndex) =
         let i' = Checked.int32 i
         if i' >= args.Length then this.LocalRegisters.[i' - args.Length] else args.[i']
@@ -782,7 +791,7 @@ module Interpreter =
             with
             | e ->
                 //ex <- ValueSome e
-                raise(System.NotImplementedException("TODO: Implement exception handling", e))
+                raise(System.NotImplementedException("TODO: Implement exception handling: " + Environment.NewLine + frame'.StackTrace, e))
 
             ()
 
@@ -867,6 +876,8 @@ type RuntimeMethod (rmodule: RuntimeModule, method: Method) =
             frame <- ValueSome(RuntimeStackFrame(frame, args, registers, returns, code.Instructions, this))
         | MethodBody.Abstract -> failwith "TODO: Handle virtual calls"
 
+    override this.ToString() = sprintf "%O.%s" this.DeclaringType this.Name // TODO: Include method signature in stack trace
+
 [<Sealed>]
 type RuntimeField (rmodule: RuntimeModule, field: Field, n: int32) =
     let { Field.FieldName = namei; FieldFlags = flags } = field
@@ -950,6 +961,8 @@ type RuntimeTypeDefinition (rm: RuntimeModule, t: TypeDefinition) =
 
     member val Name = rm.IdentifierAt t.TypeName
 
+    member val Namespace = rm.NamespaceAt t.TypeNamespace
+
     member _.FindMethod name = // TODO: Figure out if methods defined in inherited class(es)
         let mutable result, i = ValueNone, 0
 
@@ -967,6 +980,13 @@ type RuntimeTypeDefinition (rm: RuntimeModule, t: TypeDefinition) =
         let layout' = layout.Value
         { RuntimeStruct.RawData = OffsetArray layout'.RawDataSize
           References = OffsetArray layout'.ObjectReferencesLength }
+
+    override this.ToString() =
+        System.Text.StringBuilder(this.Module.ToString())
+            .Append(if this.Namespace.Length > 0 then "::" + this.Namespace else String.Empty)
+            .Append("::")
+            .Append(this.Name)
+            .ToString()
 
 let createIndexedLookup (count: int32) initializer =
     let lookup = Dictionary<Index<_>, _> count
@@ -1043,10 +1063,13 @@ type RuntimeModule (m: Module, moduleImportResolver: ModuleIdentifier -> Runtime
 
     let typeNameLookup = Dictionary()
 
+    member val Name = m.Header.Module.ModuleName.ToString()
+    member val Version = m.Header.Module.Version
+
     member _.IdentifierAt(Index i: IdentifierIndex) = m.Identifiers.Identifiers.[Checked.int32 i]
 
     member this.NamespaceAt(Index i: NamespaceIndex): string =
-        m.Namespaces.[Checked.int32 i] |> Seq.map this.IdentifierAt |> String.concat "." // TODO: Cache namespaces
+        m.Namespaces.[Checked.int32 i] |> Seq.map this.IdentifierAt |> String.concat "::" // TODO: Cache namespaces
 
     member _.TypeSignatureAt(Index i: TypeSignatureIndex) = m.TypeSignatures.[Checked.int32 i]
 
@@ -1168,6 +1191,8 @@ type RuntimeModule (m: Module, moduleImportResolver: ModuleIdentifier -> Runtime
             Interpreter.interpret (ImmutableArray.Create(RuntimeRegister.S32 result)) arguments main
             int32 result.contents
         | ValueNone -> raise(MissingEntryPointException(this, "The entry point method of the module is not defined"))
+
+    override this.ToString() = sprintf "(%s, v%O)" this.Name this.Version
 
 [<Sealed>]
 type ModuleNotFoundException (name: ModuleIdentifier, message) =
