@@ -1,0 +1,74 @@
+﻿.module HelloWorld
+.version 0 1 0
+.format 0 0
+
+.identifier @id_namespace Example
+.identifier @id_class Hello
+.identifier @id_entry_point main
+.identifier @id_println println
+.identifier @id_extern_interpreter runmdl
+.identifier @id_extern_println testhelperprintln
+
+.signature @sig_int type s32
+
+// Method that takes no parameters and returns a 32-bit integer
+.signature @sig_main method (@sig_int) ()
+
+.signature @sig_char type char32
+.signature @sig_string type char32[]
+
+.signature @sig_println method () (@sig_string)
+
+.code @code_main {
+    .locals @sig_string (@l_str)
+    .locals @sig_char (@l_char)
+    .locals @sig_int (@l_i)
+
+    const.i32 5 @l_i
+    obj.arr.new @sig_char @l_i @l_str
+
+    // Hello, eventually this will be stored in a data segment when they are implemented
+    const.i32 72 @l_char
+    const.i32 0 @l_i
+    obj.arr.set @l_str @l_i @l_char
+    const.i32 101 @l_char
+    const.i32 1 @l_i
+    obj.arr.set @l_str @l_i @l_char
+    const.i32 108 @l_char
+    const.i32 2 @l_i
+    obj.arr.set @l_str @l_i @l_char
+    const.i32 108 @l_char
+    const.i32 3 @l_i
+    obj.arr.set @l_str @l_i @l_char
+    const.i32 111 @l_char
+    const.i32 4 @l_i
+    obj.arr.set @l_str @l_i @l_char
+
+    call @method_println () (@l_str)
+
+    const.zero @l_i
+    ret @l_i
+}
+
+.namespace @namespace_example {
+    .name @id_namespace
+}
+
+.type @class_hello public {
+    .name @id_class
+    .namespace @namespace_example
+
+    .method @method_main public {
+        .signature @sig_main
+        .name @id_entry_point
+        .body defined @code_main
+    }
+
+    .method @method_println private {
+        .signature @sig_println
+        .name @id_println
+        .body external @id_extern_println from @id_extern_interpreter
+    }
+}
+
+.entrypoint @method_main

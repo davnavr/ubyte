@@ -436,7 +436,7 @@ module Tag =
     type MethodBody =
         | Defined = 0uy
         | Abstract = 1uy
-        //| External = 2uy
+        | External = 2uy
 
     type TypeDefinitionKind =
         | BaseClass = 0uy
@@ -605,17 +605,19 @@ type MethodFlags =
 
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
 type MethodBody =
+    /// Defined in the current module.
     | Defined of CodeIndex // TODO: Have flags indicating if method is final be here instead?
+    /// Not defined in the current type, but in a derived type.
     | Abstract
-    //| External of
-    //| RuntimeOrCompilerProvided of 
+    /// Defined elsewhere, used by the foreign function interface or to call methods defined in the runtime.
+    | External of library: IdentifierIndex * entryPointFunction: IdentifierIndex
 
 /// <summary>
 /// Represents a method or constructor.
 /// </summary>
 /// <remarks>
 /// Valid constructors must have the <c>Instance</c> and <c>Constructor</c> flags set, must have no type parameters, and must
-/// have not have any return values.
+/// not have any return values.
 /// </remarks>
 [<NoComparison; NoEquality>]
 type Method =

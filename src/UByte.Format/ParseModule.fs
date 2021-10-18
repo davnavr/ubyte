@@ -192,6 +192,7 @@ let moduleDefinitions source =
                 match bits1 m with
                 | Tag.MethodBody.Defined -> MethodBody.Defined(index m)
                 | Tag.MethodBody.Abstract -> MethodBody.Abstract
+                | Tag.MethodBody.External -> MethodBody.External(index m, index m)
                 | bad -> failwithf "TODO: Bad method body kind 0x%02X" (uint8 bad) } }
 
 [<RequireQualifiedAccess>]

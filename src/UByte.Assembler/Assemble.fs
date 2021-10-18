@@ -473,7 +473,12 @@ let assemble declarations = // TODO: Fix, use result so at least one error objec
                     | MethodDefDecl.Body(pos, body') :: remaining ->
                         match body with
                         | ValueNone ->
-                            match body' methodBodyLookup with
+                            let body'' =
+                                match body' with
+                                | ParsedMethodBody.Defined definition -> definition methodBodyLookup
+                                | ParsedMethodBody.External external -> external lookupID
+
+                            match body'' with
                             | Result.Ok body'' ->
                                 resolveMethodDeclarations success visibility flags name signature (ValueSome body'') remaining
                             | Result.Error _ ->
