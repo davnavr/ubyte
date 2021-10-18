@@ -170,8 +170,9 @@ type RuntimeStackFrame
             let current' = current.Value
             Printf.bprintf trace "  at %O" current'.CurrentMethod
             if not current'.Instructions.IsDefaultOrEmpty then
-                Printf.bprintf trace " offset 0x%04X%s" current'.InstructionIndex Environment.NewLine
+                Printf.bprintf trace " offset 0x%04X" current'.InstructionIndex
             current <- current'.Previous
+            if current.IsSome then trace.Append Environment.NewLine |> ignore
         trace.ToString()
 
     member this.RegisterAt (Index i: RegisterIndex) =
@@ -825,10 +826,18 @@ type InvalidConstructorException (method: RuntimeMethod, frame, message) =
 
 [<RequireQualifiedAccess>]
 module ExternalCode =
-    let private lookup = Dictionary<struct(string * string), RuntimeStackFrame voption ref -> unit>()
+    let private lookup = Dictionary<struct(string * string), RuntimeStackFrame -> unit>()
 
-    do lookup.[("runmdl", "testhelperprintln")] <- fun frame ->
-        printfn "TODO: This is a test"
+    let private println (frame: RuntimeStackFrame) =
+        match frame.ArgumentRegisters.[0] with
+        | RuntimeRegister.Object { contents = RuntimeObject.Null } -> stdout.WriteLine()
+        | RuntimeRegister.Object { contents = RuntimeObject.IntVector chars } ->
+            for c in chars do stdout.Write(System.Text.Rune(c).ToString())
+            stdout.WriteLine()
+        | _ ->
+            failwith "TODO: How to print some other thing"
+
+    do lookup.[("runmdl", "testhelperprintln")] <- println
 
     let call library name =
         match lookup.TryGetValue(struct(library, name)) with
@@ -910,7 +919,7 @@ type RuntimeMethod (rmodule: RuntimeModule, method: Method) =
             let frame' = RuntimeStackFrame(frame.contents, args, ImmutableArray.Empty, returns, ImmutableArray.Empty, this)
             frame.contents <- ValueSome frame'
             runExternalCode <- ValueSome <| fun frame'' ->
-                ExternalCode.call library' efunction' frame''
+                ExternalCode.call library' efunction' frame''.contents.Value
                 frame''.contents <- frame'.Previous
 
     override this.ToString() = sprintf "%O.%s" this.DeclaringType this.Name // TODO: Include method signature in stack trace
