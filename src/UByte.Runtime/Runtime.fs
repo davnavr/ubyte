@@ -652,11 +652,9 @@ module Interpreter =
                     frame <- frame'.Previous
                 | Call(Method method, Registers frame' aregs, Registers frame' rregs) ->
                     invoke rregs aregs method
-                | Call_ret(Method method, Registers frame' aregs, Registers frame' rregs) ->
-                    // TODO: Test that tail calls work as intended.
+                | Call_ret(Method method, Registers frame' aregs, _) -> // TODO: Does call.ret need to specify return values?
                     frame <- frame'.Previous
-                    invoke rregs aregs method
-                    copyRegisterValues rregs frame'.ReturnRegisters
+                    invoke frame'.ReturnRegisters aregs method
                 | Br(BranchTarget target) -> frame'.InstructionIndex <- target
                 | Br_eq(Register xreg, Register yreg, BranchTarget target) ->
                     if Compare.isEqual xreg yreg then frame'.InstructionIndex <- target

@@ -280,6 +280,10 @@ let instruction endianness source =
     | Opcode.``call.ret`` -> callargs Call_ret
     | Opcode.``call.virt.ret`` -> callargs Call_virt_ret
 
+    | Opcode.``add.ovf`` -> index3 Add_ovf
+    | Opcode.``sub.ovf`` -> index3 Sub_ovf
+    | Opcode.``mul.ovf`` -> index3 Mul_ovf
+
     | bad -> failwithf "TODO: Unrecognized opcode 0x%08X (%A)" (uint32 bad) bad
 
 let fromBytes (source: #IByteSequence) =

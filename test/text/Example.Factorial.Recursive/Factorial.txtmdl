@@ -1,0 +1,57 @@
+﻿.module Factorial
+.format 0 0
+.version 1
+
+.identifier @id_namespace Example
+.identifier @id_class Factorial
+.identifier @id_entry_point main
+.identifier @id_factorial factorial
+
+.signature @sig_int type s32
+.signature @sig_main method (@sig_int) ()
+.signature @sig_factorial method (@sig_int) (@sig_int, @sig_int)
+
+.code @code_factorial {
+    .locals @sig_int (@l1)
+    .arguments (@a_i, @a_acc)
+
+    const.i32 1 @l1
+    br.le @a_i @l1 END
+    mul.ovf @a_acc @a_i @a_acc
+    sub.ovf @a_i @l1 @a_i
+    call.ret @method_factorial (@a_acc) (@a_i, @a_acc)
+    END:
+    ret @a_acc
+}
+
+.code @code_main {
+    .locals @sig_int (@l0, @l1)
+
+    const.i32 9 @l0
+    const.i32 1 @l1
+    call @method_factorial (@l0) (@l0, @l1)
+    ret @l0
+}
+
+.namespace @namespace {
+    .name @id_namespace
+}
+
+.type @class_program public {
+    .name @id_class
+    .namespace @namespace
+
+    .method @method_main public {
+        .name @id_entry_point
+        .signature @sig_main
+        .body defined @code_main
+    }
+
+    .method @method_factorial public {
+        .name @id_factorial
+        .signature @sig_factorial
+        .body defined @code_factorial
+    }
+}
+
+.entrypoint @method_main

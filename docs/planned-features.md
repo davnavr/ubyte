@@ -12,7 +12,6 @@ Features further down the list are ones I think are more difficult or will take 
 - Abstract classes
 - Figure out generics (advantages of reification and erasure)
 - Some way of specifiying which method overrides what explicitly for all methods (essentially preventing implicit interface implementations like in C#)
-- Tail calls
 - Allowing main method to accept an array of character arrays
 - Interactive runtime to help with debugging
 - Transpilation to CIL bytecode and metadata
