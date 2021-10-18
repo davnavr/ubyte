@@ -218,6 +218,7 @@ module Tag =
     type MethodBody =
         | Defined = 0uy
         | Abstract = 1uy
+        | External = 2uy
 
     type TypeDefinitionKind =
         /// Indicates that the class does not derive from another class.
@@ -349,6 +350,7 @@ type MethodFlags =
 type MethodBody =
     | Defined of CodeIndex
     | Abstract
+    | External of library: IdentifierIndex * entryPointFunction: IdentifierIndex
 
 type Method =
     { MethodOwner: TypeDefinitionIndex

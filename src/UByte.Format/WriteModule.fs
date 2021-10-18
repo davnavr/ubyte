@@ -356,6 +356,10 @@ let toStream (stream: Stream) (md: Module) =
                     bits1 Tag.MethodBody.Defined dest
                     index codei dest
                 | MethodBody.Abstract -> bits1 Tag.MethodBody.Abstract dest
+                | MethodBody.External(library, func) ->
+                    bits1 Tag.MethodBody.External dest
+                    index library dest
+                    index func dest
 
         lengthEncodedVector buffer stream md.Data (fun data dest -> dest.Write(data.AsSpan()))
 

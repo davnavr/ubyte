@@ -522,10 +522,15 @@ let mdefattr =
     |> many
 
 [<RequireQualifiedAccess>]
+type ParsedMethodBody =
+    | Defined of ((Symbol -> CodeIndex voption) -> Result<MethodBody, Name>)
+    | External of ((Symbol -> IdentifierIndex voption) -> Result<MethodBody, Name>)
+
+[<RequireQualifiedAccess>]
 type MethodDefDecl =
     | Signature of Symbol
     | Name of Symbol
-    | Body of Position * ((Symbol -> CodeIndex voption) -> Result<MethodBody, Name>)
+    | Body of Position * ParsedMethodBody
 
 let mdefdecl =
     period >>. choice [
@@ -533,10 +538,25 @@ let mdefdecl =
         keyword "signature" >>. symbol |>> MethodDefDecl.Signature
         keyword "body" >>. choice [
             keyword "defined" >>. symbol |>> fun ((pos, coden) as body) ->
-                MethodDefDecl.Body(pos, fun lookup ->
+                let defined lookup =
                     match lookup body with
                     | ValueSome codei -> Result.Ok(MethodBody.Defined codei)
-                    | ValueNone -> Result.Error coden)
+                    | ValueNone -> Result.Error coden
+
+                MethodDefDecl.Body(pos, ParsedMethodBody.Defined defined)
+
+            pipe3
+                (getPosition .>> keyword "external")
+                (symbol .>> whitespace .>> keyword "from" .>> whitespace)
+                symbol
+                (fun pos ((_, funcn) as efunction) ((_, libn) as library) ->
+                    let external lookup =
+                        match lookup library, lookup efunction with
+                        | ValueSome libi, ValueSome funci -> Result.Ok(MethodBody.External(libi, funci))
+                        | ValueNone, _ -> Result.Error libn
+                        | _, ValueNone -> Result.Error funcn
+
+                    MethodDefDecl.Body(pos, ParsedMethodBody.External external))
         ]
     ]
     |> line

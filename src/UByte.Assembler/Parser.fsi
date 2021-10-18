@@ -78,10 +78,15 @@ type MethodDefAttr =
     | Flag of Position * MethodFlags
 
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
+type ParsedMethodBody =
+    | Defined of ((Symbol -> CodeIndex voption) -> Result<MethodBody, Name>)
+    | External of ((Symbol -> IdentifierIndex voption) -> Result<MethodBody, Name>)
+
+[<RequireQualifiedAccess; NoComparison; NoEquality>]
 type MethodDefDecl =
     | Signature of Symbol
     | Name of Symbol
-    | Body of Position * ((Symbol -> CodeIndex voption) -> Result<MethodBody, Name>)
+    | Body of Position * ParsedMethodBody
 
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
 type TypeDefAttr =
