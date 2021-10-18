@@ -26,6 +26,8 @@ type OffsetArray<'T> =
 
     member this.CopyTo(destination: OffsetArray<'T>) = this.ToSpan().CopyTo(destination.ToSpan())
 
+//type RuntimeRegister = RuntimeRegister of RuntimeStruct
+
 [<RequireQualifiedAccess>]
 type RuntimeRegister =
     | S8 of int8 ref
@@ -166,7 +168,9 @@ type RuntimeStackFrame
         let mutable current = ValueSome this
         while current.IsSome do
             let current' = current.Value
-            Printf.bprintf trace "  at %O offset 0x%04X %s" current'.CurrentMethod current'.InstructionIndex Environment.NewLine
+            Printf.bprintf trace "  at %O" current'.CurrentMethod
+            if not current'.Instructions.IsDefaultOrEmpty then
+                Printf.bprintf trace " offset 0x%04X%s" current'.InstructionIndex Environment.NewLine
             current <- current'.Previous
         trace.ToString()
 
@@ -578,11 +582,12 @@ module Interpreter =
         Unsafe.As<RuntimeRegister[], ImmutableArray<RuntimeRegister>> &registers'
 
     let interpret returns arguments (entrypoint: RuntimeMethod) =
-        let mutable frame: RuntimeStackFrame voption = ValueNone
+        let frame: RuntimeStackFrame voption ref = ref ValueNone
+        let mutable runExternalCode: (RuntimeStackFrame voption ref -> unit) voption = ValueNone
 
         let inline invoke returns (arguments: ImmutableArray<_>) (method: RuntimeMethod) =
-            method.SetupStackFrame(returns, &frame)
-            let arguments' = frame.Value.ArgumentRegisters
+            method.SetupStackFrame(returns, frame, &runExternalCode)
+            let arguments' = frame.contents.Value.ArgumentRegisters
             if arguments.Length <> arguments'.Length then
                 failwithf "TODO: Error for argument array lengths do not match, expected %i got %i" arguments'.Length arguments.Length
             copyRegisterValues arguments arguments'
@@ -590,12 +595,12 @@ module Interpreter =
         invoke returns arguments entrypoint
 
         let inline cont() =
-            match frame with
+            match frame.contents with
             | ValueSome frame'-> frame'.InstructionIndex < frame'.Instructions.Length
             | ValueNone -> false
 
         while cont() do
-            let frame' = frame.Value
+            let frame' = frame.contents.Value
 
             let inline (|Register|) rindex = frame'.RegisterAt rindex
             let inline (|Method|) mindex: RuntimeMethod = frame'.CurrentMethod.Module.InitializeMethod mindex
@@ -618,7 +623,7 @@ module Interpreter =
                     | RuntimeRegister.S32 { contents = i } -> i
                     | _ -> failwith "TODO: Convert to int32 and check bounds when getting index to array element"
                 match array with
-                | RuntimeRegister.Object { contents = RuntimeObject.Null } -> nullReferenceArrayAccess frame
+                | RuntimeRegister.Object { contents = RuntimeObject.Null } -> nullReferenceArrayAccess frame.contents
                 | RuntimeRegister.Object { contents = RuntimeObject.ByteVector array' } -> accu8 array' index'
                 | RuntimeRegister.Object { contents = RuntimeObject.ShortVector array' } -> accu16 array' index'
                 | RuntimeRegister.Object { contents = RuntimeObject.IntVector array' } -> accu32 array' index'
@@ -658,11 +663,11 @@ module Interpreter =
                 | Const_zero(Register dest) -> Const.``false`` dest
                 | Ret(Registers frame' registers) ->
                     copyRegisterValues registers frame'.ReturnRegisters
-                    frame <- frame'.Previous
+                    frame.contents <- frame'.Previous
                 | Call(Method method, Registers frame' aregs, Registers frame' rregs) ->
                     invoke rregs aregs method
                 | Call_ret(Method method, Registers frame' aregs, _) -> // TODO: Does call.ret need to specify return values?
-                    frame <- frame'.Previous
+                    frame.contents <- frame'.Previous
                     invoke frame'.ReturnRegisters aregs method
                 | Br(BranchTarget target) -> frame'.InstructionIndex <- target
                 | Br_eq(Register xreg, Register yreg, BranchTarget target) ->
@@ -794,17 +799,21 @@ module Interpreter =
                 | Nop -> ()
                 | bad -> failwithf "TODO: Unsupported instruction %A" bad
 
+                match runExternalCode with
+                | ValueNone -> ()
+                | ValueSome run ->
+                    run frame
+                    runExternalCode <- ValueNone
+
                 frame'.InstructionIndex <- Checked.(+) frame'.InstructionIndex 1
             with
             | e ->
                 //ex <- ValueSome e
                 raise(System.NotImplementedException("TODO: Implement exception handling: " + Environment.NewLine + frame'.StackTrace, e))
 
-            ()
-
-        match frame with
+        match frame.contents with
         | ValueNone -> ()
-        | ValueSome _ -> raise(MissingReturnInstructionException(frame, "Reached unexpected end of instructions"))
+        | ValueSome _ -> raise(MissingReturnInstructionException(frame.contents, "Reached unexpected end of instructions"))
 
 // TODO: Make a RuntimeArray type.
 
@@ -813,6 +822,18 @@ type InvalidConstructorException (method: RuntimeMethod, frame, message) =
     inherit RuntimeException(frame, message)
 
     member _.Method = method
+
+[<RequireQualifiedAccess>]
+module ExternalCode =
+    let private lookup = Dictionary<struct(string * string), RuntimeStackFrame voption ref -> unit>()
+
+    do lookup.[("runmdl", "testhelperprintln")] <- fun frame ->
+        printfn "TODO: This is a test"
+
+    let call library name =
+        match lookup.TryGetValue(struct(library, name)) with
+        | true, call' -> call'
+        | false, _ -> fun _ -> failwithf "TODO: Handle external calls to %s in %s" library name
 
 [<Sealed>]
 type RuntimeMethod (rmodule: RuntimeModule, method: Method) =
@@ -866,7 +887,7 @@ type RuntimeMethod (rmodule: RuntimeModule, method: Method) =
 
         Unsafe.As<RuntimeRegister[], ImmutableArray<RuntimeRegister>> &registers
 
-    member this.SetupStackFrame(returns, frame: byref<_>) =
+    member this.SetupStackFrame(returns, frame: _ ref, runExternalCode: outref<_ voption>) =
         match body with
         | MethodBody.Defined codei ->
             let code = rmodule.CodeAt codei
@@ -880,12 +901,17 @@ type RuntimeMethod (rmodule: RuntimeModule, method: Method) =
                     for _ = 1 to Checked.int32 count do create() |> registers.Add
                 registers.ToImmutable()
 
-            frame <- ValueSome(RuntimeStackFrame(frame, args, registers, returns, code.Instructions, this))
+            frame.contents <- ValueSome(RuntimeStackFrame(frame.contents, args, registers, returns, code.Instructions, this))
         | MethodBody.Abstract -> failwith "TODO: Handle virtual calls"
         | MethodBody.External(library, efunction) ->
             let library' = this.Module.IdentifierAt library
             let efunction' = this.Module.IdentifierAt efunction
-            failwithf "TODO: Handle external calls to %s in %s" library' efunction'
+            let args = this.CreateArgumentRegisters()
+            let frame' = RuntimeStackFrame(frame.contents, args, ImmutableArray.Empty, returns, ImmutableArray.Empty, this)
+            frame.contents <- ValueSome frame'
+            runExternalCode <- ValueSome <| fun frame'' ->
+                ExternalCode.call library' efunction' frame''
+                frame''.contents <- frame'.Previous
 
     override this.ToString() = sprintf "%O.%s" this.DeclaringType this.Name // TODO: Include method signature in stack trace
 
