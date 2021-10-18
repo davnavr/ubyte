@@ -621,7 +621,7 @@ let assemble declarations = // TODO: Fix, use result so at least one error objec
                 let resolveArgumentRegisters =
                     let rec inner index (lookup: Dictionary<Name, RegisterIndex>) registers success =
                         match registers with
-                        | [] when success -> ValueSome(struct(index, lookup))
+                        | [] when success -> ValueSome lookup
                         | [] -> ValueNone
                         | struct(pos, name) :: remaining ->
                             let success' = lookup.TryAdd(name, Index index)
@@ -633,7 +633,7 @@ let assemble declarations = // TODO: Fix, use result so at least one error objec
                 let resolveLocalRegisters =
                     let registers = ImmutableArray.CreateBuilder<struct(_ * RegisterType)>()
 
-                    let countLocalRegisters start (lookup: Dictionary<_, _>) names =
+                    let countLocalRegisters (lookup: Dictionary<_, _>) names =
                         let rec inner names count success =
                             match names with
                             | [] when success -> ValueSome count
@@ -643,32 +643,32 @@ let assemble declarations = // TODO: Fix, use result so at least one error objec
                                     remaining
                                     (Checked.(+) 1u count)
                                     (success && lookup.TryAdd(name, RegisterIndex.Index(uint32 lookup.Count)))
-                        inner names start true
+                        inner names 0u true
 
-                    let rec inner start locals lookup success =
+                    let rec inner locals lookup success =
                         match locals with
                         | [] when success -> ValueSome(registers.ToImmutable())
                         | [] -> ValueNone
                         | loc :: remaining ->
                             let result = voptional {
                                 let! ltype = resolveTypeSignature loc.LocalsType
-                                let! count = countLocalRegisters start lookup loc.LocalNames
+                                let! count = countLocalRegisters lookup loc.LocalNames
                                 return struct(count, { RegisterType = ltype; RegisterFlags = RegisterFlags.None })
                             }
 
-                            let start', success' =
+                            let success' =
                                 match result with
-                                | ValueSome ((count, _) as rt) when success ->
+                                | ValueSome rt when success ->
                                     registers.Add rt
-                                    start + count, true
+                                    true
                                 | _ ->
-                                    start, false
+                                    false
 
-                            inner start' remaining lookup success'
+                            inner remaining lookup success'
 
-                    fun start lookup locals ->
+                    fun lookup locals ->
                         registers.Clear()
-                        inner start locals lookup true
+                        inner locals lookup true
 
                 let ierrors = List<InvalidInstructionError> 0
 
@@ -761,8 +761,8 @@ let assemble declarations = // TODO: Fix, use result so at least one error objec
 
                 mapLookupValues codes <| fun _ code -> voptional {
                     // TODO: Don't forget to change this assembler code if order of registers is changed.
-                    let! (istart, rlookup) = resolveArgumentRegisters 0u code.Arguments
-                    let! registers = resolveLocalRegisters istart rlookup code.Locals
+                    let! rlookup = resolveArgumentRegisters 0u code.Arguments
+                    let! registers = resolveLocalRegisters rlookup code.Locals
                     let instructions = resolveCodeInstructions code.Body rlookup
                     addInstructionErrors()
                     let! instructions' = instructions

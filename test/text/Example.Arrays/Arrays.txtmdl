@@ -16,6 +16,7 @@
     .locals @sig_string32 (@l_arg)
     .arguments (@a_argv)
 
+    // Sums the lengths of all argument strings
     const.i32 0 @l_index
     obj.arr.len @a_argv @l_length
     START:
