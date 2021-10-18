@@ -19,6 +19,8 @@
 
 .signature @sig_println method () (@sig_string)
 
+.data @data_message utf32le "Hello World!"
+
 .code @code_main {
     .locals @sig_string (@l_str)
     .locals @sig_char (@l_char)
@@ -27,7 +29,6 @@
     const.i32 5 @l_i
     obj.arr.new @sig_char @l_i @l_str
 
-    // Hello, eventually this will be stored in a data segment when they are implemented
     const.i32 72 @l_char
     const.i32 0 @l_i
     obj.arr.set @l_str @l_i @l_char

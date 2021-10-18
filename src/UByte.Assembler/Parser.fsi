@@ -71,6 +71,7 @@ type FieldDefAttr =
 type FieldDefDecl =
     | Type of Symbol
     | Name of Symbol
+    | DefaultValue of Symbol
 
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
 type MethodDefAttr =
@@ -139,5 +140,6 @@ type ParsedDeclaration =
     | Namespace of Symbol * ParsedNamespace
     | TypeDefinition of Symbol * TypeDefAttr list * TypeDefDecl list
     | EntryPoint of Symbol
+    | Data of Symbol * seq<byte>
 
 val declarations : Parser<ParsedDeclaration list, unit>

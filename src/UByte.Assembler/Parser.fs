@@ -34,11 +34,22 @@ let declaration word = period >>. keyword word
 
 let idchars = [ asciiLetter; pchar '_' ]
 
+// TODO: Handle escape sequences
+let stringlit =
+    let quote = skipChar '"'
+    choice [
+        yield! idchars
+        anyOf [ ' '; '.'; '?'; '!' ]
+    ]
+    |> manyChars
+    |> between quote quote
+    <?> "string literal"
+
 let identifier =
     whitespace
     >>. choiceL
         [
-            choice [ asciiLetter; pchar '_' ] |> manyChars
+            choice idchars |> manyChars
             //between (skipChar '"')
         ]
         "name"
@@ -496,7 +507,7 @@ let fdefattr =
     |> many
 
 [<RequireQualifiedAccess>]
-type FieldDefDecl = | Type of Symbol | Name of Symbol
+type FieldDefDecl = | Type of Symbol | Name of Symbol | DefaultValue of Symbol
 
 let fdefdecl =
     period >>. choice [
@@ -664,6 +675,24 @@ type ParsedDeclaration =
     | Namespace of Symbol * ParsedNamespace
     | TypeDefinition of Symbol * TypeDefAttr list * TypeDefDecl list
     | EntryPoint of Symbol
+    | Data of Symbol * seq<byte>
+
+let tdata = choice [
+    let str name (encoding: System.Text.Encoding) = keyword name >>. stringlit |>> (encoding.GetBytes >> Seq.ofArray)
+
+    str "utf8" System.Text.Encoding.UTF8
+    str "utf16le" System.Text.Encoding.Unicode
+    str "utf16be" System.Text.Encoding.BigEndianUnicode
+    str "utf32le" System.Text.Encoding.UTF32
+    //str "utf32be"
+
+    let hexbyte =
+        let hexval (d1: char) = uint8 d1 - (if d1 <= '9' then uint8 '0' else uint8 'A' - 0xAuy)
+        pipe2 hex hex (fun d1 d2 -> (16uy * hexval d1) + hexval d2)
+        <?> "hexadecimal byte"
+
+    keyword "bytes" >>. block (many hexbyte) |>> List.toSeq
+]
 
 let declarations: Parser<ParsedDeclaration list, unit> =
     let declaration = period >>. choice [
@@ -703,6 +732,7 @@ let declarations: Parser<ParsedDeclaration list, unit> =
         ]
 
         keyword "entrypoint" >>. symbol |>> ParsedDeclaration.EntryPoint
+        keyword "data" >>. symbol .>>. tdata |>> ParsedDeclaration.Data
     ]
     // TODO: If declaration could not be parsed, store error and parse the next one
 
