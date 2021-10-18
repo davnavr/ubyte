@@ -291,6 +291,9 @@ let code: Parser<ParsedCode, _> =
         withOneRegister "incr" InstructionSet.Incr
         withOneRegister "decr" InstructionSet.Decr
         withOneRegister "obj.null" InstructionSet.Obj_null
+        withOneRegister "const.zero" InstructionSet.Const_zero
+        withOneRegister "const.true" InstructionSet.Const_true
+        withOneRegister "const.false" InstructionSet.Const_false
 
         let withRegisterCount name count instr =
             parray count symbol |>> fun registers rlookup _ errors _ -> voptional {

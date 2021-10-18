@@ -619,13 +619,13 @@ module Interpreter =
                     | _ -> failwith "TODO: Convert to int32 and check bounds when getting index to array element"
                 match array with
                 | RuntimeRegister.Object { contents = RuntimeObject.Null } -> nullReferenceArrayAccess frame
-                | RuntimeRegister.Object { contents = RuntimeObject.ByteVector array' } -> accu8 array' array'.[index']
-                | RuntimeRegister.Object { contents = RuntimeObject.ShortVector array' } -> accu16 array' array'.[index']
-                | RuntimeRegister.Object { contents = RuntimeObject.IntVector array' } -> accu32 array' array'.[index']
-                | RuntimeRegister.Object { contents = RuntimeObject.LongVector array' } -> accu64 array' array'.[index']
-                | RuntimeRegister.Object { contents = RuntimeObject.NativeIntVector array' } -> accun array' array'.[index']
-                | RuntimeRegister.Object { contents = RuntimeObject.StructVector array' } -> accstr array' array'.[index']
-                | RuntimeRegister.Object { contents = RuntimeObject.ObjectVector array' } -> accobj array' array'.[index']
+                | RuntimeRegister.Object { contents = RuntimeObject.ByteVector array' } -> accu8 array' index'
+                | RuntimeRegister.Object { contents = RuntimeObject.ShortVector array' } -> accu16 array' index'
+                | RuntimeRegister.Object { contents = RuntimeObject.IntVector array' } -> accu32 array' index'
+                | RuntimeRegister.Object { contents = RuntimeObject.LongVector array' } -> accu64 array' index'
+                | RuntimeRegister.Object { contents = RuntimeObject.NativeIntVector array' } -> accun array' index'
+                | RuntimeRegister.Object { contents = RuntimeObject.StructVector array' } -> accstr array' index'
+                | RuntimeRegister.Object { contents = RuntimeObject.ObjectVector array' } -> accobj array' index'
                 | _ ->
                     failwith "TODO: Error for expected object reference to array but got value type"
 
@@ -777,13 +777,20 @@ module Interpreter =
                     arrayAccessInstruction array index
                         (fun _ _ -> failwith "TODO: Array u8 element not supported")
                         (fun _ _ -> failwith "TODO: Array u16 element not supported")
-                        (fun _ i -> Const.i32 i destination) // TODO: Should store an unsigned integer instead.
+                        (fun array i -> Const.i32 array.[i] destination)
                         (fun _ _ -> failwith "TODO: Array u64 element not supported")
                         (fun _ _ -> failwith "TODO: Array unative element not supported")
                         (fun _ _ -> failwith "TODO: Array struct element not supported")
-                        (fun _ i -> RuntimeRegister.Object(ref i).CopyValueTo(destination)) // TODO: Define a Const.obj function instead
+                        (fun array i -> RuntimeRegister.Object(ref array.[i]).CopyValueTo(destination)) // TODO: Define a Const.obj function instead
                 | Obj_arr_set(Register array, Register index, Register source) ->
-                    failwith "TODO: Define helper functions for reading values registers"
+                    arrayAccessInstruction array index
+                        (fun _ _ -> failwith "TODO: Array u8 element not supported")
+                        (fun _ _ -> failwith "TODO: Array u16 element not supported")
+                        (fun array' i -> array'.[i] <- NumberValue.u32 source)
+                        (fun _ _ -> failwith "TODO: Array u64 element not supported")
+                        (fun _ _ -> failwith "TODO: Array unative element not supported")
+                        (fun _ _ -> failwith "TODO: Array struct element not supported")
+                        (fun _ i -> failwith "TODO Array object element not supported")
                 | Nop -> ()
                 | bad -> failwithf "TODO: Unsupported instruction %A" bad
 
@@ -875,6 +882,10 @@ type RuntimeMethod (rmodule: RuntimeModule, method: Method) =
 
             frame <- ValueSome(RuntimeStackFrame(frame, args, registers, returns, code.Instructions, this))
         | MethodBody.Abstract -> failwith "TODO: Handle virtual calls"
+        | MethodBody.External(library, efunction) ->
+            let library' = this.Module.IdentifierAt library
+            let efunction' = this.Module.IdentifierAt efunction
+            failwithf "TODO: Handle external calls to %s in %s" library' efunction'
 
     override this.ToString() = sprintf "%O.%s" this.DeclaringType this.Name // TODO: Include method signature in stack trace
 
