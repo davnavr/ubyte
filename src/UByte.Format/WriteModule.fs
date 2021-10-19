@@ -186,6 +186,11 @@ let instruction endianness i dest =
         index typei dest
         index lreg dest
         index rreg dest
+    | Instruction.Obj_arr_const(typei, datai, rreg) ->
+        opcode Opcode.``obj.arr.const`` dest
+        index typei dest
+        index datai dest
+        index rreg dest
     | _ -> failwithf "TODO: Cannot write unsupported instruction %A" i
 
 let toStream (stream: Stream) (md: Module) =
@@ -361,7 +366,8 @@ let toStream (stream: Stream) (md: Module) =
                     index library dest
                     index func dest
 
-        lengthEncodedVector buffer stream md.Data (fun data dest -> dest.Write(data.AsSpan()))
+        lengthEncodedVector buffer stream md.Data <| fun data dest ->
+            lengthEncodedData auxbuf dest <| fun dest' -> dest'.Write(data.AsSpan())
 
         lengthEncodedVector buffer stream md.Code <| fun code dest ->
             vector registerType code.RegisterTypes dest

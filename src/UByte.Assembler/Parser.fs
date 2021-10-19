@@ -34,11 +34,19 @@ let declaration word = period >>. keyword word
 
 let idchars = [ asciiLetter; pchar '_' ]
 
+// TODO: Handle escape sequences
+let stringlit =
+    let quote = skipChar '"'
+    noneOf "\n\"\t\\"
+    |> manyChars
+    |> between quote quote
+    <?> "string literal"
+
 let identifier =
     whitespace
     >>. choiceL
         [
-            choice [ asciiLetter; pchar '_' ] |> manyChars
+            choice idchars |> manyChars
             //between (skipChar '"')
         ]
         "name"
@@ -182,6 +190,7 @@ type InvalidInstructionError =
     | UndefinedField of Symbol
     | UndefinedMethod of Symbol
     | UndefinedTypeSignature of Symbol
+    | UndefinedData of Symbol
     | InvalidIntegerLiteral of Position * size: int32 * literal: string
     | UndefinedLabel of Position * Name
 
@@ -189,6 +198,7 @@ type IInstructionResolver =
     abstract FindField: field: Symbol -> FieldIndex voption
     abstract FindMethod: method: Symbol -> MethodIndex voption
     abstract FindTypeSignature: signature: Symbol -> TypeSignatureIndex voption
+    abstract FindData: signature: Symbol -> DataIndex voption
 
 type RegisterLookup = Symbol -> RegisterIndex voption
 
@@ -230,6 +240,11 @@ let code: Parser<ParsedCode, _> =
         match lookup.FindTypeSignature id with
         | ValueSome _ as i -> i
         | ValueNone -> addErrorTo errors (InvalidInstructionError.UndefinedTypeSignature id)
+
+    let lookupModuleData (lookup: IInstructionResolver) errors id =
+        match lookup.FindData id with
+        | ValueSome _ as i -> i
+        | ValueNone -> addErrorTo errors (InvalidInstructionError.UndefinedData id)
 
     let lookupRegisterList lookup errors names =
         let rec inner (registers: ImmutableArray<RegisterIndex>.Builder) success names =
@@ -428,6 +443,14 @@ let code: Parser<ParsedCode, _> =
         }
         |> addInstructionParser "obj.arr.new"
 
+        pipe3 symbol symbol symbol <| fun etype data reg rlookup resolver errors _ -> voptional {
+            let! etype' = lookupTypeSignature resolver errors etype
+            let! data' = lookupModuleData resolver errors data
+            let! reg' = lookupRegisterName rlookup errors reg
+            return InstructionSet.Obj_arr_const(etype', data', reg')
+        }
+        |> addInstructionParser "obj.arr.const"
+
         let label = skipChar ':' >>. whitespace
 
         getPosition .>>. instructionOrLabelName .>> whitespace >>= fun (pos, name) ->
@@ -496,7 +519,7 @@ let fdefattr =
     |> many
 
 [<RequireQualifiedAccess>]
-type FieldDefDecl = | Type of Symbol | Name of Symbol
+type FieldDefDecl = | Type of Symbol | Name of Symbol | DefaultValue of Symbol
 
 let fdefdecl =
     period >>. choice [
@@ -664,6 +687,24 @@ type ParsedDeclaration =
     | Namespace of Symbol * ParsedNamespace
     | TypeDefinition of Symbol * TypeDefAttr list * TypeDefDecl list
     | EntryPoint of Symbol
+    | Data of Symbol * seq<byte>
+
+let tdata = choice [
+    let str name (encoding: System.Text.Encoding) = keyword name >>. stringlit |>> (encoding.GetBytes >> Seq.ofArray)
+
+    str "utf8" System.Text.Encoding.UTF8
+    str "utf16le" System.Text.Encoding.Unicode
+    str "utf16be" System.Text.Encoding.BigEndianUnicode
+    str "utf32le" System.Text.Encoding.UTF32
+    //str "utf32be"
+
+    let hexbyte =
+        let hexval (d1: char) = uint8 d1 - (if d1 <= '9' then uint8 '0' else uint8 'A' - 0xAuy)
+        pipe2 hex hex (fun d1 d2 -> (16uy * hexval d1) + hexval d2)
+        <?> "hexadecimal byte"
+
+    keyword "bytes" >>. block (many hexbyte) |>> List.toSeq
+]
 
 let declarations: Parser<ParsedDeclaration list, unit> =
     let declaration = period >>. choice [
@@ -703,6 +744,7 @@ let declarations: Parser<ParsedDeclaration list, unit> =
         ]
 
         keyword "entrypoint" >>. symbol |>> ParsedDeclaration.EntryPoint
+        keyword "data" >>. symbol .>>. tdata |>> ParsedDeclaration.Data
     ]
     // TODO: If declaration could not be parsed, store error and parse the next one
 

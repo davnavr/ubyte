@@ -32,6 +32,7 @@ type InvalidInstructionError =
     | UndefinedField of Symbol
     | UndefinedMethod of Symbol
     | UndefinedTypeSignature of Symbol
+    | UndefinedData of Symbol
     | InvalidIntegerLiteral of Position * size: int32 * literal: string
     | UndefinedLabel of Position * Name
 
@@ -39,6 +40,7 @@ type IInstructionResolver =
     abstract FindField: field: Symbol -> FieldIndex voption
     abstract FindMethod: method: Symbol -> MethodIndex voption
     abstract FindTypeSignature: signature: Symbol -> TypeSignatureIndex voption
+    abstract FindData: signature: Symbol -> DataIndex voption
 
 type RegisterLookup = Symbol -> RegisterIndex voption
 
@@ -71,6 +73,7 @@ type FieldDefAttr =
 type FieldDefDecl =
     | Type of Symbol
     | Name of Symbol
+    | DefaultValue of Symbol
 
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
 type MethodDefAttr =
@@ -139,5 +142,6 @@ type ParsedDeclaration =
     | Namespace of Symbol * ParsedNamespace
     | TypeDefinition of Symbol * TypeDefAttr list * TypeDefDecl list
     | EntryPoint of Symbol
+    | Data of Symbol * seq<byte>
 
 val declarations : Parser<ParsedDeclaration list, unit>

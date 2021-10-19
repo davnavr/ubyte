@@ -277,6 +277,7 @@ let instruction endianness source =
     | Opcode.``obj.arr.len`` -> index2 Obj_arr_len
     | Opcode.``obj.arr.get`` -> index3 Obj_arr_get
     | Opcode.``obj.arr.set`` -> index3 Obj_arr_set
+    | Opcode.``obj.arr.const`` -> index3 Obj_arr_const
 
     | Opcode.``call.ret`` -> callargs Call_ret
     | Opcode.``call.virt.ret`` -> callargs Call_virt_ret

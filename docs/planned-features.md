@@ -5,8 +5,6 @@ Features further down the list are ones I think are more difficult or will take 
 - Comparison instructions
 - Exception handling (`try`, `catch`, and `finally`)
 - Inline `name`, signature (`type` and `method`), and `code` in text format
-- Data in module (for strings and byte arrays), and corresponding instructions to use them
-- Initial field values (allow field to be initialized with module data)
 - Virtual method calls
 - Single class inheritance
 - Multiple class inheritance to allow for interfaces/mixins/traits?

@@ -71,14 +71,15 @@ let assemble declarations = // TODO: Fix, use result so at least one error objec
     let errors = ImmutableArray.CreateBuilder<AssemblerError>()
     let mutable fversion, mname, mversion, mmain = ValueNone, ValueNone, ValueNone, ValueNone
     let identifiers = SymbolDictionary<IndexKinds.Identifier, string>()
+    let namespaces = SymbolDictionary<IndexKinds.Namespace, Symbol list>()
     let emptyIdentifierIndex = identifiers.AddAnonymous String.Empty
     let tsignatures = SymbolDictionary<IndexKinds.TypeSignature, ParsedTypeSignature>()
     let msignatures = SymbolDictionary<IndexKinds.MethodSignature, _>()
     let mdimports = SymbolDictionary<IndexKinds.Kind, _>()
     let timports = SymbolDictionary<IndexKinds.Kind, _>()
     let tdefinitions = SymbolDictionary<IndexKinds.Kind, _>()
+    let data = SymbolDictionary<IndexKinds.Data, _>()
     let codes = SymbolDictionary<IndexKinds.Code, _>()
-    let namespaces = SymbolDictionary<IndexKinds.Namespace, Symbol list>()
     let emptyNamespaceIndex = namespaces.AddAnonymous List.empty
 
     let inline addValidationError msg pos = errors.Add(AssemblerError.ValidationError(msg, pos))
@@ -694,7 +695,10 @@ let assemble declarations = // TODO: Fix, use result so at least one error objec
                                 symbol
 
                         member _.FindTypeSignature symbol =
-                            findLookupValue tsignatures (undefinedSymbolMessage "A type signature") symbol }
+                            findLookupValue tsignatures (undefinedSymbolMessage "A type signature") symbol
+
+                        member _.FindData symbol =
+                            findLookupValue data (undefinedSymbolMessage "A data") symbol }
 
                 let resolveCodeInstructions =
                     let instrs = ImmutableArray.CreateBuilder<InstructionSet.Instruction>()
@@ -825,7 +829,7 @@ let assemble declarations = // TODO: Fix, use result so at least one error objec
                           DefinedFields = adjustDefinedMembers fdefinitions
                           DefinedMethods = adjustDefinedMembers mdefinitions }
                       // TODO: Implement generation of data
-                      Data = ImmutableArray.Empty
+                      Data = data.ToVector()
                       Code = codes'
                       EntryPoint = ValueOption.map (fun (Index i) -> Index(Checked.(+) (uint32 mimports.Count) i)) main'
                       Debug = () }
@@ -870,6 +874,8 @@ let assemble declarations = // TODO: Fix, use result so at least one error objec
                 match mmain with
                 | ValueNone -> mmain <- ValueSome main
                 | ValueSome _ -> addValidationError "Duplicate method entry point declaration" pos
+            | ParsedDeclaration.Data(id, bytes) ->
+                addLookupValue data id (bytes.ToImmutableArray()) (duplicateSymbolMessage "A data")
 
             inner remaining
 

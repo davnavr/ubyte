@@ -10,44 +10,24 @@
 .identifier @id_extern_println testhelperprintln
 
 .signature @sig_int type s32
+.signature @sig_char type char32
+.signature @sig_string type char32[]
 
 // Method that takes no parameters and returns a 32-bit integer
 .signature @sig_main method (@sig_int) ()
 
-.signature @sig_char type char32
-.signature @sig_string type char32[]
-
 .signature @sig_println method () (@sig_string)
 
+.data @data_message utf32le "Hello World!"
+
 .code @code_main {
+    .locals @sig_int (@l0)
     .locals @sig_string (@l_str)
-    .locals @sig_char (@l_char)
-    .locals @sig_int (@l_i)
 
-    const.i32 5 @l_i
-    obj.arr.new @sig_char @l_i @l_str
-
-    // Hello, eventually this will be stored in a data segment when they are implemented
-    const.i32 72 @l_char
-    const.i32 0 @l_i
-    obj.arr.set @l_str @l_i @l_char
-    const.i32 101 @l_char
-    const.i32 1 @l_i
-    obj.arr.set @l_str @l_i @l_char
-    const.i32 108 @l_char
-    const.i32 2 @l_i
-    obj.arr.set @l_str @l_i @l_char
-    const.i32 108 @l_char
-    const.i32 3 @l_i
-    obj.arr.set @l_str @l_i @l_char
-    const.i32 111 @l_char
-    const.i32 4 @l_i
-    obj.arr.set @l_str @l_i @l_char
-
+    obj.arr.const @sig_char @data_message @l_str
     call @method_println () (@l_str)
-
-    const.zero @l_i
-    ret @l_i
+    const.zero @l0
+    ret @l0
 }
 
 .namespace @namespace_example {

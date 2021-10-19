@@ -607,6 +607,7 @@ module Interpreter =
             let inline (|Method|) mindex: RuntimeMethod = frame'.CurrentMethod.Module.InitializeMethod mindex
             let inline (|Field|) findex: RuntimeField = frame'.CurrentMethod.Module.InitializeField findex
             let inline (|TypeSignature|) tindex: AnyType = frame'.CurrentMethod.Module.TypeSignatureAt tindex
+            let inline (|Data|) dindex: ImmutableArray<_> = frame'.CurrentMethod.Module.DataAt dindex
             let inline (|BranchTarget|) (target: InstructionOffset) = Checked.(-) (Checked.(+) frame'.InstructionIndex target) 1
 
             let inline fieldAccessInstruction field object access =
@@ -763,6 +764,22 @@ module Interpreter =
                         | SafePointer _ ->
                             failwith "TODO: Error for cannont instantiate array containing safe pointers"
                     | _ -> failwith "TODO: Error for cannot store object reference to array here"
+                | Obj_arr_const(TypeSignature etype, Data data, Register destination) ->
+                    match destination with
+                    | RuntimeRegister.Object destination' ->
+                        match etype with
+                        | ValueType vt ->
+                            match vt with
+                            | ValueType.Primitive PrimitiveType.S8
+                            | ValueType.Primitive PrimitiveType.U8 ->
+                                destination'.contents <- RuntimeObject.ByteVector(data.AsSpan().ToArray())
+                            | ValueType.Primitive PrimitiveType.S32
+                            | ValueType.Primitive PrimitiveType.U32
+                            | ValueType.Primitive PrimitiveType.Char32 ->
+                                destination'.contents <- RuntimeObject.IntVector(MemoryMarshal.Cast<uint8, uint32>(data.AsSpan()).ToArray())
+                        | _ ->
+                            failwith "TODO: Error for cannot create data array containing object references or safe pointers"
+                    | _ -> failwith "TODO: Error for cannot store object reference to data array here"
                 | Obj_arr_len(Register array, Register length) ->
                     // TODO: Make common function for assuming register contains object reference
                     match array with
@@ -1122,6 +1139,8 @@ type RuntimeModule (m: Module, moduleImportResolver: ModuleIdentifier -> Runtime
     member _.TypeSignatureAt(Index i: TypeSignatureIndex) = m.TypeSignatures.[Checked.int32 i]
 
     member _.MethodSignatureAt(Index i: MethodSignatureIndex) = m.MethodSignatures.[Checked.int32 i]
+
+    member _.DataAt(Index i: DataIndex) = m.Data.[Checked.int32 i]
 
     member _.CodeAt(Index i: CodeIndex) = m.Code.[Checked.int32 i]
 
