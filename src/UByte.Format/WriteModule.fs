@@ -186,6 +186,11 @@ let instruction endianness i dest =
         index typei dest
         index lreg dest
         index rreg dest
+    | Instruction.Obj_arr_const(typei, datai, rreg) ->
+        opcode Opcode.``obj.arr.new`` dest
+        index typei dest
+        index datai dest
+        index rreg dest
     | _ -> failwithf "TODO: Cannot write unsupported instruction %A" i
 
 let toStream (stream: Stream) (md: Module) =

@@ -37,10 +37,7 @@ let idchars = [ asciiLetter; pchar '_' ]
 // TODO: Handle escape sequences
 let stringlit =
     let quote = skipChar '"'
-    choice [
-        yield! idchars
-        anyOf [ ' '; '.'; '?'; '!' ]
-    ]
+    noneOf "\n\"\t\\"
     |> manyChars
     |> between quote quote
     <?> "string literal"
@@ -193,6 +190,7 @@ type InvalidInstructionError =
     | UndefinedField of Symbol
     | UndefinedMethod of Symbol
     | UndefinedTypeSignature of Symbol
+    | UndefinedData of Symbol
     | InvalidIntegerLiteral of Position * size: int32 * literal: string
     | UndefinedLabel of Position * Name
 
@@ -200,6 +198,7 @@ type IInstructionResolver =
     abstract FindField: field: Symbol -> FieldIndex voption
     abstract FindMethod: method: Symbol -> MethodIndex voption
     abstract FindTypeSignature: signature: Symbol -> TypeSignatureIndex voption
+    abstract FindData: signature: Symbol -> DataIndex voption
 
 type RegisterLookup = Symbol -> RegisterIndex voption
 
@@ -241,6 +240,11 @@ let code: Parser<ParsedCode, _> =
         match lookup.FindTypeSignature id with
         | ValueSome _ as i -> i
         | ValueNone -> addErrorTo errors (InvalidInstructionError.UndefinedTypeSignature id)
+
+    let lookupModuleData (lookup: IInstructionResolver) errors id =
+        match lookup.FindData id with
+        | ValueSome _ as i -> i
+        | ValueNone -> addErrorTo errors (InvalidInstructionError.UndefinedData id)
 
     let lookupRegisterList lookup errors names =
         let rec inner (registers: ImmutableArray<RegisterIndex>.Builder) success names =
@@ -438,6 +442,14 @@ let code: Parser<ParsedCode, _> =
             return InstructionSet.Obj_arr_new(etype', lreg', rreg')
         }
         |> addInstructionParser "obj.arr.new"
+
+        pipe3 symbol symbol symbol <| fun etype data reg rlookup resolver errors _ -> voptional {
+            let! etype' = lookupTypeSignature resolver errors etype
+            let! data' = lookupModuleData resolver errors data
+            let! reg' = lookupRegisterName rlookup errors reg
+            return InstructionSet.Obj_arr_const(etype', data', reg')
+        }
+        |> addInstructionParser "obj.arr.const"
 
         let label = skipChar ':' >>. whitespace
 

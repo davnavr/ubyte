@@ -695,7 +695,10 @@ let assemble declarations = // TODO: Fix, use result so at least one error objec
                                 symbol
 
                         member _.FindTypeSignature symbol =
-                            findLookupValue tsignatures (undefinedSymbolMessage "A type signature") symbol }
+                            findLookupValue tsignatures (undefinedSymbolMessage "A type signature") symbol
+
+                        member _.FindData symbol =
+                            findLookupValue data (undefinedSymbolMessage "A data") symbol }
 
                 let resolveCodeInstructions =
                     let instrs = ImmutableArray.CreateBuilder<InstructionSet.Instruction>()

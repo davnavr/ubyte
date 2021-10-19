@@ -154,11 +154,12 @@ module InstructionSet =
         | ``obj.arr.len`` = 0x7Bu
         | ``obj.arr.get`` = 0x7Cu
         | ``obj.arr.set`` = 0x7Eu
+        | ``obj.arr.const`` = 0x80u
         | ``call.ret`` = 0x90u
         | ``call.virt.ret`` = 0x91u
-        | ``add.ovf`` = 0x200Du
-        | ``sub.ovf`` = 0x200Eu
-        | ``mul.ovf`` = 0x200Fu
+        | ``add.ovf`` = 0xA0u
+        | ``sub.ovf`` = 0xA1u
+        | ``mul.ovf`` = 0xA2u
 
     type Instruction =
         | Nop
@@ -202,6 +203,7 @@ module InstructionSet =
         | Obj_arr_len of array: RegisterIndex * result: RegisterIndex
         | Obj_arr_get of array: RegisterIndex * index: RegisterIndex * result: RegisterIndex
         | Obj_arr_set of array: RegisterIndex * index: RegisterIndex * source: RegisterIndex
+        | Obj_arr_const of etype: TypeSignatureIndex * data: DataIndex * result: RegisterIndex
         | Call_ret of method: MethodIndex * arguments: vector<RegisterIndex> * results: vector<RegisterIndex>
         | Call_virt_ret of method: MethodIndex * arguments: vector<RegisterIndex> * results: vector<RegisterIndex>
         | Add_ovf of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex

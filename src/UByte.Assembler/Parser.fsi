@@ -32,6 +32,7 @@ type InvalidInstructionError =
     | UndefinedField of Symbol
     | UndefinedMethod of Symbol
     | UndefinedTypeSignature of Symbol
+    | UndefinedData of Symbol
     | InvalidIntegerLiteral of Position * size: int32 * literal: string
     | UndefinedLabel of Position * Name
 
@@ -39,6 +40,7 @@ type IInstructionResolver =
     abstract FindField: field: Symbol -> FieldIndex voption
     abstract FindMethod: method: Symbol -> MethodIndex voption
     abstract FindTypeSignature: signature: Symbol -> TypeSignatureIndex voption
+    abstract FindData: signature: Symbol -> DataIndex voption
 
 type RegisterLookup = Symbol -> RegisterIndex voption
 
