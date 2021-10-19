@@ -222,13 +222,6 @@ module Tag =
         | Abstract = 1uy
         | External = 2uy
 
-    type TypeDefinitionKind =
-        /// Indicates that the class does not derive from another class.
-        | BaseClass = 0uy
-        | Class = 1uy
-        | Interface = 2uy
-        | Struct = 3uy
-
     type TypeDefinitionLayout =
         | Unspecified = 0uy
         | Sequential = 1uy
@@ -315,7 +308,6 @@ type TypeDefinitionImport =
     { Module: ModuleIndex
       TypeName: IdentifierIndex
       TypeNamespace: NamespaceIndex
-      IsStruct: bool
       TypeParameters: uvarint }
 
 type VisibilityFlags =
@@ -370,16 +362,11 @@ type TypeAlias =
       AliasOf: TypeSignatureIndex }
 
 [<Flags>]
-type ClassDefinitionFlags =
+type TypeDefinitionFlags =
     | Final = 0uy
     | NotFinal = 0b0000_0001uy
     | Abstract = 0b0000_0010uy
     | ValidMask = 0b0000_0011uy
-
-type TypeDefinitionKind =
-    | Class of extends: TypeDefinitionIndex voption * flags: ClassDefinitionFlags
-    | Interface
-    | Struct
 
 type TypeDefinitionLayout =
     | Unspecified
@@ -389,10 +376,10 @@ type TypeDefinition =
     { TypeName: IdentifierIndex
       TypeNamespace: NamespaceIndex
       TypeVisibility: VisibilityFlags
-      TypeKind: TypeDefinitionKind
+      TypeFlags: TypeDefinitionFlags
       TypeLayout: TypeDefinitionLayout
-      ImplementedInterfaces: vector<unit>
       TypeParameters: vector<unit>
+      InheritedTypes: vector<TypeDefinitionIndex>
       TypeAnnotations: vector<unit>
       Fields: vector<FieldIndex>
       Methods: vector<MethodIndex> }

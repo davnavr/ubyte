@@ -444,12 +444,6 @@ module Tag =
         | Abstract = 1uy
         | External = 2uy
 
-    type TypeDefinitionKind =
-        | BaseClass = 0uy
-        | Class = 1uy
-        | [<Obsolete>] Interface = 2uy
-        | Struct = 3uy
-
     type TypeDefinitionLayout =
         | Unspecified = 0uy
         | Sequential = 1uy
@@ -572,7 +566,6 @@ type TypeDefinitionImport =
     { Module: ModuleIndex
       TypeName: IdentifierIndex
       TypeNamespace: NamespaceIndex
-      IsStruct: bool
       TypeParameters: uvarint }
 
 /// Used to specify whether or not a type, field, or method can be imported by another module.
@@ -638,20 +631,13 @@ type Method =
       Body: MethodBody }
 
 [<Flags>]
-type ClassDefinitionFlags =
+type TypeDefinitionFlags =
     | Final = 0uy // TODO: Make final by default so "static" classes have to be marked abstract and final?
     /// The class can be inherited from.
     | NotFinal = 0b0000_0001uy
     /// Instances of this class cannot be created.
     | Abstract = 0b0000_0010uy
     | ValidMask = 0b0000_0011uy
-
-[<NoComparison; NoEquality>]
-type TypeDefinitionKind =
-    | Class of extends: TypeDefinitionIndex voption * flags: ClassDefinitionFlags // TODO: Use TypeSignatureIndex to allow inheriting from generic types
-    | [<Obsolete>] Interface
-    /// A type whose instances can be allocated on the stack.
-    | Struct
 
 [<RequireQualifiedAccess>]
 type TypeDefinitionLayout =
@@ -666,10 +652,10 @@ type TypeDefinition =
     { TypeName: IdentifierIndex
       TypeNamespace: NamespaceIndex
       TypeVisibility: VisibilityFlags
-      TypeKind: TypeDefinitionKind
+      TypeFlags: TypeDefinitionFlags
       TypeLayout: TypeDefinitionLayout
-      ImplementedInterfaces: vector<unit> //vector<TypeIndex>
       TypeParameters: vector<unit>
+      InheritedTypes: vector<TypeDefinitionIndex>
       /// An array of annotations applied to the type.
       TypeAnnotations: vector<unit>
       Fields: vector<FieldIndex>

@@ -1020,6 +1020,8 @@ type RuntimeTypeDefinition (rm: RuntimeModule, t: TypeDefinition) =
 
     // TODO: Cache length of RawData and References arrays for RuntimeObject and RuntimeStruct
 
+    // TODO: Cache list of all types that are inherited, make sure when list is created that there are no circular dependencies
+
     member _.Module = rm
 
     member _.Layout: RuntimeTypeLayout = layout.Value

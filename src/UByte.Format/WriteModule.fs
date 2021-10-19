@@ -284,7 +284,6 @@ let toStream (stream: Stream) (md: Module) =
                 index timport.Module dest
                 index timport.TypeName dest
                 index timport.TypeNamespace dest
-                dest.WriteByte(if timport.IsStruct then 1uy else 0uy)
                 VarInt.unsigned timport.TypeParameters dest
                 if timport.TypeParameters > 0u then failwith "TODO: Type imports with type parameters are not yet supported"
 
@@ -305,20 +304,7 @@ let toStream (stream: Stream) (md: Module) =
                 index t.TypeName dest
                 index t.TypeNamespace dest
                 bits1 t.TypeVisibility dest
-
-                match t.TypeKind with
-                | Class(extends, flags) ->
-                    match extends with
-                    | ValueSome basei ->
-                        bits1 Tag.TypeDefinitionKind.Class dest
-                        index basei dest
-                    | ValueNone -> bits1 Tag.TypeDefinitionKind.BaseClass dest
-
-                    bits1 flags dest
-                | Interface ->
-                    bits1 Tag.TypeDefinitionKind.Interface dest
-                | Struct ->
-                    bits1 Tag.TypeDefinitionKind.Struct dest
+                bits1 t.TypeFlags dest
 
                 match t.TypeLayout with
                 | TypeDefinitionLayout.Unspecified ->
@@ -326,13 +312,11 @@ let toStream (stream: Stream) (md: Module) =
                 | TypeDefinitionLayout.Sequential ->
                     bits1 Tag.TypeDefinitionLayout.Sequential dest
 
-                if not t.ImplementedInterfaces.IsDefaultOrEmpty then failwith "TODO: Writing of implemented interfaces not yet supported"
-                dest.WriteByte 0uy // length of vector
                 if not t.TypeParameters.IsDefaultOrEmpty then failwith "TODO: Generic types not yet supported"
                 dest.WriteByte 0uy // length of vector
+                vector index t.InheritedTypes dest
                 if not t.TypeAnnotations.IsDefaultOrEmpty then failwith "TODO: Annotated types not yet supported"
                 dest.WriteByte 0uy // length of vector
-
                 vector index t.Fields dest
                 vector index t.Methods dest
 
