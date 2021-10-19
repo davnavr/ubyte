@@ -187,7 +187,7 @@ let instruction endianness i dest =
         index lreg dest
         index rreg dest
     | Instruction.Obj_arr_const(typei, datai, rreg) ->
-        opcode Opcode.``obj.arr.new`` dest
+        opcode Opcode.``obj.arr.const`` dest
         index typei dest
         index datai dest
         index rreg dest
