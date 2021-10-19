@@ -1,0 +1,117 @@
+﻿.module Inheritance
+.version 0 0 1
+.format 0 0
+
+.identifier @id_namespace Example
+.identifier @id_entry_point Main
+.identifier @id_base_class Counter
+.identifier @id_base_counter counter
+.identifier @id_class_child_decrement CountDownCounter
+
+.signature @sig_int type s32
+.signature @sig_obj_base type class @class_base
+.signature @sig_obj_child_decrement type class @class_child_decrement
+
+.signature @sig_main method (@sig_int) ()
+.signature @sig_base_constructor method () (@sig_obj_base)
+.signature @sig_base_increment method () (@sig_obj_base)
+.signature @sig_child_decrement_decrement method () (@sig_obj_child_decrement)
+
+.code @code_main {
+    .locals @sig_int (@l0, @l1)
+    .locals @sig_obj_base (@l_class_0)
+    .locals @sig_obj_child_decrement (@l_class_1)
+
+    obj.new @method_base_constructor @l_class_0 ()
+    call @method_base_increment () (@l_class_0)
+    obj.ldfd @field_base_counter @l_class_0 @l0
+    obj.new @method_decrement_constructor @l_class_1 ()
+    call @method_decrement_decrement () (@l_class_1)
+    obj.ldfd @field_base_counter @l_class_1 @l1
+    add @l0 @l1 @l0
+    ret @l0
+}
+
+.code @code_base_constructor {
+    .locals @sig_int (@l_counter)
+    .arguments (@a_this)
+
+    const.zero @l_counter
+    obj.stfd @field_base_counter @a_this @l_counter
+    ret
+}
+
+.code @code_base_increment {
+    .locals @sig_int (@l_counter)
+    .arguments (@a_this)
+
+    obj.ldfd @field_base_counter @a_this @l_counter
+    incr @l_counter
+    obj.stfd @field_base_counter @a_this @l_counter
+    ret
+}
+
+.code @code_child_constructor {
+    .arguments (@a_this)
+
+    call @method_base_constructor () (@a_this)
+    ret
+}
+
+.code @code_child_decrement {
+    .locals @sig_int (@l_counter)
+    .arguments (@a_this)
+
+    obj.ldfd @field_base_counter @a_this @l_counter
+    decr @l_counter
+    obj.stfd @field_base_counter @a_this @l_counter
+    ret
+}
+
+.namespace @namespace_example {
+    .name @id_namespace
+}
+
+.type @class_base public nonfinal {
+    .name @id_base_class
+    .namespace @namespace_example
+
+    .method @method_base_constructor public instance constructor {
+        .signature @sig_base_constructor
+        .body defined @code_base_constructor
+    }
+
+    .method @method_base_increment public instance {
+        .signature @sig_base_increment
+        .body defined @code_base_increment
+    }
+
+    .method @method_main public {
+        .signature @sig_main
+        .body defined @code_main
+        .name @id_entry_point
+    }
+
+    .field @field_base_counter public mutable {
+        .type @sig_int
+        .name @id_base_counter
+    }
+}
+
+.type @class_child_decrement public {
+    .name @id_class_child_decrement
+    .namespace @namespace_example
+
+    .method @method_decrement_constructor public instance constructor {
+        .signature @sig_base_constructor
+        .body defined @code_child_constructor
+    }
+
+    .method @method_decrement_decrement public instance {
+        .signature @sig_child_decrement_decrement
+        .body defined @code_child_decrement
+        .name @id_class_child_decrement
+    }
+}
+
+.entrypoint @method_main
