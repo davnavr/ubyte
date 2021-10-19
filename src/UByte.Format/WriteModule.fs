@@ -366,7 +366,8 @@ let toStream (stream: Stream) (md: Module) =
                     index library dest
                     index func dest
 
-        lengthEncodedVector buffer stream md.Data (fun data dest -> dest.Write(data.AsSpan()))
+        lengthEncodedVector buffer stream md.Data <| fun data dest ->
+            lengthEncodedData auxbuf dest <| fun dest' -> dest'.Write(data.AsSpan())
 
         lengthEncodedVector buffer stream md.Code <| fun code dest ->
             vector registerType code.RegisterTypes dest
