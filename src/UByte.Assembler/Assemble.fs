@@ -380,7 +380,6 @@ let assemble declarations = // TODO: Fix, use result so at least one error objec
                         { TypeDefinitionImport.Module = ValueOption.defaultValue (Index 0u) mindex
                           TypeName = ValueOption.defaultValue emptyIdentifierIndex name
                           TypeNamespace = ValueOption.defaultValue emptyNamespaceIndex ns
-                          IsStruct = false
                           TypeParameters = 0u }
                 }
 
@@ -527,19 +526,22 @@ let assemble declarations = // TODO: Fix, use result so at least one error objec
             let tdefinitions' =
                 let fields = ImmutableArray.CreateBuilder<uvarint>() // TODO: Store the index of the first method and keep track of the number of methods instead.
                 let methods = ImmutableArray.CreateBuilder<uvarint>()
+                let inherited = ImmutableArray.CreateBuilder()
 
                 let rec resolveTypeAttributes attributes =
-                    let rec inner success hasvis visibility attributes =
+                    let rec inner success hasvis visibility flags attributes =
                         match attributes with
-                        | [] when success -> ValueSome visibility
+                        | [] when success -> ValueSome(struct(visibility, flags))
                         | [] -> ValueNone
                         | TypeDefAttr.Visibility(pos, flag) :: remaining ->
                             if not hasvis then
-                                inner success true flag remaining
+                                inner success true flag flags remaining
                             else
                                 duplicateVisibilityFlag "type definition" pos
-                                inner false true visibility remaining
-                    inner true false VisibilityFlags.Unspecified attributes
+                                inner false true visibility flags remaining
+                        | TypeDefAttr.Flag(_, flag) :: remaining ->
+                            inner success hasvis visibility (flags ||| flag) remaining
+                    inner true false VisibilityFlags.Unspecified TypeDefinitionFlags.Final attributes
 
                 let rec resolveTypeDeclarations owner declarations =
                     // TODO: Could have a lookup for field and method names here
@@ -594,13 +596,20 @@ let assemble declarations = // TODO: Fix, use result so at least one error objec
                             | ValueSome _ ->
                                 addValidationError "Duplicate namespace declaration in type definition" pos
                                 inner false ns name remaining
+                        | TypeDefDecl.Extends super :: remaining ->
+                            let result = voptional {
+                                let! superi = lookupDefinedType super
+                                return inherited.Add superi
+                            }
+                            inner result.IsSome ns name remaining
 
                     inner true ValueNone ValueNone declarations
 
                 mapLookupValues tdefinitions <| fun (Index owner) (attrs, decls) -> voptional {
                     fields.Clear()
                     methods.Clear()
-                    let! visibility = resolveTypeAttributes attrs
+                    inherited.Clear()
+                    let! (visibility, flags) = resolveTypeAttributes attrs
                     let! (ns, name) = resolveTypeDeclarations owner decls
                     let fields', methods' = fields.ToImmutable(), methods.ToImmutable()
                     let inline adjust (start: uint32) (members: ImmutableArray<uvarint>) =
@@ -611,10 +620,10 @@ let assemble declarations = // TODO: Fix, use result so at least one error objec
                         { TypeDefinition.TypeName = ValueOption.defaultValue emptyIdentifierIndex name
                           TypeNamespace = ValueOption.defaultValue emptyNamespaceIndex ns
                           TypeVisibility = visibility
-                          TypeKind = TypeDefinitionKind.Struct
+                          TypeFlags = flags
                           TypeLayout = TypeDefinitionLayout.Unspecified
-                          ImplementedInterfaces = ImmutableArray.Empty
                           TypeParameters = ImmutableArray.Empty
+                          InheritedTypes = inherited.ToImmutable()
                           TypeAnnotations = ImmutableArray.Empty
                           Fields = adjust fstart fields'
                           Methods = adjust mstart methods' }
@@ -767,6 +776,8 @@ let assemble declarations = // TODO: Fix, use result so at least one error objec
                             addValidationError (undefinedSymbolMessage "A type signature" name) pos
                         | InvalidInstructionError.UndefinedLabel(pos, name) ->
                             addValidationError (undefinedSymbolMessage "A code label" name) pos
+                        | InvalidInstructionError.UndefinedData(pos, name) ->
+                            addValidationError (undefinedSymbolMessage "A data" name) pos
 
                 mapLookupValues codes <| fun _ code -> voptional {
                     // TODO: Don't forget to change this assembler code if order of registers is changed.

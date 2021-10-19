@@ -494,11 +494,19 @@ let visibility: Parser<VisibilityFlags, _> =
     ]
 
 [<RequireQualifiedAccess>]
-type TypeDefAttr = | Visibility of Position * VisibilityFlags
+type TypeDefAttr = | Visibility of Position * VisibilityFlags | Flag of Position * TypeDefinitionFlags
+
+let tflags = getPosition .>>. attributes [
+    "nonfinal", TypeDefinitionFlags.NotFinal
+    "abstract", TypeDefinitionFlags.Abstract
+    "objectonly", TypeDefinitionFlags.ReferenceOnly
+    "stackonly", TypeDefinitionFlags.StackOnly
+]
 
 let tdefattr =
     choice [
         getPosition .>>. visibility |>> TypeDefAttr.Visibility
+        tflags |>> TypeDefAttr.Flag
     ]
     .>> whitespace
     |> many
@@ -519,7 +527,7 @@ let fdefattr =
     |> many
 
 [<RequireQualifiedAccess>]
-type FieldDefDecl = | Type of Symbol | Name of Symbol | DefaultValue of Symbol
+type FieldDefDecl = | Type of Symbol | Name of Symbol
 
 let fdefdecl =
     period >>. choice [
@@ -592,13 +600,15 @@ let mdefdecl =
 type TypeDefDecl =
     | Name of Symbol
     | Namespace of Symbol
+    | Extends of Symbol
     | Field of Symbol voption * FieldDefAttr list * FieldDefDecl list
     | Method of Symbol voption * MethodDefAttr list * MethodDefDecl list
 
 let tdefdecl =
     period >>. choice [
-        namedecl (keyword "namespace") symbol |>> TypeDefDecl.Namespace
+        keyword "namespace" >>. symbol .>> whitespace |>> TypeDefDecl.Namespace
         namedecl' |>> TypeDefDecl.Name
+        keyword "extends" >>. symbol .>> whitespace |>> TypeDefDecl.Extends
         keyword "field" >>. tuple3 (symbol |>> ValueSome) fdefattr (block fdefdecl) |>> TypeDefDecl.Field
         keyword "method" >>. tuple3 (symbol |>> ValueSome) mdefattr (block mdefdecl) |>> TypeDefDecl.Method
     ]

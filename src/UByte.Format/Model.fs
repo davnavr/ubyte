@@ -366,7 +366,10 @@ type TypeDefinitionFlags =
     | Final = 0uy
     | NotFinal = 0b0000_0001uy
     | Abstract = 0b0000_0010uy
-    | ValidMask = 0b0000_0011uy
+    | ReferenceOnly = 0b0000_0100uy
+    | StackOnly = 0b0000_1000uy
+    | StorageKindMask = 0b0000_1100uy
+    | ValidMask = 0b0000_1111uy
 
 type TypeDefinitionLayout =
     | Unspecified

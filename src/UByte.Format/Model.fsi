@@ -632,12 +632,17 @@ type Method =
 
 [<Flags>]
 type TypeDefinitionFlags =
-    | Final = 0uy // TODO: Make final by default so "static" classes have to be marked abstract and final?
-    /// The class can be inherited from.
+    | Final = 0uy
+    /// The type can be inherited from.
     | NotFinal = 0b0000_0001uy
-    /// Instances of this class cannot be created.
+    /// Instances of this type cannot be created.
     | Abstract = 0b0000_0010uy
-    | ValidMask = 0b0000_0011uy
+    /// Instances of this type can never be allocated on the stack.
+    | ReferenceOnly = 0b0000_0100uy
+    /// Instances of this type can only be allocated on the stack.
+    | StackOnly = 0b0000_1000uy
+    | StorageKindMask = 0b0000_1100uy
+    | ValidMask = 0b0000_1111uy
 
 [<RequireQualifiedAccess>]
 type TypeDefinitionLayout =
