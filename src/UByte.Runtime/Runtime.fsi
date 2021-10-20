@@ -48,6 +48,8 @@ type InvalidConstructorException with
 [<Sealed>]
 type RuntimeField =
     member Name : string
+    member IsStatic : bool
+    member IsMutable : bool
 
 [<RequireQualifiedAccess>]
 module Interpreter =
@@ -73,11 +75,19 @@ type RuntimeTypeDefinition =
 
     member Name : string
 
+    member InheritedTypes: ImmutableArray<RuntimeTypeDefinition>
+
     member FindMethod : name: string -> RuntimeMethod
 
     //member InvokeInitializer: unit -> 
 
     override ToString: unit -> string
+
+[<Sealed; Class>]
+type RecursiveInheritanceException =
+    inherit RuntimeException
+
+    member Type: RuntimeTypeDefinition
 
 type RuntimeMethod with member DeclaringType : RuntimeTypeDefinition
 type RuntimeField with member DeclaringType : RuntimeTypeDefinition

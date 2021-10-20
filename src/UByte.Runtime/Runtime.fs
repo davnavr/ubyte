@@ -864,7 +864,7 @@ module ExternalCode =
         | false, _ -> fun _ -> failwithf "TODO: Handle external calls to %s in %s" library name
 
 [<Sealed>]
-type RuntimeMethod (rmodule: RuntimeModule, method: Method) =
+type RuntimeMethod (rmodule: RuntimeModule, index: MethodIndex, method: Method) =
     let { Method.MethodFlags = flags; Body = body } = method
 
     member _.Module: RuntimeModule = rmodule
@@ -941,7 +941,22 @@ type RuntimeMethod (rmodule: RuntimeModule, method: Method) =
                 ExternalCode.call library' efunction' frame''.contents.Value
                 frame''.contents <- frame'.Previous
 
-    override this.ToString() = sprintf "%O.%s" this.DeclaringType this.Name // TODO: Include method signature in stack trace
+    override this.ToString() =
+        let name = this.Name
+        let t = System.Text.StringBuilder(this.DeclaringType.ToString()).Append('.')
+
+        if String.IsNullOrEmpty name then
+            let (Index i) = index
+            t.Append('<')
+                .Append(if this.IsConstructor then "constructor" else "method")
+                .Append('-')
+                .Append(i)
+                .Append('>')
+        else
+            t.Append name
+        |> ignore
+
+        t.ToString()
 
 [<Sealed>]
 type RuntimeField (rmodule: RuntimeModule, field: Field, n: int32) =
@@ -956,10 +971,13 @@ type RuntimeField (rmodule: RuntimeModule, field: Field, n: int32) =
 
     member _.IsMutable = isFlagSet FieldFlags.Mutable flags
 
+    member _.IsStatic = isFlagSet FieldFlags.Static flags
+
     member val DeclaringType: RuntimeTypeDefinition = rmodule.InitializeType field.FieldOwner
 
     member val FieldType = rmodule.TypeSignatureAt field.FieldType
 
+    // TODO: Fix, field offset should use current type of object instance to lookup offset since offset is messed up when multiple type inheritance is involved
     member this.Offset = this.DeclaringType.Layout.FieldIndices.[this] // TODO: Cache field offset
 
     /// If the field is not marked as mutable, prevents modification of the field value outside of a constructor or type initializer.
@@ -974,45 +992,124 @@ type RuntimeField (rmodule: RuntimeModule, field: Field, n: int32) =
 
 [<IsReadOnly; Struct; NoComparison; NoEquality>]
 type RuntimeTypeLayout =
-    { Fields: RuntimeField[]
+    { Fields: ImmutableArray<RuntimeField>
       FieldIndices: IReadOnlyDictionary<RuntimeField, int32>
       RawDataSize: int32
       ObjectReferencesLength: int32 }
 
-let emptyTypeLayout =
-    lazy
-        { RuntimeTypeLayout.Fields = Array.empty
-          FieldIndices = ImmutableDictionary.Empty
-          RawDataSize = 0
-          ObjectReferencesLength = 0 }
+[<Sealed>]
+type RecursiveInheritanceException (message, t: RuntimeTypeDefinition) =
+    inherit RuntimeException(ValueNone, message)
+    member _.Type = t
+
+[<NoComparison; NoEquality>]
+type InheritedTypeLayout =
+    { InheritedFieldCount: int32
+      InheritedDataSize: int32
+      InheritedReferencesLength: int32 }
+
+let calculateFieldSize (field: RuntimeField) (rawDataSize: outref<_>) (objectReferencesLength: outref<_>) =
+    match field.FieldType with
+    | ValueType vt ->
+        rawDataSize <-
+            match vt with
+            | ValueType.Primitive PrimitiveType.Bool
+            | ValueType.Primitive PrimitiveType.U8
+            | ValueType.Primitive PrimitiveType.S8 -> 1
+            | ValueType.Primitive PrimitiveType.U16
+            | ValueType.Primitive PrimitiveType.S16
+            | ValueType.Primitive PrimitiveType.Char16 -> 2
+            | ValueType.Primitive PrimitiveType.U32
+            | ValueType.Primitive PrimitiveType.S32
+            | ValueType.Primitive PrimitiveType.F32
+            | ValueType.Primitive PrimitiveType.Char32 -> 4
+            | ValueType.Primitive PrimitiveType.U64
+            | ValueType.Primitive PrimitiveType.S64
+            | ValueType.Primitive PrimitiveType.F64 -> 8
+            | ValueType.Primitive PrimitiveType.UNative
+            | ValueType.Primitive PrimitiveType.SNative
+            | ValueType.UnsafePointer _ -> sizeof<unativeint>
+            | ValueType.Primitive PrimitiveType.Unit -> 0
+            | ValueType.Defined _ -> failwith "TODO: Struct fields are currently not yet supported"
+    | ReferenceType _ -> objectReferencesLength <- 1
+    | SafePointer _ -> failwith "TODO: Error for fields cannot contain safe pointers"
 
 [<Sealed>]
-type RuntimeTypeDefinition (rm: RuntimeModule, t: TypeDefinition) =
+type RuntimeTypeDefinition (rm: RuntimeModule, t: TypeDefinition) as rt =
+    static let emptyTypeLayout =
+        lazy
+            { RuntimeTypeLayout.Fields = ImmutableArray.Empty
+              FieldIndices = ImmutableDictionary.Empty
+              RawDataSize = 0
+              ObjectReferencesLength = 0 }
+
+    static let emptyInheritedTypes =
+        lazy
+            ImmutableArray<RuntimeTypeDefinition>.Empty,
+            { InheritedFieldCount = 0; InheritedDataSize = 0; InheritedReferencesLength = 0 }
+
+    let findInheritedTypes =
+        let { TypeDefinition.InheritedTypes = indices } = t
+        if not indices.IsDefaultOrEmpty then
+            lazy
+                let mutable supers = Array.zeroCreate indices.Length
+                let mutable inheritedFieldCount, inheritedDataSize, inheritedReferencesLength = 0, 0, 0
+                for i = 0 to indices.Length - 1 do
+                    let inherited = rm.InitializeType indices.[i]
+                    supers.[i] <- inherited
+                    if inherited = rt then
+                        raise(RecursiveInheritanceException(sprintf "The type %O is not allowed to inherit from itself" rt, rt))
+                    inheritedFieldCount <- Checked.(+) inheritedFieldCount inherited.Layout.Fields.Length
+                    inheritedDataSize <- Checked.(+) inheritedDataSize inherited.Layout.RawDataSize
+                    inheritedReferencesLength <- Checked.(+) inheritedReferencesLength inherited.Layout.ObjectReferencesLength
+                Unsafe.As<RuntimeTypeDefinition[], ImmutableArray<RuntimeTypeDefinition>> &supers,
+                { InheritedFieldCount = inheritedFieldCount
+                  InheritedDataSize = inheritedDataSize
+                  InheritedReferencesLength = inheritedReferencesLength }
+        else
+            emptyInheritedTypes
+
+    // TODO: Calculate layout for static fields.
     let layout =
         let { TypeDefinition.Fields = fields } = t
-        if fields.Length > 0 then
+        if not(t.InheritedTypes.IsDefaultOrEmpty && fields.IsDefaultOrEmpty) then
+            // TODO: How to deal with the "Deadly Diamond of Death"
+            // TODO: Update format to allow specifying of HOW fields are inherited (e.g. a flag before each type index).
+            // TODO: In the future, check for recursion by ensuring that the list does not contain the current type
             lazy
-                let fields', indices = Array.zeroCreate fields.Length, Dictionary fields.Length
-                let mutable sumDataSize, sumReferencesLength = 0, 0
+                let (Lazy(inherited, inheritedTypeLayout)) = findInheritedTypes
+                let fields' = ImmutableArray.CreateBuilder(inheritedTypeLayout.InheritedFieldCount + fields.Length)
+                let fieldIndexLookup = Dictionary fields'.Capacity
 
-                for i = 0 to fields'.Length - 1 do
-                    // TODO: Check for static fields.
-                    let mutable dsize, rlen = 0, 0
-                    let rfield = rm.ComputeFieldSize(fields.[i], &dsize, &rlen)
-                    fields'.[i] <- rfield
+                for super in inherited do
+                    let superTypeLayout = super.Layout
+                    fields'.AddRange superTypeLayout.Fields
+                    for KeyValue(inheritedTypeField, inheritedFieldIndex) in superTypeLayout.FieldIndices do
+                        fieldIndexLookup.Add(inheritedTypeField, inheritedFieldIndex)
 
-                    // Stores either the index into the data array or reference array, the kind of index depends on whether dsize
-                    // or rlen was set, only one will be zero
-                    indices.Add(rfield, if dsize > rlen then sumDataSize else sumReferencesLength)
+                let mutable { InheritedDataSize = sumDataSize; InheritedReferencesLength = sumReferencesLength } =
+                    inheritedTypeLayout
 
-                    sumDataSize <- sumDataSize + dsize
-                    sumReferencesLength <- sumReferencesLength + dsize
+                for fieldi in fields do
+                    let field = rm.InitializeField fieldi
+                    if not field.IsStatic then
+                        let mutable dsize, rlen = 0, 0
+                        calculateFieldSize field &dsize &rlen
+                        fields'.Add field
 
-                { RuntimeTypeLayout.Fields = fields'
-                  FieldIndices = indices
+                        // Stores either the index into the data array or reference array, the kind of index depends on whether
+                        // dsize or rlen was set, only one will be zero
+                        fieldIndexLookup.Add(field, if dsize > rlen then sumDataSize else sumReferencesLength)
+
+                        sumDataSize <- sumDataSize + dsize
+                        sumReferencesLength <- sumReferencesLength + rlen
+
+                { RuntimeTypeLayout.Fields = fields'.ToImmutable()
+                  FieldIndices = fieldIndexLookup :> IReadOnlyDictionary<_, _>
                   RawDataSize = sumDataSize
                   ObjectReferencesLength = sumReferencesLength }
-        else emptyTypeLayout
+        else
+            emptyTypeLayout
 
     //let globals: RuntimeStruct
 
@@ -1023,6 +1120,8 @@ type RuntimeTypeDefinition (rm: RuntimeModule, t: TypeDefinition) =
     // TODO: Cache list of all types that are inherited, make sure when list is created that there are no circular dependencies
 
     member _.Module = rm
+
+    member _.InheritedTypes = fst findInheritedTypes.Value
 
     member _.Layout: RuntimeTypeLayout = layout.Value
 
@@ -1112,7 +1211,7 @@ type RuntimeModule (m: Module, moduleImportResolver: ModuleIdentifier -> Runtime
         let imports = m.Imports.ImportedMethods
         let definitions = m.Definitions.DefinedMethods
         createDefinitionOrImportLookup definitions.Length imports.Length
-            (fun i _ -> RuntimeMethod(rm, definitions.[i]))
+            (fun i index -> RuntimeMethod(rm, index, definitions.[i]))
             (fun i _ ->
                 let m = imports.[Checked.int32 i]
                 let owner = typeDefinitionLookup m.MethodOwner
@@ -1151,36 +1250,6 @@ type RuntimeModule (m: Module, moduleImportResolver: ModuleIdentifier -> Runtime
     member _.InitializeField i = definedFieldLookup i
 
     member _.InitializeType i = typeDefinitionLookup i
-
-    member _.ComputeFieldSize(index, rawDataSize: outref<_>, objectReferencesLength: outref<_>) =
-        let field = definedFieldLookup index
-
-        match field.FieldType with
-        | ValueType vt ->
-            rawDataSize <-
-                match vt with
-                | ValueType.Primitive PrimitiveType.Bool
-                | ValueType.Primitive PrimitiveType.U8
-                | ValueType.Primitive PrimitiveType.S8 -> 1
-                | ValueType.Primitive PrimitiveType.U16
-                | ValueType.Primitive PrimitiveType.S16
-                | ValueType.Primitive PrimitiveType.Char16 -> 2
-                | ValueType.Primitive PrimitiveType.U32
-                | ValueType.Primitive PrimitiveType.S32
-                | ValueType.Primitive PrimitiveType.F32
-                | ValueType.Primitive PrimitiveType.Char32 -> 4
-                | ValueType.Primitive PrimitiveType.U64
-                | ValueType.Primitive PrimitiveType.S64
-                | ValueType.Primitive PrimitiveType.F64 -> 8
-                | ValueType.Primitive PrimitiveType.UNative
-                | ValueType.Primitive PrimitiveType.SNative
-                | ValueType.UnsafePointer _ -> sizeof<unativeint>
-                | ValueType.Primitive PrimitiveType.Unit -> 0
-                | ValueType.Defined _ -> failwith "TODO: Struct fields are currently not yet supported"
-        | ReferenceType _ -> objectReferencesLength <- 1
-        | SafePointer _ -> failwith "TODO: Error for fields cannot contain safe pointers"
-
-        field
 
     /// Finds the first type defined in this module with the specified name.
     member this.FindType(typeNamespace: string, typeName: string): RuntimeTypeDefinition =

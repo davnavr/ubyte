@@ -6,6 +6,7 @@
 .identifier @id_entry_point Main
 .identifier @id_base_class Counter
 .identifier @id_base_counter counter
+.identifier @id_base_increment increment
 .identifier @id_class_child_decrement CountDownCounter
 
 .signature @sig_int type s32
@@ -84,6 +85,7 @@
     .method @method_base_increment public instance {
         .signature @sig_base_increment
         .body defined @code_base_increment
+        .name @id_base_increment
     }
 
     .method @method_main public {
@@ -101,6 +103,7 @@
 .type @class_child_decrement public {
     .name @id_class_child_decrement
     .namespace @namespace_example
+    .extends @class_base
 
     .method @method_decrement_constructor public instance constructor {
         .signature @sig_base_constructor
