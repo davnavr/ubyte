@@ -160,7 +160,8 @@ let moduleDefinitions source =
               InheritedTypes = vector t index
               TypeAnnotations = vector t annotation
               Fields = vector t index
-              Methods = vector t index }
+              Methods = vector t index
+              VTable = vector t <| fun ov -> { MethodOverride.Declaration = index ov; Implementation = index ov } }
       DefinedFields =
         lengthEncodedVector source <| fun f ->
             { Field.FieldOwner = index f

@@ -1,5 +1,5 @@
 ﻿.module Inheritance
-.version 0 0 1
+.version 0 0 7000000
 .format 0 0
 
 .identifier @id_namespace Example

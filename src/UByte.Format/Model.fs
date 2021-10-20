@@ -377,6 +377,9 @@ type TypeDefinitionLayout =
     | Unspecified
     | Sequential
 
+[<Struct>]
+type MethodOverride = { Declaration: MethodIndex; Implementation: MethodIndex }
+
 type TypeDefinition =
     { TypeName: IdentifierIndex
       TypeNamespace: NamespaceIndex
@@ -387,7 +390,8 @@ type TypeDefinition =
       InheritedTypes: vector<TypeDefinitionIndex>
       TypeAnnotations: vector<unit>
       Fields: vector<FieldIndex>
-      Methods: vector<MethodIndex> }
+      Methods: vector<MethodIndex>
+      VTable: vector<MethodOverride> }
 
 [<Flags>]
 type RegisterFlags =

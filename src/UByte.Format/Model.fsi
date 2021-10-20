@@ -605,11 +605,12 @@ type MethodFlags =
     | ConstructorMask = 0b0000_0011uy
     | Virtual = 0b0000_0100uy
     | ValidMask = 0b0000_0111uy
+    // TODO: Figure out if something analagous to C# "new" keyword is needed
 
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
 type MethodBody =
     /// Defined in the current module.
-    | Defined of CodeIndex // TODO: Have flags indicating if method is final be here instead?
+    | Defined of CodeIndex
     /// Not defined in the current type, but in a derived type.
     | Abstract
     /// Defined elsewhere, used by the foreign function interface or to call methods defined in the runtime.
@@ -656,6 +657,13 @@ type TypeDefinitionLayout =
     | Sequential
     //| Explicit of
 
+[<IsReadOnly; Struct; NoComparison; NoEquality>]
+type MethodOverride =
+    { /// Specifies the method to override.
+      Declaration: MethodIndex
+      /// Specifies the new implementation of the method, the method must be defined in the current type.
+      Implementation: MethodIndex }
+
 [<NoComparison; NoEquality>]
 type TypeDefinition =
     { TypeName: IdentifierIndex
@@ -677,7 +685,7 @@ type TypeDefinition =
       ///// Type definition initializers are analagous to <c>static</c> constructors in C#.
       ///// </remarks>
       //Initializers: vector<InitializerIndex voption>
-      }
+      VTable: vector<MethodOverride> }
 
 [<Flags>]
 type RegisterFlags =

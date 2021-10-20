@@ -626,7 +626,8 @@ let assemble declarations = // TODO: Fix, use result so at least one error objec
                           InheritedTypes = inherited'
                           TypeAnnotations = ImmutableArray.Empty
                           Fields = adjust fstart fields'
-                          Methods = adjust mstart methods' }
+                          Methods = adjust mstart methods'
+                          VTable = ImmutableArray.Empty } // TODO: Update vtable
                 }
 
             let codes' =

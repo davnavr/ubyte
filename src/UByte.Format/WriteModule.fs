@@ -319,6 +319,7 @@ let toStream (stream: Stream) (md: Module) =
                 dest.WriteByte 0uy // length of vector
                 vector index t.Fields dest
                 vector index t.Methods dest
+                vector (fun ov dest -> index ov.Declaration dest; index ov.Implementation dest) t.VTable dest
 
             lengthEncodedVector auxbuf dest md.Definitions.DefinedFields <| fun f dest ->
                 index f.FieldOwner dest
