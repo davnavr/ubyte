@@ -339,7 +339,8 @@ type MethodFlags =
     | Instance = 0b0000_0001uy
     | Constructor = 0b0000_0010uy
     | ConstructorMask = 0b0000_0011uy
-    | ValidMask = 0b0000_0011uy
+    | Virtual = 0b0000_0100uy
+    | ValidMask = 0b0000_0111uy
 
 [<RequireQualifiedAccess>]
 type MethodBody =

@@ -34,7 +34,7 @@
         .body defined @code_constructor_derived
     }
 
-    .method @method_derived public instance {
+    .method @method_derived public instance virtual {
         .signature @sig_main
         .body defined @code_method_derived
         .name @id_method
@@ -72,7 +72,7 @@
         .name @id_entry_point
     }
 
-    .method @method_base public instance {
+    .method @method_base public instance virtual {
         .signature @sig_main
         .body abstract
         .name @id_method

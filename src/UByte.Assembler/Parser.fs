@@ -545,6 +545,7 @@ type MethodDefAttr =
 let mflags = getPosition .>>. attributes [
     "instance", MethodFlags.Instance
     "constructor", MethodFlags.Constructor
+    "virtual", MethodFlags.Virtual
 ]
 
 let mdefattr =
@@ -578,6 +579,9 @@ let mdefdecl =
                     | ValueNone -> Result.Error coden
 
                 MethodDefDecl.Body(pos, ParsedMethodBody.Defined defined)
+
+            getPosition .>> keyword "abstract" |>> fun pos ->
+                MethodDefDecl.Body(pos, ParsedMethodBody.Defined(fun _ -> Result.Ok MethodBody.Abstract))
 
             pipe3
                 (getPosition .>> keyword "external")
