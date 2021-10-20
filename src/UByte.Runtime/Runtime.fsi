@@ -27,9 +27,6 @@ type RuntimeException =
 
     member CurrentFrame : RuntimeStackFrame voption
 
-[<Sealed; Class>]
-type InvalidConstructorException = inherit RuntimeException
-
 [<Sealed>]
 type RuntimeMethod =
     member Name : string
@@ -41,8 +38,17 @@ type RuntimeMethod =
 
     override ToString: unit -> string
 
-type InvalidConstructorException with
+[<Sealed; Class>]
+type InvalidConstructorException =
+    inherit RuntimeException
+
     /// The method that is not a valid constructor.
+    member Method : RuntimeMethod
+
+[<Sealed; Class>]
+type AbstractMethodCallException =
+    inherit RuntimeException
+
     member Method : RuntimeMethod
 
 [<Sealed>]

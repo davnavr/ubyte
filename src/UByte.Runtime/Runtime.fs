@@ -864,6 +864,12 @@ module ExternalCode =
         | false, _ -> fun _ -> failwithf "TODO: Handle external calls to %s in %s" library name
 
 [<Sealed>]
+type AbstractMethodCallException (method: RuntimeMethod, frame, message) =
+    inherit RuntimeException(frame, message)
+
+    member _.Method = method
+
+[<Sealed>]
 type RuntimeMethod (rmodule: RuntimeModule, index: MethodIndex, method: Method) =
     let { Method.MethodFlags = flags; Body = body } = method
 
@@ -930,7 +936,13 @@ type RuntimeMethod (rmodule: RuntimeModule, index: MethodIndex, method: Method) 
                 registers.ToImmutable()
 
             frame.contents <- ValueSome(RuntimeStackFrame(frame.contents, args, registers, returns, code.Instructions, this))
-        | MethodBody.Abstract -> failwith "TODO: Handle virtual calls"
+        | MethodBody.Abstract ->
+            AbstractMethodCallException (
+                this,
+                frame.contents,
+                sprintf "Cannot call %O, use the call.virt instruction and related instructions instead" this
+            )
+            |> raise
         | MethodBody.External(library, efunction) ->
             let library' = this.Module.IdentifierAt library
             let efunction' = this.Module.IdentifierAt efunction
