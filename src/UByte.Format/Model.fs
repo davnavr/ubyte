@@ -247,6 +247,7 @@ module Tag =
         | Char32 = 0xC4uy
         | UnsafePointer = 0xCCuy
         | SafePointer = 0xCEuy
+        | ObjectPointer = 0xCFuy
         | RefDefinedType = 0xDEuy
         | F32 = 0xF4uy
         | F64 = 0xF8uy

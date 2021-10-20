@@ -940,7 +940,7 @@ type RuntimeMethod (rmodule: RuntimeModule, index: MethodIndex, method: Method) 
             AbstractMethodCallException (
                 this,
                 frame.contents,
-                sprintf "Cannot call %O, use the call.virt instruction and related instructions instead" this
+                sprintf "Cannot directly call %O, use the call.virt instruction and related instructions instead" this
             )
             |> raise
         | MethodBody.External(library, efunction) ->

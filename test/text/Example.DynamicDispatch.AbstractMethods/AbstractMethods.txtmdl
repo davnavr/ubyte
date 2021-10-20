@@ -1,0 +1,82 @@
+﻿.module Inheritance
+.version 3 2 1
+.format 0 0
+
+.signature @sig_int type s32
+.signature @sig_obj type any
+
+.signature @sig_main method (@sig_int) ()
+.signature @sig_constructor method () (@sig_obj)
+
+.identifier @id_namespace Example
+
+.namespace @namespace {
+    .name @id_namespace
+}
+
+.code @code_constructor_derived {
+    .arguments (@a_this)
+    call @constructor_base () (@a_this)
+    ret
+}
+
+.code @code_method_derived {
+    .locals @sig_int (@l0)
+    const.zero @l0
+    ret @l0
+}
+
+.identifier @id_class_derived DerivedClass
+.identifier @id_method DoIt
+.type @class_derived {
+    .method @constructor_derived public instance constructor {
+        .signature @sig_constructor
+        .body defined @code_constructor_derived
+    }
+
+    .method @method_derived public instance {
+        .signature @sig_main
+        .body defined @code_method_derived
+        .name @id_method
+    }
+}
+
+.code @code_main {
+    .locals @sig_int (@l_exit)
+    .locals @sig_obj (@l_obj)
+
+    const.i32 1 @l_exit
+    obj.new @constructor_derived @l_obj ()
+    call.virt @method_base (@l_exit) ()
+    ret @l_exit
+}
+
+.code @code_constructor_base {
+    ret
+}
+
+.identifier @id_class_base BaseClass
+.identifier @id_entry_point Main
+.type @class_base {
+    .name @id_class_base
+    .namespace @namespace
+
+    .method @constructor_base public instance constructor {
+        .signature @sig_constructor
+        .body defined @code_constructor_base
+    }
+
+    .method @method_main public {
+        .signature @sig_main
+        .body defined @code_main
+        .name @id_entry_point
+    }
+
+    .method @method_base public instance {
+        .signature @sig_main
+        .body abstract
+        .name @id_method
+    }
+}
+
+.entrypoint @method_main

@@ -475,6 +475,7 @@ module Tag =
         /// Represents a pointer to an instance of the following value type.
         | UnsafePointer = 0xCCuy
         | SafePointer = 0xCEuy
+        | ObjectPointer = 0xCFuy
         /// Precedes a type index, represents an object reference to a user-defined type.
         | RefDefinedType = 0xDEuy
         | F32 = 0xF4uy
@@ -531,6 +532,8 @@ type AnyType =
     | ReferenceType of ReferenceType
     /// Represents a pointer to a field, array element, or register that is tracked by the garbage collector.
     | SafePointer of ReferenceOrValueType
+    ///// Represents a pointer to a structure containing the actual value as well as information allowing dynamic method dispatch.
+    //| ObjectPointer of TypeDefinitionIndex
 
     interface IEquatable<AnyType>
 
