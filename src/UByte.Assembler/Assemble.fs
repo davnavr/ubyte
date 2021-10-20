@@ -611,7 +611,7 @@ let assemble declarations = // TODO: Fix, use result so at least one error objec
                     inherited.Clear()
                     let! (visibility, flags) = resolveTypeAttributes attrs
                     let! (ns, name) = resolveTypeDeclarations owner decls
-                    let fields', methods' = fields.ToImmutable(), methods.ToImmutable()
+                    let fields', methods', inherited' = fields.ToImmutable(), methods.ToImmutable(), inherited.ToImmutable()
                     let inline adjust (start: uint32) (members: ImmutableArray<uvarint>) =
                         let mutable members' = Array.zeroCreate members.Length
                         for i = 0 to members'.Length - 1 do members'.[i] <- Index(Checked.(+) start members.[i])
@@ -623,7 +623,7 @@ let assemble declarations = // TODO: Fix, use result so at least one error objec
                           TypeFlags = flags
                           TypeLayout = TypeDefinitionLayout.Unspecified
                           TypeParameters = ImmutableArray.Empty
-                          InheritedTypes = inherited.ToImmutable()
+                          InheritedTypes = inherited'
                           TypeAnnotations = ImmutableArray.Empty
                           Fields = adjust fstart fields'
                           Methods = adjust mstart methods' }
