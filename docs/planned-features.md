@@ -6,7 +6,6 @@ Features further down the list are ones I think are more difficult or will take 
 - Exception handling (`try`, `catch`, and `finally`)
 - Inline `name`, signature (`type` and `method`), and `code` in text format
 - Virtual method calls
-- Single class inheritance
 - Multiple class inheritance to allow for interfaces/mixins/traits?
 - Abstract classes
 - Figure out generics (advantages of reification and erasure)
