@@ -872,6 +872,8 @@ type AbstractMethodCallException (method: RuntimeMethod, frame, message) =
 [<Sealed>]
 type RuntimeMethod (rmodule: RuntimeModule, index: MethodIndex, method: Method) =
     let { Method.MethodFlags = flags; Body = body } = method
+    do if isFlagSet (MethodFlags.Virtual ||| MethodFlags.Constructor) flags then
+        failwith "TODO: Error for constructor cannot be marked virtual"
 
     member _.Module: RuntimeModule = rmodule
 
@@ -884,8 +886,8 @@ type RuntimeMethod (rmodule: RuntimeModule, index: MethodIndex, method: Method) 
     member val Signature = rmodule.MethodSignatureAt method.Signature
 
     member _.IsInstance = isFlagSet MethodFlags.Instance flags
-
     member _.IsConstructor = isFlagSet MethodFlags.ConstructorMask flags
+    member _.IsVirtual = isFlagSet MethodFlags.Virtual flags
 
     member private _.CreateRegister rtype =
         match rmodule.TypeSignatureAt rtype with
@@ -937,6 +939,8 @@ type RuntimeMethod (rmodule: RuntimeModule, index: MethodIndex, method: Method) 
 
             frame.contents <- ValueSome(RuntimeStackFrame(frame.contents, args, registers, returns, code.Instructions, this))
         | MethodBody.Abstract ->
+            if not this.IsVirtual then failwith "TODO: Error for abstract method must be virtual"
+
             AbstractMethodCallException (
                 this,
                 frame.contents,

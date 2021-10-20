@@ -36,6 +36,8 @@ type RuntimeMethod =
     /// Indicates whether the specified method is a constructor.
     member IsConstructor : bool
 
+    member IsVirtual : bool
+
     override ToString: unit -> string
 
 [<Sealed; Class>]
