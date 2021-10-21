@@ -626,7 +626,7 @@ let assemble declarations = // TODO: Fix, use result so at least one error objec
                             }
 
                             inner result.IsSome ns name remaining
-                        | TypeDefDecl.MethodOverride(decl, impl) :: remaining ->
+                        | TypeDefDecl.MethodOverride(impl, decl) :: remaining ->
                             overrides.Add <| fun mstart -> voptional {
                                 let! (Index decl') =
                                     findLookupValue mdefinitions (undefinedSymbolMessage "A method definition") decl
