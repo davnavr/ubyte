@@ -83,11 +83,13 @@ type RuntimeTypeDefinition =
 
     member Name : string
 
-    member InheritedTypes: ImmutableArray<RuntimeTypeDefinition>
+    member InheritedTypes : ImmutableArray<RuntimeTypeDefinition>
 
     member FindMethod : name: string -> RuntimeMethod
 
     //member InvokeInitializer: unit -> 
+
+    member VTable: System.Collections.Generic.IReadOnlyDictionary<RuntimeMethod, RuntimeMethod>
 
     override ToString: unit -> string
 

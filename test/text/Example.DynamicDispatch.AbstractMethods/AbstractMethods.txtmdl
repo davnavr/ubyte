@@ -7,6 +7,7 @@
 
 .signature @sig_main method (@sig_int) ()
 .signature @sig_constructor method () (@sig_obj)
+.signature @sig_method method (@sig_int) (@sig_obj)
 
 .identifier @id_namespace Example
 
@@ -35,7 +36,7 @@
     }
 
     .method @method_derived public instance virtual {
-        .signature @sig_main
+        .signature @sig_method
         .body defined @code_method_derived
         .name @id_method
     }
@@ -49,7 +50,7 @@
 
     const.i32 1 @l_exit
     obj.new @constructor_derived @l_obj ()
-    call.virt @method_base (@l_exit) ()
+    call.virt @method_base (@l_exit) (@l_obj)
     ret @l_exit
 }
 
@@ -75,7 +76,7 @@
     }
 
     .method @method_base public instance virtual {
-        .signature @sig_main
+        .signature @sig_method
         .body abstract
         .name @id_method
     }

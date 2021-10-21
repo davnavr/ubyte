@@ -585,6 +585,7 @@ module Interpreter =
     let interpret returns arguments (entrypoint: RuntimeMethod) =
         let frame: RuntimeStackFrame voption ref = ref ValueNone
         let mutable runExternalCode: (RuntimeStackFrame voption ref -> unit) voption = ValueNone
+        let inline throwRuntimeExn message = raise(RuntimeException(frame.contents, message))
 
         let inline invoke returns (arguments: ImmutableArray<_>) (method: RuntimeMethod) =
             method.SetupStackFrame(returns, frame, &runExternalCode)
@@ -665,11 +666,25 @@ module Interpreter =
                 | Const_zero(Register dest) -> Const.``false`` dest
                 | Ret(Registers frame' registers) ->
                     copyRegisterValues registers frame'.ReturnRegisters
-                    frame.contents <- frame'.Previous
+                    frame.Value <- frame'.Previous
                 | Call(Method method, Registers frame' aregs, Registers frame' rregs) ->
                     invoke rregs aregs method
+                | Call_virt(Method method, Registers frame' aregs, Registers frame' rregs) ->
+                    if aregs.IsDefaultOrEmpty then
+                        throwRuntimeExn
+                            "Cannot call virtual method with no arguments, the type containing the method to call cannot be deduced"
+                    match aregs.[0] with
+                    | RuntimeRegister.Object { contents = RuntimeObject.Null } ->
+                        throwRuntimeExn "Cannot call virtual method with null object reference"
+                    | RuntimeRegister.Object { contents = RuntimeObject.TypeInstance(otype, _) } ->
+                        invoke rregs aregs otype.VTable.[method]
+                    | RuntimeRegister.Struct _ ->
+                        throwRuntimeExn
+                            "Cannot call virtual method with a struct, as the type containing the method to call cannot be deduced"
+                    | _ ->
+                        throwRuntimeExn "Cannot call virtual method with a primitive type"
                 | Call_ret(Method method, Registers frame' aregs, _) -> // TODO: Does call.ret need to specify return values?
-                    frame.contents <- frame'.Previous
+                    frame.Value <- frame'.Previous
                     invoke frame'.ReturnRegisters aregs method
                 | Br(BranchTarget target) -> frame'.InstructionIndex <- target
                 | Br_eq(Register xreg, Register yreg, BranchTarget target) ->
@@ -692,7 +707,7 @@ module Interpreter =
                 | Obj_new(Method constructor, Registers frame' arguments, Register destination) ->
                     match destination with
                     | RuntimeRegister.Object o ->
-                        o.contents <- RuntimeObject.TypeInstance(constructor.DeclaringType, constructor.DeclaringType.InitializeObjectFields())
+                        o.Value <- RuntimeObject.TypeInstance(constructor.DeclaringType, constructor.DeclaringType.InitializeObjectFields())
                         // TODO: Check that first argument is an object reference.
                         invoke ImmutableArray.Empty (arguments.Insert(0, destination)) constructor
                     | bad ->
@@ -1064,6 +1079,8 @@ type RuntimeTypeDefinition (rm: RuntimeModule, t: TypeDefinition) as rt =
             ImmutableArray<RuntimeTypeDefinition>.Empty,
             { InheritedFieldCount = 0; InheritedDataSize = 0; InheritedReferencesLength = 0 }
 
+    static let emptyMethodOverrides = lazy(ImmutableDictionary.Empty :> IReadOnlyDictionary<_, _>)
+
     let findInheritedTypes =
         let { TypeDefinition.InheritedTypes = indices } = t
         if not indices.IsDefaultOrEmpty then
@@ -1131,15 +1148,28 @@ type RuntimeTypeDefinition (rm: RuntimeModule, t: TypeDefinition) as rt =
 
     let methodis = t.Methods
 
-    // TODO: Cache length of RawData and References arrays for RuntimeObject and RuntimeStruct
-
-    // TODO: Cache list of all types that are inherited, make sure when list is created that there are no circular dependencies
+    let vtable =
+        let { TypeDefinition.VTable = overrides } = t
+        if not overrides.IsDefaultOrEmpty then
+            lazy
+                let lookup = Dictionary overrides.Length
+                let inline (|Method|) mindex = rm.InitializeMethod mindex
+                for { MethodOverride.Declaration = Method decl; Implementation = Method impl } in overrides do
+                    // TODO: Check that owner of decl is an inherited type
+                    // TODO: Check that impl is owned by this type
+                    // TODO: Check that decl and impl are different
+                    lookup.Add(decl, impl)
+                System.Collections.ObjectModel.ReadOnlyDictionary lookup :> IReadOnlyDictionary<_, _>
+        else
+            emptyMethodOverrides
 
     member _.Module = rm
 
     member _.InheritedTypes = fst findInheritedTypes.Value
 
     member _.Layout: RuntimeTypeLayout = layout.Value
+
+    member _.VTable: IReadOnlyDictionary<RuntimeMethod, RuntimeMethod> = vtable.Value
 
     member val Name = rm.IdentifierAt t.TypeName
 
