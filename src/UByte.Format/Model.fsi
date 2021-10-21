@@ -444,12 +444,6 @@ module Tag =
         | Abstract = 1uy
         | External = 2uy
 
-    type TypeDefinitionKind =
-        | BaseClass = 0uy
-        | Class = 1uy
-        | [<Obsolete>] Interface = 2uy
-        | Struct = 3uy
-
     type TypeDefinitionLayout =
         | Unspecified = 0uy
         | Sequential = 1uy
@@ -481,6 +475,7 @@ module Tag =
         /// Represents a pointer to an instance of the following value type.
         | UnsafePointer = 0xCCuy
         | SafePointer = 0xCEuy
+        | ObjectPointer = 0xCFuy
         /// Precedes a type index, represents an object reference to a user-defined type.
         | RefDefinedType = 0xDEuy
         | F32 = 0xF4uy
@@ -537,6 +532,8 @@ type AnyType =
     | ReferenceType of ReferenceType
     /// Represents a pointer to a field, array element, or register that is tracked by the garbage collector.
     | SafePointer of ReferenceOrValueType
+    ///// Represents a pointer to a structure containing the actual value as well as information allowing dynamic method dispatch.
+    //| ObjectPointer of TypeDefinitionIndex
 
     interface IEquatable<AnyType>
 
@@ -572,7 +569,6 @@ type TypeDefinitionImport =
     { Module: ModuleIndex
       TypeName: IdentifierIndex
       TypeNamespace: NamespaceIndex
-      IsStruct: bool
       TypeParameters: uvarint }
 
 /// Used to specify whether or not a type, field, or method can be imported by another module.
@@ -607,12 +603,14 @@ type MethodFlags =
     | Instance = 0b0000_0001uy
     | Constructor = 0b0000_0010uy
     | ConstructorMask = 0b0000_0011uy
-    | ValidMask = 0b0000_0011uy
+    | Virtual = 0b0000_0100uy
+    | ValidMask = 0b0000_0111uy
+    // TODO: Figure out if something analagous to C# "new" keyword is needed
 
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
 type MethodBody =
     /// Defined in the current module.
-    | Defined of CodeIndex // TODO: Have flags indicating if method is final be here instead?
+    | Defined of CodeIndex
     /// Not defined in the current type, but in a derived type.
     | Abstract
     /// Defined elsewhere, used by the foreign function interface or to call methods defined in the runtime.
@@ -638,20 +636,18 @@ type Method =
       Body: MethodBody }
 
 [<Flags>]
-type ClassDefinitionFlags =
-    | Final = 0uy // TODO: Make final by default so "static" classes have to be marked abstract and final?
-    /// The class can be inherited from.
+type TypeDefinitionFlags =
+    | Final = 0uy
+    /// The type can be inherited from.
     | NotFinal = 0b0000_0001uy
-    /// Instances of this class cannot be created.
+    /// Instances of this type cannot be created.
     | Abstract = 0b0000_0010uy
-    | ValidMask = 0b0000_0011uy
-
-[<NoComparison; NoEquality>]
-type TypeDefinitionKind =
-    | Class of extends: TypeDefinitionIndex voption * flags: ClassDefinitionFlags // TODO: Use TypeSignatureIndex to allow inheriting from generic types
-    | [<Obsolete>] Interface
-    /// A type whose instances can be allocated on the stack.
-    | Struct
+    /// Instances of this type can never be allocated on the stack.
+    | ReferenceOnly = 0b0000_0100uy
+    /// Instances of this type can only be allocated on the stack.
+    | StackOnly = 0b0000_1000uy
+    | StorageKindMask = 0b0000_1100uy
+    | ValidMask = 0b0000_1111uy
 
 [<RequireQualifiedAccess>]
 type TypeDefinitionLayout =
@@ -661,15 +657,22 @@ type TypeDefinitionLayout =
     | Sequential
     //| Explicit of
 
+[<IsReadOnly; Struct; NoComparison; NoEquality>]
+type MethodOverride =
+    { /// Specifies the method to override.
+      Declaration: MethodIndex
+      /// Specifies the new implementation of the method, the method must be defined in the current type.
+      Implementation: MethodIndex }
+
 [<NoComparison; NoEquality>]
 type TypeDefinition =
     { TypeName: IdentifierIndex
       TypeNamespace: NamespaceIndex
       TypeVisibility: VisibilityFlags
-      TypeKind: TypeDefinitionKind
+      TypeFlags: TypeDefinitionFlags
       TypeLayout: TypeDefinitionLayout
-      ImplementedInterfaces: vector<unit> //vector<TypeIndex>
       TypeParameters: vector<unit>
+      InheritedTypes: vector<TypeDefinitionIndex>
       /// An array of annotations applied to the type.
       TypeAnnotations: vector<unit>
       Fields: vector<FieldIndex>
@@ -682,7 +685,7 @@ type TypeDefinition =
       ///// Type definition initializers are analagous to <c>static</c> constructors in C#.
       ///// </remarks>
       //Initializers: vector<InitializerIndex voption>
-      }
+      VTable: vector<MethodOverride> }
 
 [<Flags>]
 type RegisterFlags =

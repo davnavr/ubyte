@@ -380,7 +380,6 @@ let assemble declarations = // TODO: Fix, use result so at least one error objec
                         { TypeDefinitionImport.Module = ValueOption.defaultValue (Index 0u) mindex
                           TypeName = ValueOption.defaultValue emptyIdentifierIndex name
                           TypeNamespace = ValueOption.defaultValue emptyNamespaceIndex ns
-                          IsStruct = false
                           TypeParameters = 0u }
                 }
 
@@ -524,22 +523,48 @@ let assemble declarations = // TODO: Fix, use result so at least one error objec
             let fdefinitions = SymbolDictionary<IndexKinds.Kind, _>()
             let mdefinitions = SymbolDictionary<IndexKinds.Kind, _>()
 
+            let iresolver =
+                { new IInstructionResolver with
+                    member _.FindField symbol =
+                        lookupDefinitionOrImport
+                            fimports
+                            fdefinitions
+                            (undefinedSymbolMessage "A field definition or import")
+                            symbol
+
+                    member _.FindMethod symbol =
+                        lookupDefinitionOrImport
+                            mimports
+                            mdefinitions
+                            (undefinedSymbolMessage "A method definition or import")
+                            symbol
+
+                    member _.FindTypeSignature symbol =
+                        findLookupValue tsignatures (undefinedSymbolMessage "A type signature") symbol
+
+                    member _.FindData symbol =
+                        findLookupValue data (undefinedSymbolMessage "A data") symbol }
+
             let tdefinitions' =
                 let fields = ImmutableArray.CreateBuilder<uvarint>() // TODO: Store the index of the first method and keep track of the number of methods instead.
                 let methods = ImmutableArray.CreateBuilder<uvarint>()
+                let inherited = ImmutableArray.CreateBuilder()
+                let overrides = ImmutableArray.CreateBuilder()
 
                 let rec resolveTypeAttributes attributes =
-                    let rec inner success hasvis visibility attributes =
+                    let rec inner success hasvis visibility flags attributes =
                         match attributes with
-                        | [] when success -> ValueSome visibility
+                        | [] when success -> ValueSome(struct(visibility, flags))
                         | [] -> ValueNone
                         | TypeDefAttr.Visibility(pos, flag) :: remaining ->
                             if not hasvis then
-                                inner success true flag remaining
+                                inner success true flag flags remaining
                             else
                                 duplicateVisibilityFlag "type definition" pos
-                                inner false true visibility remaining
-                    inner true false VisibilityFlags.Unspecified attributes
+                                inner false true visibility flags remaining
+                        | TypeDefAttr.Flag(_, flag) :: remaining ->
+                            inner success hasvis visibility (flags ||| flag) remaining
+                    inner true false VisibilityFlags.Unspecified TypeDefinitionFlags.Final attributes
 
                 let rec resolveTypeDeclarations owner declarations =
                     // TODO: Could have a lookup for field and method names here
@@ -563,9 +588,9 @@ let assemble declarations = // TODO: Fix, use result so at least one error objec
                                 inner false ns name remaining
                         | TypeDefDecl.Method(id, mattrs, mdecls) :: remaining ->
                             match resolveMethodDefinition owner mattrs mdecls with
-                            | ValueSome field ->
+                            | ValueSome method ->
                                 let success' =
-                                    match mdefinitions.Add(id, field) with
+                                    match mdefinitions.Add(id, method) with
                                     | ValueSome(Index i) ->
                                         methods.Add i
                                         success
@@ -594,30 +619,71 @@ let assemble declarations = // TODO: Fix, use result so at least one error objec
                             | ValueSome _ ->
                                 addValidationError "Duplicate namespace declaration in type definition" pos
                                 inner false ns name remaining
+                        | TypeDefDecl.Extends super :: remaining ->
+                            let result = voptional {
+                                let! superi = lookupDefinedType super
+                                return inherited.Add superi
+                            }
+
+                            inner result.IsSome ns name remaining
+                        | TypeDefDecl.MethodOverride(impl, decl) :: remaining ->
+                            overrides.Add <| fun mstart -> voptional {
+                                let! (Index decl') =
+                                    findLookupValue mdefinitions (undefinedSymbolMessage "A method definition") decl
+                                let! impl' = iresolver.FindMethod impl
+                                return
+                                    { MethodOverride.Declaration = MethodIndex.Index(Checked.(+) mstart decl')
+                                      Implementation = impl' }
+                            }
+
+                            inner true ns name remaining
 
                     inner true ValueNone ValueNone declarations
+
+                let resolveMethodOverrides (overrides: ImmutableArray<_ -> _>) mstart =
+                    let mutable overrides', success = Array.zeroCreate overrides.Length, true
+
+                    for i = 0 to overrides'.Length - 1 do
+                        match overrides.[i] mstart with
+                        | ValueSome moverride when success ->
+                            overrides'.[i] <- moverride
+                        | _ ->
+                            success <- false
+
+                    if success
+                    then ValueSome(Unsafe.As<MethodOverride[], ImmutableArray<MethodOverride>> &overrides')
+                    else ValueNone
 
                 mapLookupValues tdefinitions <| fun (Index owner) (attrs, decls) -> voptional {
                     fields.Clear()
                     methods.Clear()
-                    let! visibility = resolveTypeAttributes attrs
+                    inherited.Clear()
+                    overrides.Clear()
+                    let! (visibility, flags) = resolveTypeAttributes attrs
                     let! (ns, name) = resolveTypeDeclarations owner decls
-                    let fields', methods' = fields.ToImmutable(), methods.ToImmutable()
+                    let fields', methods', inherited' = fields.ToImmutable(), methods.ToImmutable(), inherited.ToImmutable()
+                    let overrides' = overrides.ToImmutable()
+
                     let inline adjust (start: uint32) (members: ImmutableArray<uvarint>) =
                         let mutable members' = Array.zeroCreate members.Length
                         for i = 0 to members'.Length - 1 do members'.[i] <- Index(Checked.(+) start members.[i])
                         Unsafe.As<Index<_>[], ImmutableArray<Index<_>>> &members'
-                    return fun fstart mstart ->
-                        { TypeDefinition.TypeName = ValueOption.defaultValue emptyIdentifierIndex name
-                          TypeNamespace = ValueOption.defaultValue emptyNamespaceIndex ns
-                          TypeVisibility = visibility
-                          TypeKind = TypeDefinitionKind.Struct
-                          TypeLayout = TypeDefinitionLayout.Unspecified
-                          ImplementedInterfaces = ImmutableArray.Empty
-                          TypeParameters = ImmutableArray.Empty
-                          TypeAnnotations = ImmutableArray.Empty
-                          Fields = adjust fstart fields'
-                          Methods = adjust mstart methods' }
+
+                    return fun fstart mstart -> voptional {
+                        let! vtable = resolveMethodOverrides overrides' mstart
+                        return
+                            { TypeDefinition.TypeName = ValueOption.defaultValue emptyIdentifierIndex name
+                              TypeNamespace = ValueOption.defaultValue emptyNamespaceIndex ns
+                              TypeVisibility = visibility
+                              TypeFlags = flags
+                              TypeLayout = TypeDefinitionLayout.Unspecified
+                              TypeParameters = ImmutableArray.Empty
+                              InheritedTypes = inherited'
+                              TypeAnnotations = ImmutableArray.Empty
+                              Fields = adjust fstart fields'
+                              Methods = adjust mstart methods'
+                              VTable = vtable }
+                    }
                 }
 
             let codes' =
@@ -677,28 +743,6 @@ let assemble declarations = // TODO: Fix, use result so at least one error objec
                         inner locals lookup true
 
                 let ierrors = List<InvalidInstructionError> 0
-
-                let iresolver =
-                    { new IInstructionResolver with
-                        member _.FindField symbol =
-                            lookupDefinitionOrImport
-                                fimports
-                                fdefinitions
-                                (undefinedSymbolMessage "A field definition or import")
-                                symbol
-
-                        member _.FindMethod symbol =
-                            lookupDefinitionOrImport
-                                mimports
-                                mdefinitions
-                                (undefinedSymbolMessage "A method definition or import")
-                                symbol
-
-                        member _.FindTypeSignature symbol =
-                            findLookupValue tsignatures (undefinedSymbolMessage "A type signature") symbol
-
-                        member _.FindData symbol =
-                            findLookupValue data (undefinedSymbolMessage "A data") symbol }
 
                 let resolveCodeInstructions =
                     let instrs = ImmutableArray.CreateBuilder<InstructionSet.Instruction>()
@@ -767,6 +811,8 @@ let assemble declarations = // TODO: Fix, use result so at least one error objec
                             addValidationError (undefinedSymbolMessage "A type signature" name) pos
                         | InvalidInstructionError.UndefinedLabel(pos, name) ->
                             addValidationError (undefinedSymbolMessage "A code label" name) pos
+                        | InvalidInstructionError.UndefinedData(pos, name) ->
+                            addValidationError (undefinedSymbolMessage "A data" name) pos
 
                 mapLookupValues codes <| fun _ code -> voptional {
                     // TODO: Don't forget to change this assembler code if order of registers is changed.
@@ -780,6 +826,22 @@ let assemble declarations = // TODO: Fix, use result so at least one error objec
 
             let main' = ValueOption.map (findLookupValue mdefinitions (undefinedSymbolMessage "An entrypoint method")) mmain
 
+            let resolveTypeDefinitions () =
+                match tdefinitions' with
+                | ValueSome definitions ->
+                    let fstart, mstart = uint32 fimports.Count, uint32 mimports.Count
+                    let mutable definitions', success = Array.zeroCreate definitions.Length, true
+
+                    for i = 0 to definitions'.Length - 1 do
+                        match definitions.[i] fstart mstart with
+                        | ValueSome tdef -> definitions'.[i] <- tdef
+                        | ValueNone -> success <- false
+
+                    if success
+                    then ValueSome(Unsafe.As<TypeDefinition[], ImmutableArray<TypeDefinition>> &definitions')
+                    else ValueNone
+                | ValueNone -> ValueNone
+
             let result = voptional {
                 let! mname' = mname
                 let! namespaces' = namespaces'
@@ -787,7 +849,7 @@ let assemble declarations = // TODO: Fix, use result so at least one error objec
                 let! msignatures' = msignatures'
                 let! mimports' = mimports'
                 let! timports' = timports'
-                let! tdefinitions' = tdefinitions'
+                let! tdefinitions' = resolveTypeDefinitions()
                 let! codes' = codes'
                 let! main' =
                     match main' with
@@ -820,12 +882,7 @@ let assemble declarations = // TODO: Fix, use result so at least one error objec
                             let mutable members' = Array.zeroCreate definitions.Count
                             for i = 0 to members'.Length - 1 do members'.[i] <- members.[i] adjust
                             Unsafe.As<'Member[], ImmutableArray<'Member>> &members'
-                        { ModuleDefinitions.DefinedTypes =
-                            let mutable definitions = Array.zeroCreate tdefinitions'.Length
-                            let fstart, mstart = uint32 fimports.Count, uint32 mimports.Count
-                            for i = 0 to definitions.Length - 1 do
-                                definitions.[i] <- tdefinitions'.[i] fstart mstart
-                            Unsafe.As<TypeDefinition[], ImmutableArray<TypeDefinition>> &definitions
+                        { ModuleDefinitions.DefinedTypes = tdefinitions'
                           DefinedFields = adjustDefinedMembers fdefinitions
                           DefinedMethods = adjustDefinedMembers mdefinitions }
                       // TODO: Implement generation of data

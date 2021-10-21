@@ -127,10 +127,6 @@ let moduleImports source =
             { TypeDefinitionImport.Module = index t
               TypeName = index t
               TypeNamespace = index t
-              IsStruct =
-                let tag = u1 t
-                if tag > 1uy then failwithf "TODO: Invalid type import kind 0x%02X" tag
-                tag = 1uy
               TypeParameters = VarInt.unsigned t }
       ImportedFields =
         lengthEncodedVector source <| fun f ->
@@ -154,23 +150,18 @@ let moduleDefinitions source =
             { TypeDefinition.TypeName = index t
               TypeNamespace = index t
               TypeVisibility = bits1 t
-              TypeKind =
-                match bits1 t with
-                | Tag.TypeDefinitionKind.Class -> Class(ValueSome(index t), bits1 t)
-                | Tag.TypeDefinitionKind.Interface -> Interface
-                | Tag.TypeDefinitionKind.Struct -> Struct
-                | Tag.TypeDefinitionKind.BaseClass -> Class(ValueNone, bits1 t)
-                | bad -> failwithf "TODO: Bad type definition kind 0x%02X" (uint8 bad)
+              TypeFlags = bits1 t
               TypeLayout =
                 match bits1 t with
                 | Tag.TypeDefinitionLayout.Unspecified -> TypeDefinitionLayout.Unspecified
                 | Tag.TypeDefinitionLayout.Sequential -> TypeDefinitionLayout.Sequential
                 | bad -> failwithf "TODO: Bad type definition layout kind 0x%02X" (uint8 bad)
-              ImplementedInterfaces = vector t (fun _ -> failwith "TODO: Interfaces not yet supported")
               TypeParameters = vector t genericTypeParam
+              InheritedTypes = vector t index
               TypeAnnotations = vector t annotation
               Fields = vector t index
-              Methods = vector t index }
+              Methods = vector t index
+              VTable = vector t <| fun ov -> { MethodOverride.Declaration = index ov; Implementation = index ov } }
       DefinedFields =
         lengthEncodedVector source <| fun f ->
             { Field.FieldOwner = index f

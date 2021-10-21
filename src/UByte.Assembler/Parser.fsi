@@ -73,7 +73,6 @@ type FieldDefAttr =
 type FieldDefDecl =
     | Type of Symbol
     | Name of Symbol
-    | DefaultValue of Symbol
 
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
 type MethodDefAttr =
@@ -94,14 +93,16 @@ type MethodDefDecl =
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
 type TypeDefAttr =
     | Visibility of Position * VisibilityFlags
-    //| Extends of Symbol
+    | Flag of Position * TypeDefinitionFlags
 
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
 type TypeDefDecl =
     | Name of Symbol
     | Namespace of Symbol
+    | Extends of Symbol
     | Field of Symbol voption * FieldDefAttr list * FieldDefDecl list
     | Method of Symbol voption * MethodDefAttr list * MethodDefDecl list
+    | MethodOverride of implementation: Symbol * declaration: Symbol
 
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
 type FieldImportAttr =
