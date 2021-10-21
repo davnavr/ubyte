@@ -39,6 +39,8 @@
         .body defined @code_method_derived
         .name @id_method
     }
+
+    .override @method_derived for @method_base
 }
 
 .code @code_main {

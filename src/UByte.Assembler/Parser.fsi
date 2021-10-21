@@ -102,6 +102,7 @@ type TypeDefDecl =
     | Extends of Symbol
     | Field of Symbol voption * FieldDefAttr list * FieldDefDecl list
     | Method of Symbol voption * MethodDefAttr list * MethodDefDecl list
+    | MethodOverride of Symbol * Symbol
 
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
 type FieldImportAttr =

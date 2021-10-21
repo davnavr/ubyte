@@ -607,6 +607,7 @@ type TypeDefDecl =
     | Extends of Symbol
     | Field of Symbol voption * FieldDefAttr list * FieldDefDecl list
     | Method of Symbol voption * MethodDefAttr list * MethodDefDecl list
+    | MethodOverride of Symbol * Symbol
 
 let tdefdecl =
     period >>. choice [
@@ -615,6 +616,7 @@ let tdefdecl =
         keyword "extends" >>. symbol .>> whitespace |>> TypeDefDecl.Extends
         keyword "field" >>. tuple3 (symbol |>> ValueSome) fdefattr (block fdefdecl) |>> TypeDefDecl.Field
         keyword "method" >>. tuple3 (symbol |>> ValueSome) mdefattr (block mdefdecl) |>> TypeDefDecl.Method
+        keyword "override" >>. symbol .>> keyword "for" .>>. symbol |>> TypeDefDecl.MethodOverride
     ]
     |> line
     |> many
