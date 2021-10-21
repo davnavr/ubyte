@@ -23,6 +23,9 @@
 
 .code @code_method_derived {
     .locals @sig_int (@l0)
+    // TODO: How to ignore argument indices?
+    .arguments (@a_this)
+
     const.zero @l0
     ret @l0
 }
@@ -30,6 +33,9 @@
 .identifier @id_class_derived DerivedClass
 .identifier @id_method DoIt
 .type @class_derived {
+    .name @id_class_derived
+    .namespace @namespace
+
     .method @constructor_derived public instance constructor {
         .signature @sig_constructor
         .body defined @code_constructor_derived
