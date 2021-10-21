@@ -3,11 +3,39 @@ module UByte.Interpreter.Runtime
 
 open System
 open System.Collections.Immutable
+open System.Runtime.CompilerServices
 
 open UByte.Format
 
-[<NoComparison; NoEquality>]
-type RuntimeRegister
+[<IsReadOnly; Struct; NoComparison; NoEquality>]
+type internal OffsetArray<'T> =
+    val Start: int32
+    val private items: 'T[]
+
+    member Length : int32
+
+    member AsSpan : unit -> Span<'T>
+
+type internal RuntimeObject
+
+[<IsReadOnly; Struct; NoComparison; NoEquality>]
+type internal RuntimeStruct =
+    { RawData: OffsetArray<byte>
+      References: OffsetArray<RuntimeObject> }
+
+[<NoComparison; CustomEquality>]
+type RuntimeRegister =
+    internal
+        { RegisterValue: RuntimeStruct
+          RegisterType: Model.AnyType }
+
+    override Equals : obj -> bool
+
+    override GetHashCode : unit -> int32
+
+    override ToString : unit -> string
+
+    interface IEquatable<RuntimeRegister>
 
 [<Sealed>]
 type RuntimeStackFrame =

@@ -3,7 +3,6 @@
 open System
 open System.Collections.Generic
 open System.Collections.Immutable
-open System.IO
 open System.Runtime.CompilerServices
 open System.Runtime.InteropServices
 
@@ -11,43 +10,39 @@ open UByte.Format.Model
 
 let inline isFlagSet flag value = value &&& flag = flag
 
-[<IsReadOnly; Struct; NoComparison; NoEquality>]
+[<Struct>]
 type OffsetArray<'T> =
     val Start: int32
-    val Items: 'T[]
+    val private items: 'T[]
 
-    new (start, items) = { Start = start; Items = items }
+    new (start, items) = { Start = start; items = items }
     new (items) = OffsetArray(0, items)
     new (length) = OffsetArray(Array.zeroCreate<'T> length)
 
-    member this.Length = this.Items.Length - this.Start
+    member this.Length = this.items.Length - this.Start
 
-    member this.ToSpan() = Span<'T>(this.Items).Slice this.Start
+    member this.AsSpan() = Span<'T>(this.items).Slice this.Start
 
-    member this.CopyTo(destination: OffsetArray<'T>) = this.ToSpan().CopyTo(destination.ToSpan())
+    member this.CopyTo(destination: OffsetArray<'T>) = this.AsSpan().CopyTo(destination.AsSpan())
 
-//type RuntimeRegister = RuntimeRegister of RuntimeStruct
+[<Struct>]
+type RuntimeStruct = { RawData: OffsetArray<byte>; References: OffsetArray<RuntimeObject> }
 
-[<RequireQualifiedAccess>]
-type RuntimeRegister =
-    | S8 of int8 ref
-    | U8 of uint8 ref
-    | S16 of int16 ref
-    | U16 of uint16 ref
-    | S32 of int32 ref
-    | U32 of uint32 ref
-    | S64 of int64 ref
-    | U64 of uint64 ref
-    | SNative of nativeint ref
-    | UNative of unativeint ref
-    | F32 of single ref
-    | F64 of double ref
-    | Struct of RuntimeStruct
-    | Object of RuntimeObject ref
-    //| SafePointer of _ -> _
+type RuntimeRegister = { RegisterValue: RuntimeStruct; RegisterType: AnyType }
+
+[<AutoOpen>]
+module private RuntimeRegister =
+    let private invalidDataLength kind =
+        invalidOp("Cannot copy " + kind + " from source register to destination register, the destination is too small")
+
+    let copyRegisterValue { RegisterValue = source } { RegisterValue = destination } =
+        if source.RawData.Length > destination.RawData.Length then invalidDataLength "bytes"
+        if source.References.Length > destination.References.Length then invalidDataLength "references"
+        source.RawData.CopyTo destination.RawData
+        source.References.CopyTo destination.References
 
 [<RequireQualifiedAccess>]
-module Cast =
+module private Cast =
     let inline (|U8|) value = uint8 value
     let inline (|U16|) value = uint16 value
     let inline (|U32|) value = uint32 value
@@ -62,7 +57,7 @@ module Cast =
     let inline (|F64|) value = double value
 
 [<RequireQualifiedAccess>]
-module Reinterpret =
+module private Reinterpret =
     let inline (|F32|) value: uint32 =
         let mutable value = value
         Unsafe.As<single, uint32> &value
@@ -128,19 +123,6 @@ module private Const =
             value.RawData.CopyTo destination'.RawData
             value.References.CopyTo destination'.References
         | _ -> failwith "TODO: Cannot store struct into a register containing a numeric type"
-
-type RuntimeRegister with
-    member source.CopyValueTo destination =
-        match source with
-        | S8 { contents = Cast.U8 value } | U8 { contents = value } -> Const.i8 value destination
-        | S16 { contents = Cast.U16 value } | U16 { contents = value } -> Const.i16 value destination
-        | S32 { contents = Cast.U32 value } | U32 { contents = value } -> Const.i32 value destination
-        | S64 { contents = Cast.U64 value } | U64 { contents = value } -> Const.i64 value destination
-        | SNative { contents = Cast.UNative value } | UNative { contents = value } -> Const.inative value destination
-        | F32 { contents = value } -> Const.f32 value destination
-        | F64 { contents = value } -> Const.f64 value destination
-        | Object { contents = value } -> Const.obj value destination
-        | Struct value -> Const.value value destination
 
 [<Sealed>]
 type RuntimeStackFrame
@@ -217,8 +199,8 @@ type StructVector (stype: RuntimeTypeDefinition, length) =
     member this.Item
         with get index = { RuntimeStruct.RawData = this.ElementData index; References = this.ElementReferences index }
         and set index (value: RuntimeStruct) =
-            value.RawData.ToSpan().CopyTo(Span(data, index * this.ElementLength data, value.RawData.Length))
-            value.References.ToSpan().CopyTo(Span(references, index * this.ElementLength references, value.References.Length))
+            value.RawData.AsSpan().CopyTo(Span(data, index * this.ElementLength data, value.RawData.Length))
+            value.References.AsSpan().CopyTo(Span(references, index * this.ElementLength references, value.References.Length))
 
 [<RequireQualifiedAccess; NoComparison; ReferenceEquality>]
 type RuntimeObject =
@@ -233,20 +215,17 @@ type RuntimeObject =
     | StructVector of elements: StructVector
     | ObjectVector of elements: RuntimeObject[]
 
-[<IsReadOnly; Struct; NoComparison; NoEquality>]
-type RuntimeStruct =
-    { RawData: OffsetArray<byte>; References: OffsetArray<RuntimeObject> }
-
+type RuntimeStruct with
     member this.ReadRaw<'T when 'T : struct and 'T :> System.ValueType and 'T : (new: unit -> 'T)> index: 'T =
-        MemoryMarshal.Read<'T>(Span.op_Implicit(this.RawData.ToSpan()).Slice(index))
+        MemoryMarshal.Read<'T>(Span.op_Implicit(this.RawData.AsSpan()).Slice(index))
 
     member this.WriteRaw<'T when 'T : struct and 'T :> System.ValueType and 'T : (new: unit -> 'T)>(index, value: 'T) =
         let mutable value = value
-        MemoryMarshal.Write<'T>(this.RawData.ToSpan().Slice(index), &value)
+        MemoryMarshal.Write<'T>(this.RawData.AsSpan().Slice(index), &value)
 
-    member this.ReadRef index = this.References.ToSpan().[index]
+    member this.ReadRef index = this.References.AsSpan().[index]
 
-    member this.WriteRef(index, o) = this.References.ToSpan().[index] <- o
+    member this.WriteRef(index, o) = this.References.AsSpan().[index] <- o
 
 [<Sealed>]
 type MissingReturnInstructionException (frame, message) = inherit RuntimeException(frame, message)
