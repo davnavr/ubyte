@@ -670,17 +670,20 @@ module Interpreter =
                 | Call(Method method, Registers frame' aregs, Registers frame' rregs) ->
                     invoke rregs aregs method
                 | Call_virt(Method method, Registers frame' aregs, Registers frame' rregs) ->
+                    let inline invalidVirtualMethod reason =
+                        "Cannot call virtual method " +
+                        reason +
+                        " , the type containing the method to call cannot be deduced"
+                        |> throwRuntimeExn
                     if aregs.IsDefaultOrEmpty then
-                        throwRuntimeExn
-                            "Cannot call virtual method with no arguments, the type containing the method to call cannot be deduced"
+                        invalidVirtualMethod "with no arguments"
                     match aregs.[0] with
                     | RuntimeRegister.Object { contents = RuntimeObject.Null } ->
                         throwRuntimeExn "Cannot call virtual method with null object reference"
                     | RuntimeRegister.Object { contents = RuntimeObject.TypeInstance(otype, _) } ->
                         invoke rregs aregs otype.VTable.[method]
                     | RuntimeRegister.Struct _ ->
-                        throwRuntimeExn
-                            "Cannot call virtual method with a struct, as the type containing the method to call cannot be deduced"
+                        invalidVirtualMethod "with a struct"
                     | _ ->
                         throwRuntimeExn "Cannot call virtual method with a primitive type"
                 | Call_ret(Method method, Registers frame' aregs, _) -> // TODO: Does call.ret need to specify return values?
