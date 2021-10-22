@@ -3,11 +3,17 @@ module UByte.Interpreter.Runtime
 
 open System
 open System.Collections.Immutable
+open System.Runtime.CompilerServices
 
 open UByte.Format
 
 [<NoComparison; NoEquality>]
 type RuntimeRegister
+
+type RuntimeRegister with
+    override ToString : unit -> string
+
+    interface IEquatable<RuntimeRegister>
 
 [<Sealed>]
 type RuntimeStackFrame =

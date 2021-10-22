@@ -2,8 +2,7 @@
 
 Features further down the list are ones I think are more difficult or will take more time to implement.
 
-- Update runtime to have a simpler way to represent registers (just use RuntimeStruct)
-- Multiple class inheritance to allow for interfaces/mixins/traits? (still need to fix field lookup problem in runtime)
+- User-defined structs
 - Comparison instructions
 - Exception handling (`try`, `catch`, and `finally`)
 - Static Single Assignment
