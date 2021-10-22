@@ -35,7 +35,43 @@ type RuntimeStruct with
         o.AsSpan().[0] <- RuntimeObject.Null
         { RawData = OffsetArray(); References = OffsetArray 1 }
 
-type RuntimeRegister = { RegisterValue: RuntimeStruct; RegisterType: AnyType }
+type RuntimeRegister =
+    { RegisterValue: RuntimeStruct; RegisterType: AnyType }
+
+    override this.ToString() =
+        match this.RegisterType with
+        | ValueType(ValueType.Primitive prim) ->
+            match prim with
+            | PrimitiveType.Bool -> sprintf "%b" (this.RegisterValue.ReadRaw<bool> 0)
+            | PrimitiveType.U8 -> sprintf "%iuy" (this.RegisterValue.ReadRaw<uint8> 0)
+            | PrimitiveType.S8 -> sprintf "%iy" (this.RegisterValue.ReadRaw<int8> 0)
+            | PrimitiveType.U16 -> sprintf "%ius" (this.RegisterValue.ReadRaw<uint16> 0)
+            | PrimitiveType.S16 -> sprintf "%is" (this.RegisterValue.ReadRaw<int16> 0)
+            | PrimitiveType.Char16 -> string(this.RegisterValue.ReadRaw<char> 0)
+            | PrimitiveType.U32 -> sprintf "%iu" (this.RegisterValue.ReadRaw<uint32> 0)
+            | PrimitiveType.S32 -> string(this.RegisterValue.ReadRaw<int32> 0)
+            | PrimitiveType.Char32 -> this.RegisterValue.ReadRaw<System.Text.Rune>(0).ToString()
+            | PrimitiveType.U64 -> sprintf "%iUL" (this.RegisterValue.ReadRaw<uint32> 0)
+            | PrimitiveType.S64 -> sprintf "%iL" (this.RegisterValue.ReadRaw<int32> 0)
+            | PrimitiveType.UNative -> sprintf "%iun" (this.RegisterValue.ReadRaw<unativeint> 0)
+            | PrimitiveType.SNative -> sprintf "%in" (this.RegisterValue.ReadRaw<nativeint> 0)
+            | PrimitiveType.F32 -> sprintf "%A" (this.RegisterValue.ReadRaw<single> 0)
+            | PrimitiveType.F64 -> string(this.RegisterValue.ReadRaw<double> 0)
+            | PrimitiveType.Unit -> "()"
+        | ReferenceType rtype ->
+            match this.RegisterValue.ReadRef 0, rtype with
+            | RuntimeObject.Null, _ -> "null"
+            | RuntimeObject.TypeInstance(otype, _), _ -> otype.ToString()
+            | RuntimeObject.Array chars, ReferenceType.Vector(ReferenceOrValueType.Value(ValueType.Primitive PrimitiveType.Char16)) ->
+                let str = System.Text.StringBuilder chars.Length
+                for i = 0 to chars.Length - 1 do str.Append(chars.[i].ReadRaw<char> 0) |> ignore
+                str.ToString()
+            | RuntimeObject.Array chars, ReferenceType.Vector(ReferenceOrValueType.Value(ValueType.Primitive PrimitiveType.Char32)) ->
+                let str = System.Text.StringBuilder(2 * chars.Length)
+                for i = 0 to chars.Length - 1 do str.Append(chars.[i].ReadRaw<System.Text.Rune>(0).ToString()) |> ignore
+                str.ToString()
+            | _, _ -> string rtype
+        | atype -> string atype
 
 type RuntimeRegister with
     static member Raw(size, vtype) =
@@ -65,21 +101,6 @@ module private RuntimeRegister =
         match register.RegisterType with
         | AnyType.ValueType(ValueType.Primitive prim) -> prim
         | _ -> invalidArg (nameof register) "Cannot retrieve numeric value from a register not containing a primitive type"
-
-[<RequireQualifiedAccess>]
-module private Cast =
-    let inline (|U8|) value = uint8 value
-    let inline (|U16|) value = uint16 value
-    let inline (|U32|) value = uint32 value
-    let inline (|U64|) value = uint64 value
-    let inline (|UNative|) value = unativeint value
-    let inline (|S8|) value = int8 value
-    let inline (|S16|) value = int16 value
-    let inline (|S32|) value = int32 value
-    let inline (|S64|) value = int64 value
-    let inline (|SNative|) value = nativeint value
-    let inline (|F32|) value = single value
-    let inline (|F64|) value = double value
 
 [<RequireQualifiedAccess>]
 module private Reinterpret =
@@ -178,8 +199,8 @@ type RuntimeArray =
     member private this.ElementReferences i = OffsetArray<RuntimeObject>(i * this.ElementLength this.References, this.References)
 
     member this.Item
-        with get index =
-            { RuntimeStruct.RawData = OffsetArray<byte>(index * this.ElementLength this.Data, this.Data)
+        with get(index: int32): RuntimeStruct =
+            { RawData = OffsetArray<byte>(index * this.ElementLength this.Data, this.Data)
               References = this.ElementReferences index }
         and set index (value: RuntimeStruct) =
             value.RawData.AsSpan().CopyTo(Span(this.Data, index * this.ElementLength this.Data, value.RawData.Length))
@@ -194,7 +215,7 @@ type RuntimeObject =
     | Array of RuntimeArray
 
 type RuntimeStruct with
-    member this.ReadRaw<'T when 'T : struct and 'T :> System.ValueType and 'T : (new: unit -> 'T)> index: 'T =
+    member this.ReadRaw<'T when 'T : struct and 'T :> System.ValueType and 'T : (new: unit -> 'T)> (index: int32): 'T =
         MemoryMarshal.Read<'T>(Span.op_Implicit(this.RawData.AsSpan()).Slice(index))
 
     member this.WriteRaw<'T when 'T : struct and 'T :> System.ValueType and 'T : (new: unit -> 'T)>(index, value: 'T) =
