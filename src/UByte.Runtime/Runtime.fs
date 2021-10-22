@@ -509,6 +509,7 @@ module Interpreter =
 
             let inline fieldAccessInstruction field object access =
                 match object.RegisterValue.ReadRef 0 with
+                | RuntimeObject.TypeInstance(otype, data) -> access otype data
                 | RuntimeObject.Null ->
                     NullReferenceFieldAccessException (
                         ValueSome frame',
@@ -516,24 +517,17 @@ module Interpreter =
                         field
                     )
                     |> raise
-                | RuntimeObject.TypeInstance(otype, data) -> access otype data
                 | RuntimeObject.Array _ ->
                     failwith "TODO: Error when attempted to access object field using reference to array"
 
-            let inline arrayAccessInstruction array index accu8 accu16 accu32 accu64 accun accstr accobj =
+            let inline arrayAccessInstruction array index access =
                 let index' = NumberValue.s32 index
-                match array with
-                | RuntimeRegister.Object { contents = RuntimeObject.Null } ->
+                match array.RegisterValue.ReadRef 0 with
+                | RuntimeObject.Array array' -> access array' index'
+                | RuntimeObject.TypeInstance(otype, _) ->
+                    invalidOp("Cannot access array item with an object reference of type " + otype.ToString())
+                | RuntimeObject.Null ->
                     raise(NullReferenceException "Cannot access an array element with a null array reference")
-                | RuntimeRegister.Object { contents = RuntimeObject.ByteVector array' } -> accu8 array' index'
-                | RuntimeRegister.Object { contents = RuntimeObject.ShortVector array' } -> accu16 array' index'
-                | RuntimeRegister.Object { contents = RuntimeObject.IntVector array' } -> accu32 array' index'
-                | RuntimeRegister.Object { contents = RuntimeObject.LongVector array' } -> accu64 array' index'
-                | RuntimeRegister.Object { contents = RuntimeObject.NativeIntVector array' } -> accun array' index'
-                | RuntimeRegister.Object { contents = RuntimeObject.StructVector array' } -> accstr array' index'
-                | RuntimeRegister.Object { contents = RuntimeObject.ObjectVector array' } -> accobj array' index'
-                | _ ->
-                    failwith "TODO: Error for expected object reference to array but got value type"
 
             (*
             match ex with
@@ -630,23 +624,12 @@ module Interpreter =
                     | RuntimeObject.TypeInstance(otype, _) ->
                         invalidOp("Cannot access array length with an object reference of type " + otype.ToString())
                 | Obj_arr_get(Register array, Register index, Register destination) ->
-                    arrayAccessInstruction array index
-                        (fun _ _ -> failwith "TODO: Array u8 element not supported")
-                        (fun _ _ -> failwith "TODO: Array u16 element not supported")
-                        (fun array i -> Const.i32 array.[i] destination)
-                        (fun _ _ -> failwith "TODO: Array u64 element not supported")
-                        (fun _ _ -> failwith "TODO: Array unative element not supported")
-                        (fun _ _ -> failwith "TODO: Array struct element not supported")
-                        (fun array i -> RuntimeRegister.Object(ref array.[i]).CopyValueTo(destination)) // TODO: Define a Const.obj function instead
+                    arrayAccessInstruction array index <| fun array i ->
+                        let value = array.[i]
+                        storeRegisterValue &value destination
                 | Obj_arr_set(Register array, Register index, Register source) ->
-                    arrayAccessInstruction array index
-                        (fun _ _ -> failwith "TODO: Array u8 element not supported")
-                        (fun _ _ -> failwith "TODO: Array u16 element not supported")
-                        (fun array' i -> array'.[i] <- NumberValue.u32 source)
-                        (fun _ _ -> failwith "TODO: Array u64 element not supported")
-                        (fun _ _ -> failwith "TODO: Array unative element not supported")
-                        (fun _ _ -> failwith "TODO: Array struct element not supported")
-                        (fun _ i -> failwith "TODO Array object element not supported")
+                    arrayAccessInstruction array index <| fun array i ->
+                        array.[i] <- source.RegisterValue
                 | Nop -> ()
                 | bad -> failwithf "TODO: Unsupported instruction %A" bad
 
