@@ -35,6 +35,19 @@ type RuntimeStruct with
         o.AsSpan().[0] <- RuntimeObject.Null
         { RawData = OffsetArray(); References = OffsetArray 1 }
 
+[<AutoOpen>]
+module private RuntimeStruct =
+    let private invalidDataLength kind =
+        invalidOp("Cannot copy " + kind + " from source to destination as the destination is too small")
+
+    let copyRuntimeValue (source: inref<RuntimeStruct>) (destination: inref<RuntimeStruct>) =
+        if source.RawData.Length > destination.RawData.Length then invalidDataLength "bytes"
+        if source.References.Length > destination.References.Length then invalidDataLength "references"
+        if destination.RawData.Length > source.RawData.Length then source.RawData.AsSpan().Clear()
+        if destination.References.Length > source.References.Length then source.RawData.AsSpan().Clear()
+        source.RawData.CopyTo destination.RawData
+        source.References.CopyTo destination.References
+
 type RuntimeRegister =
     { RegisterValue: RuntimeStruct; RegisterType: AnyType }
 
@@ -84,19 +97,6 @@ type RuntimeRegister with
 
 [<AutoOpen>]
 module private RuntimeRegister =
-    let private invalidDataLength kind =
-        invalidOp("Cannot copy " + kind + " from source register to destination register, the destination is too small")
-
-    let storeRegisterValue (source: inref<RuntimeStruct>) { RegisterValue = destination } =
-        if source.RawData.Length > destination.RawData.Length then invalidDataLength "bytes"
-        if source.References.Length > destination.References.Length then invalidDataLength "references"
-        if destination.RawData.Length > source.RawData.Length then source.RawData.AsSpan().Clear()
-        if destination.References.Length > source.References.Length then source.RawData.AsSpan().Clear()
-        source.RawData.CopyTo destination.RawData
-        source.References.CopyTo destination.References
-
-    let copyRegisterValue source destination = storeRegisterValue &source.RegisterValue destination
-
     let getPrimitiveType register =
         match register.RegisterType with
         | AnyType.ValueType(ValueType.Primitive prim) -> prim
@@ -238,7 +238,7 @@ module Interpreter =
 
     let private copyRegisterValues (source: ImmutableArray<RuntimeRegister>) (dest: ImmutableArray<RuntimeRegister>) =
         if source.Length > dest.Length then failwith "TODO: Error, more source registers than destination registers" // TODO: Have validation of arguments lengths be the caller's problem.
-        for i = 0 to dest.Length - 1 do copyRegisterValue source.[i] dest.[i]
+        for i = 0 to dest.Length - 1 do copyRuntimeValue &source.[i].RegisterValue &dest.[i].RegisterValue
 
     /// Contains functions for retrieving numeric values stored in registers.
     [<RequireQualifiedAccess>]
@@ -534,6 +534,7 @@ module Interpreter =
             let inline (|BranchTarget|) (target: InstructionOffset) = Checked.(-) (Checked.(+) frame'.InstructionIndex target) 1
 
             let inline fieldAccessInstruction field object access =
+                if object.RegisterValue.References.Length = 0 then failwith "TODO: How to handle field access for struct?"
                 match object.RegisterValue.ReadRef 0 with
                 | RuntimeObject.TypeInstance(otype, data) -> access otype data
                 | RuntimeObject.Null ->
@@ -564,7 +565,8 @@ module Interpreter =
 
             try
                 match frame'.Instructions.[frame'.InstructionIndex] with
-                | Reg_copy(source, dest) -> copyRegisterValue (frame'.RegisterAt source) (frame'.RegisterAt dest)
+                | Reg_copy(source, dest) ->
+                    copyRuntimeValue &(frame'.RegisterAt source).RegisterValue &(frame'.RegisterAt dest).RegisterValue
                 | Add(Register x, Register y, Register r) -> Arithmetic.add x y r
                 | Sub(Register x, Register y, Register r) -> Arithmetic.sub x y r
                 | Mul(Register x, Register y, Register r) -> Arithmetic.mul x y r
@@ -626,12 +628,12 @@ module Interpreter =
                     invoke ImmutableArray.Empty (arguments.Insert(0, destination)) constructor
                 | Obj_ldfd(Field field, Register object, Register destination) ->
                     field.CheckMutate frame'
-
                     fieldAccessInstruction field object <| fun otype fields ->
-                        // TODO: Need to know size of field
-                        failwith "TODO: Loading of field values not yet supported"
+                        otype.Layout.FieldIndices.[field]
+                        failwith "TODO: Need to know field size"
                 | Obj_stfd(Field field, Register object, Register source) ->
                     fieldAccessInstruction field object <| fun otype fields ->
+                        
                         failwith "TODO: Storing of field values not yet supported"
                 | Obj_arr_new(TypeSignature etype, Register length, Register destination) ->
                     let struct(dsize, rlen) = frame'.CurrentMethod.Module.CalculateTypeSize etype
@@ -646,7 +648,7 @@ module Interpreter =
                 | Obj_arr_len(Register array, Register length) ->
                     match array.RegisterValue.ReadRef 0 with
                     | RuntimeObject.Array array' ->
-                        failwith "TODO: Write array length"
+                        length.RegisterValue.WriteRaw<int32>(0, array'.Length)
                     | RuntimeObject.Null ->
                         raise(NullReferenceException "Cannot access array length with a null array reference")
                     | RuntimeObject.TypeInstance(otype, _) ->
@@ -654,7 +656,7 @@ module Interpreter =
                 | Obj_arr_get(Register array, Register index, Register destination) ->
                     arrayAccessInstruction array index <| fun array i ->
                         let value = array.[i]
-                        storeRegisterValue &value destination
+                        copyRuntimeValue &value &destination.RegisterValue
                 | Obj_arr_set(Register array, Register index, Register source) ->
                     arrayAccessInstruction array index <| fun array i ->
                         array.[i] <- source.RegisterValue
