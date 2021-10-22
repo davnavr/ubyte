@@ -418,19 +418,19 @@ module Interpreter =
                 f32 (xreg.RegisterValue.ReadRaw<float32> 0) (NumberValue.f32 yreg)
             | _, AnyType.ValueType(ValueType.Primitive PrimitiveType.F32) ->
                 f32 (NumberValue.f32 xreg) (yreg.RegisterValue.ReadRaw<float32> 0)
-            | AnyType.ValueType(ValueType.Primitive PrimitiveType.SNative), AnyType.ValueType(ValueType.Primitive PrimitiveType.UNative) ->
+            | AnyType.ValueType(ValueType.Primitive PrimitiveType.SNative), AnyType.ValueType(ValueType.Primitive PrimitiveType.UNative | ValueType.UnsafePointer _) ->
                 let x = xreg.RegisterValue.ReadRaw<nativeint> 0
                 if x < 0n
                 then failwith "TODO: How to compare long and ulong?"
                 else unative (unativeint x) (yreg.RegisterValue.ReadRaw<unativeint> 0)
-            | AnyType.ValueType(ValueType.Primitive PrimitiveType.UNative), AnyType.ValueType(ValueType.Primitive PrimitiveType.SNative) ->
+            | AnyType.ValueType(ValueType.Primitive PrimitiveType.UNative | ValueType.UnsafePointer _), AnyType.ValueType(ValueType.Primitive PrimitiveType.SNative) ->
                 let y = yreg.RegisterValue.ReadRaw<nativeint> 0
                 if y < 0n
                 then failwith "TODO: How to compare long and ulong?"
                 else unative (xreg.RegisterValue.ReadRaw<unativeint> 0) (unativeint y)
-            | AnyType.ValueType(ValueType.Primitive PrimitiveType.UNative), _ ->
+            | AnyType.ValueType(ValueType.Primitive PrimitiveType.UNative | ValueType.UnsafePointer _), _ ->
                 unative (xreg.RegisterValue.ReadRaw<unativeint> 0) (NumberValue.unative yreg)
-            | _, AnyType.ValueType(ValueType.Primitive PrimitiveType.UNative) ->
+            | _, AnyType.ValueType(ValueType.Primitive PrimitiveType.UNative | ValueType.UnsafePointer _) ->
                 unative (NumberValue.unative xreg) (yreg.RegisterValue.ReadRaw<unativeint> 0)
             | AnyType.ValueType(ValueType.Primitive PrimitiveType.SNative), _ ->
                 snative (xreg.RegisterValue.ReadRaw<nativeint> 0) (NumberValue.snative yreg)
@@ -454,28 +454,42 @@ module Interpreter =
                 s64 (xreg.RegisterValue.ReadRaw<int64> 0) (NumberValue.s64 yreg)
             | _, AnyType.ValueType(ValueType.Primitive PrimitiveType.S64) ->
                 s64 (NumberValue.s64 xreg) (yreg.RegisterValue.ReadRaw<int64> 0)
-            //| RuntimeRegister.S32 { contents = Cast.S64 x }, RuntimeRegister.U32 { contents = Cast.S64 y }
-            //| RuntimeRegister.U32 { contents = Cast.S64 x }, RuntimeRegister.S32 { contents = Cast.S64 y } -> s64 x y
-            //| RuntimeRegister.U32 { contents = x }, _ -> u32 x (NumberValue.u32 yreg)
-            //| _, RuntimeRegister.U32 { contents = y } -> u32 (NumberValue.u32 xreg) y
-            //| RuntimeRegister.S32 { contents = x }, _ -> s32 x (NumberValue.s32 yreg)
-            //| _, RuntimeRegister.S32 { contents = y } -> s32 (NumberValue.s32 xreg) y
-            //| RuntimeRegister.S16 { contents = Cast.S32 x }, RuntimeRegister.U16 { contents = Cast.S32 y }
-            //| RuntimeRegister.U16 { contents = Cast.S32 x }, RuntimeRegister.S16 { contents = Cast.S32 y } -> s32 x y
-            //| RuntimeRegister.U16 { contents = x }, _ -> u16 x (NumberValue.u16 yreg)
-            //| _, RuntimeRegister.U16 { contents = y } -> u16 (NumberValue.u16 xreg) y
-            //| RuntimeRegister.S16 { contents = x }, _ -> s16 x (NumberValue.s16 yreg)
-            //| _, RuntimeRegister.S16{ contents = y } -> s16 (NumberValue.s16 xreg) y
-            //| RuntimeRegister.S8 { contents = Cast.S16 x }, RuntimeRegister.U8 { contents = Cast.S16 y }
-            //| RuntimeRegister.U8 { contents = Cast.S16 x }, RuntimeRegister.S8 { contents = Cast.S16 y } -> s16 x y
+            | AnyType.ValueType(ValueType.Primitive PrimitiveType.S32), AnyType.ValueType(ValueType.Primitive(PrimitiveType.U32 | PrimitiveType.Char32))
+            | AnyType.ValueType(ValueType.Primitive(PrimitiveType.U32 | PrimitiveType.Char32)), AnyType.ValueType(ValueType.Primitive PrimitiveType.S32) ->
+                s64 (NumberValue.s64 xreg) (NumberValue.s64 yreg)
+            | AnyType.ValueType(ValueType.Primitive PrimitiveType.U32), _ ->
+                u32 (xreg.RegisterValue.ReadRaw<uint32> 0) (NumberValue.u32 yreg)
+            | _, AnyType.ValueType(ValueType.Primitive(PrimitiveType.U32 | PrimitiveType.Char32)) ->
+                u32 (NumberValue.u32 xreg) (yreg.RegisterValue.ReadRaw<uint32> 0)
+            | AnyType.ValueType(ValueType.Primitive PrimitiveType.S32), _ ->
+                s32 (xreg.RegisterValue.ReadRaw<int32> 0) (NumberValue.s32 yreg)
+            | _, AnyType.ValueType(ValueType.Primitive PrimitiveType.S32) ->
+                s32 (NumberValue.s32 xreg) (yreg.RegisterValue.ReadRaw<int32> 0)
+            | AnyType.ValueType(ValueType.Primitive PrimitiveType.S16), AnyType.ValueType(ValueType.Primitive(PrimitiveType.U16 | PrimitiveType.Char16))
+            | AnyType.ValueType(ValueType.Primitive(PrimitiveType.U16 | PrimitiveType.Char16)), AnyType.ValueType(ValueType.Primitive PrimitiveType.S16) ->
+                s32 (NumberValue.s32 xreg) (NumberValue.s32 yreg)
+            | AnyType.ValueType(ValueType.Primitive(PrimitiveType.U16 | PrimitiveType.Char16)), _ ->
+                u16 (xreg.RegisterValue.ReadRaw<uint16> 0) (NumberValue.u16 yreg)
+            | _, AnyType.ValueType(ValueType.Primitive(PrimitiveType.U16 | PrimitiveType.Char16)) ->
+                u16 (NumberValue.u16 xreg) (yreg.RegisterValue.ReadRaw<uint16> 0)
+            | AnyType.ValueType(ValueType.Primitive PrimitiveType.S16), _ ->
+                s16 (xreg.RegisterValue.ReadRaw<int16> 0) (NumberValue.s16 yreg)
+            | _, AnyType.ValueType(ValueType.Primitive PrimitiveType.S16) ->
+                s16 (NumberValue.s16 xreg) (yreg.RegisterValue.ReadRaw<int16> 0)
+            | AnyType.ValueType(ValueType.Primitive PrimitiveType.S8), AnyType.ValueType(ValueType.Primitive(PrimitiveType.U8 | PrimitiveType.Bool))
+            | AnyType.ValueType(ValueType.Primitive(PrimitiveType.U8 | PrimitiveType.Bool)), AnyType.ValueType(ValueType.Primitive PrimitiveType.S8) ->
+                s16 (NumberValue.s16 xreg) (NumberValue.s16 yreg)
             | AnyType.ValueType(ValueType.Primitive PrimitiveType.S8), _ ->
                 s8 (xreg.RegisterValue.ReadRaw<int8> 0) (NumberValue.s8 yreg)
             | _, AnyType.ValueType(ValueType.Primitive PrimitiveType.S8) ->
                 s8 (NumberValue.s8 xreg) (yreg.RegisterValue.ReadRaw<int8> 0)
-            | AnyType.ValueType(ValueType.Primitive PrimitiveType.U8), _ ->
+            | AnyType.ValueType(ValueType.Primitive(PrimitiveType.U8 | PrimitiveType.Bool)), _ ->
                 u8 (xreg.RegisterValue.ReadRaw<uint8> 0) (NumberValue.u8 yreg)
-            | _, AnyType.ValueType(ValueType.Primitive PrimitiveType.U8) ->
+            | _, AnyType.ValueType(ValueType.Primitive(PrimitiveType.U8 | PrimitiveType.Bool)) ->
                 u8 (NumberValue.u8 xreg) (yreg.RegisterValue.ReadRaw<uint8> 0)
+            | AnyType.ValueType(ValueType.Primitive PrimitiveType.Unit), _
+            | _, AnyType.ValueType(ValueType.Primitive PrimitiveType.Unit) ->
+                true
 
         let isTrueValue register =
             let rvalue = &register.RegisterValue
