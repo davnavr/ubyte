@@ -19,7 +19,7 @@ type OffsetArray<'T> =
     new (items) = OffsetArray(0, items)
     new (length) = OffsetArray(Array.zeroCreate<'T> length)
 
-    member this.Length = this.items.Length - this.Start
+    member this.Length = if Object.ReferenceEquals(this.items, null) then 0 else this.items.Length - this.Start
 
     member this.AsSpan() = Span<'T>(this.items).Slice this.Start
 
@@ -642,6 +642,7 @@ module Interpreter =
                     if rlen > 0 then invalidOp("Cannot create constant array containing elements of type " + etype.ToString())
                     let array = RuntimeArray(dsize, rlen, data.Length / dsize)
                     data.AsSpan().Slice(0, array.Data.Length).CopyTo(Span array.Data)
+                    destination.RegisterValue.WriteRef(0, RuntimeObject.Array array)
                 | Obj_arr_len(Register array, Register length) ->
                     match array.RegisterValue.ReadRef 0 with
                     | RuntimeObject.Array array' ->
