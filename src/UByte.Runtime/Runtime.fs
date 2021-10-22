@@ -61,6 +61,11 @@ module private RuntimeRegister =
 
     let copyRegisterValue source destination = storeRegisterValue &source.RegisterValue destination
 
+    let getPrimitiveType register =
+        match register.RegisterType with
+        | AnyType.ValueType(ValueType.Primitive prim) -> prim
+        | _ -> invalidArg (nameof register) "Cannot retrieve numeric value from a register not containing a primitive type"
+
 [<RequireQualifiedAccess>]
 module private Cast =
     let inline (|U8|) value = uint8 value
@@ -209,33 +214,119 @@ module Interpreter =
         if source.Length > dest.Length then failwith "TODO: Error, more source registers than destination registers" // TODO: Have validation of arguments lengths be the caller's problem.
         for i = 0 to dest.Length - 1 do copyRegisterValue source.[i] dest.[i]
 
+    /// Contains functions for retrieving numeric values stored in registers.
+    [<RequireQualifiedAccess>]
+    module private NumberValue =
+        let inline private number register u8 s8 u16 s16 u32 s32 u64 s64 f32 f64 unative snative =
+            let value = &register.RegisterValue
+            match getPrimitiveType register with
+            | PrimitiveType.Bool
+            | PrimitiveType.U8 -> value.ReadRaw<uint8> 0 |> u8
+            | PrimitiveType.S8 -> value.ReadRaw<int8> 0 |> s8
+            | PrimitiveType.Char16
+            | PrimitiveType.U16 -> value.ReadRaw<uint16> 0 |> u16
+            | PrimitiveType.S16 -> value.ReadRaw<int16> 0 |> s16
+            | PrimitiveType.Char32
+            | PrimitiveType.U32 -> value.ReadRaw<uint32> 0 |> u32
+            | PrimitiveType.S32 -> value.ReadRaw<int32> 0 |> s32
+            | PrimitiveType.U64 -> value.ReadRaw<uint64> 0 |> u64
+            | PrimitiveType.S64 -> value.ReadRaw<int64> 0 |> s64
+            | PrimitiveType.F32 -> value.ReadRaw<single> 0 |> f32
+            | PrimitiveType.F64 -> value.ReadRaw<double> 0 |> f64
+            | PrimitiveType.UNative -> value.ReadRaw<unativeint> 0 |> unative
+            | PrimitiveType.SNative -> value.ReadRaw<nativeint> 0 |> snative
+            | PrimitiveType.Unit -> Unchecked.defaultof<_>
+
+        let u8 register = number register id uint8 uint8 uint8 uint8 uint8 uint8 uint8 uint8 uint8 uint8 uint8
+        let s8 register = number register int8 id int8 int8 int8 int8 int8 int8 int8 int8 int8 int8
+        let u16 register = number register uint16 uint16 id uint16 uint16 uint16 uint16 uint16 uint16 uint16 uint16 uint16
+        let s16 register = number register int16 int16 int16 id int16 int16 int16 int16 int16 int16 int16 int16
+        let u32 register = number register uint32 uint32 uint32 uint32 id uint32 uint32 uint32 uint32 uint32 uint32 uint32
+        let s32 register = number register int32 int32 int32 int32 int32 id int32 int32 int32 int32 int32 int32
+        let u64 register = number register uint64 uint64 uint64 uint64 uint64 uint64 id uint64 uint64 uint64 uint64 uint64
+        let s64 register = number register int64 int64 int64 int64 int64 int64 int64 id int64 int64 int64 int64
+
+        let f32 register =
+            number register float32 float32 float32 float32 float32 float32 float32 float32 id float32 float32 float32
+
+        let f64 register = number register float float float float float float float float float id float float
+
+        let snative register =
+            number
+                register
+                nativeint
+                nativeint
+                nativeint
+                nativeint
+                nativeint
+                nativeint
+                nativeint
+                nativeint
+                nativeint
+                nativeint
+                nativeint
+                id
+
+        let unative register =
+            number
+                register
+                unativeint
+                unativeint
+                unativeint
+                unativeint
+                unativeint
+                unativeint
+                unativeint
+                unativeint
+                unativeint
+                unativeint
+                id
+                unativeint
+
     /// Contains functions for performing arithmetic on the values stored in registers.
     [<RequireQualifiedAccess>]
     module private Arithmetic =
         // Performs an operation on two integers and stores a result value, with no overflow checks.
         let inline private binop opu8 ops8 opu16 ops16 opu32 ops32 opu64 ops64 opunative opsnative opf32 opf64 xreg yreg rreg =
-            match rreg with
-            | RuntimeRegister.U32 r -> r.contents <- opu32 (NumberValue.u32 xreg) (NumberValue.u32 yreg)
-            | RuntimeRegister.S32 r -> r.contents <- ops32 (NumberValue.s32 xreg) (NumberValue.s32 yreg)
-            | RuntimeRegister.U64 r -> r.contents <- opu64 (NumberValue.u64 xreg) (NumberValue.u64 yreg)
-            | RuntimeRegister.S64 r -> r.contents <- ops64 (NumberValue.s64 xreg) (NumberValue.s64 yreg)
-            | RuntimeRegister.F32 r -> r.contents <- opf32 (NumberValue.f32 xreg) (NumberValue.f32 yreg)
-            | RuntimeRegister.F64 r -> r.contents <- opf64 (NumberValue.f64 xreg) (NumberValue.f64 yreg)
+            let value = &rreg.RegisterValue
+            match getPrimitiveType rreg with
+            | PrimitiveType.U8
+            | PrimitiveType.Bool -> value.WriteRaw<uint8>(0, opu8 (NumberValue.u8 xreg) (NumberValue.u8 yreg))
+            | PrimitiveType.S8 -> value.WriteRaw<int8>(0, ops8 (NumberValue.s8 xreg) (NumberValue.s8 yreg))
+            | PrimitiveType.U16
+            | PrimitiveType.Char16 -> value.WriteRaw<uint16>(0, opu16 (NumberValue.u16 xreg) (NumberValue.u16 yreg))
+            | PrimitiveType.S16 -> value.WriteRaw<int16>(0, ops16 (NumberValue.s16 xreg) (NumberValue.s16 yreg))
+            | PrimitiveType.U32
+            | PrimitiveType.Char32 -> value.WriteRaw<uint32>(0, opu32 (NumberValue.u32 xreg) (NumberValue.u32 yreg))
+            | PrimitiveType.S32 -> value.WriteRaw<int32>(0, ops32 (NumberValue.s32 xreg) (NumberValue.s32 yreg))
+            | PrimitiveType.U64 -> value.WriteRaw<uint64>(0, opu64 (NumberValue.u64 xreg) (NumberValue.u64 yreg))
+            | PrimitiveType.S64 -> value.WriteRaw<int64>(0, ops64 (NumberValue.s64 xreg) (NumberValue.s64 yreg))
+            | PrimitiveType.UNative ->
+                value.WriteRaw<unativeint>(0, opunative (NumberValue.unative xreg) (NumberValue.unative yreg))
+            | PrimitiveType.SNative ->
+                value.WriteRaw<nativeint>(0, opsnative (NumberValue.snative xreg) (NumberValue.snative yreg))
+            | PrimitiveType.F32 -> value.WriteRaw<single>(0, opf32 (NumberValue.f32 xreg) (NumberValue.f32 yreg))
+            | PrimitiveType.F64 -> value.WriteRaw<double>(0, opf64 (NumberValue.f64 xreg) (NumberValue.f64 yreg))
+            | PrimitiveType.Unit -> ()
 
         let inline private unop opu8 ops8 opu16 ops16 opu32 ops32 opu64 ops64 opunative opsnative opf32 opf64 register =
-            match register with
-            | RuntimeRegister.S8 r -> r.contents <- ops8 r.contents
-            | RuntimeRegister.U8 r -> r.contents <- opu8 r.contents
-            | RuntimeRegister.S16 r -> r.contents <- ops16 r.contents
-            | RuntimeRegister.U16 r -> r.contents <- opu16 r.contents
-            | RuntimeRegister.S32 r -> r.contents <- ops32 r.contents
-            | RuntimeRegister.U32 r -> r.contents <- opu32 r.contents
-            | RuntimeRegister.S64 r -> r.contents <- ops64 r.contents
-            | RuntimeRegister.U64 r -> r.contents <- opu64 r.contents
-            | RuntimeRegister.SNative r -> r.contents <- opsnative r.contents
-            | RuntimeRegister.UNative r -> r.contents <- opunative r.contents
-            | RuntimeRegister.F32 r -> r.contents <- opf32 r.contents
-            | RuntimeRegister.F64 r -> r.contents <- opf64 r.contents
+            let value = &register.RegisterValue
+            match getPrimitiveType register with
+            | PrimitiveType.S8 -> value.WriteRaw<int8>(0, ops8(value.ReadRaw<int8> 0))
+            | PrimitiveType.U8
+            | PrimitiveType.Bool -> value.WriteRaw<uint8>(0, opu8(value.ReadRaw<uint8> 0))
+            | PrimitiveType.S16 -> value.WriteRaw<int16>(0, ops16(value.ReadRaw<int16> 0))
+            | PrimitiveType.U16
+            | PrimitiveType.Char16 -> value.WriteRaw<uint16>(0, opu16(value.ReadRaw<uint16> 0))
+            | PrimitiveType.S32 -> value.WriteRaw<int32>(0, ops32(value.ReadRaw<int32> 0))
+            | PrimitiveType.U32
+            | PrimitiveType.Char32 -> value.WriteRaw<uint32>(0, opu32(value.ReadRaw<uint32> 0))
+            | PrimitiveType.S64 -> r.contents <- ops64 r.contents
+            | PrimitiveType.U64 -> r.contents <- opu64 r.contents
+            | PrimitiveType.SNative -> r.contents <- opsnative r.contents
+            | PrimitiveType.UNative -> r.contents <- opunative r.contents
+            | PrimitiveType.F32 -> r.contents <- opf32 r.contents
+            | PrimitiveType.F64 -> r.contents <- opf64 r.contents
 
         let add xreg yreg rreg = binop (+) (+) (+) (+) (+) (+) (+) (+) (+) (+) (+) (+) xreg yreg rreg
         let sub xreg yreg rreg = binop (-) (-) (-) (-) (-) (-) (-) (-) (-) (-) (-) (-) xreg yreg rreg
@@ -243,16 +334,22 @@ module Interpreter =
 
         let private bitf32 operation = fun (Reinterpret.F32 x) (Reinterpret.F32 y) -> Reinterpret.(|U32|) (operation x y)
         let private bitf64 operation = fun (Reinterpret.F64 x) (Reinterpret.F64 y) -> Reinterpret.(|U64|) (operation x y)
-        let ``and`` xreg yreg rreg = binop (&&&) (&&&) (&&&) (&&&) (&&&) (&&&) (&&&) (&&&) (&&&) (&&&) (bitf32 (&&&)) (bitf64 (&&&)) xreg yreg rreg
-        let ``or`` xreg yreg rreg = binop (|||) (|||) (|||) (|||) (|||) (|||) (|||) (|||) (|||) (|||) (bitf32 (|||)) (bitf64 (|||)) xreg yreg rreg
+        // TODO: Fix, bitwise operations should require that floats be reinterpreted as the corresponding integer types.
+        let ``and`` xreg yreg rreg =
+            binop (&&&) (&&&) (&&&) (&&&) (&&&) (&&&) (&&&) (&&&) (&&&) (&&&) (bitf32 (&&&)) (bitf64 (&&&)) xreg yreg rreg
+        let ``or`` xreg yreg rreg =
+            binop (|||) (|||) (|||) (|||) (|||) (|||) (|||) (|||) (|||) (|||) (bitf32 (|||)) (bitf64 (|||)) xreg yreg rreg
         //let ``not`` xreg yreg rreg = unop (~~~) (~~~) (~~~) (~~~) (~~~) (~~~) (~~~) (~~~) (~~~) (~~~) xreg yreg rreg
-        let xor xreg yreg rreg = binop (^^^) (^^^) (^^^) (^^^) (^^^) (^^^) (^^^) (^^^) (^^^) (^^^) (bitf32 (^^^)) (bitf64 (^^^)) xreg yreg rreg
+        let xor xreg yreg rreg =
+            binop (^^^) (^^^) (^^^) (^^^) (^^^) (^^^) (^^^) (^^^) (^^^) (^^^) (bitf32 (^^^)) (bitf64 (^^^)) xreg yreg rreg
 
         let inline private oneop (op: _ -> _ -> _) = op LanguagePrimitives.GenericOne
         let inline private increment value = oneop (+) value
-        let incr reg = unop increment increment increment increment increment increment increment increment increment increment increment increment reg
+        let incr reg =
+            unop increment increment increment increment increment increment increment increment increment increment increment increment reg
         let inline private decrement value = oneop (-) value
-        let decr reg = unop decrement decrement decrement decrement decrement decrement decrement decrement decrement decrement decrement decrement reg
+        let decr reg =
+            unop decrement decrement decrement decrement decrement decrement decrement decrement decrement decrement decrement decrement reg
 
         [<RequireQualifiedAccess>]
         module Checked =
@@ -262,9 +359,11 @@ module Interpreter =
             let sub xreg yreg rreg = binop (-) (-) (-) (-) (-) (-) (-) (-) (-) (-) (-) (-) xreg yreg rreg
             let mul xreg yreg rreg = binop (*) (*) (*) (*) (*) (*) (*) (*) (*) (*) (*) (*) xreg yreg rreg
             let inline private increment value = oneop (+) value
-            let incr reg = unop increment increment increment increment increment increment increment increment increment increment increment increment reg
+            let incr reg =
+                unop increment increment increment increment increment increment increment increment increment increment increment increment reg
             let inline private decrement value = oneop (-) value
-            let decr reg = unop decrement decrement decrement decrement decrement decrement decrement decrement decrement decrement decrement decrement reg
+            let decr reg =
+                unop decrement decrement decrement decrement decrement decrement decrement decrement decrement decrement decrement decrement reg
 
     /// Contains functions for comparing the values stored in registers.
     [<RequireQualifiedAccess>]
@@ -389,10 +488,7 @@ module Interpreter =
                     failwith "TODO: Error when attempted to access object field using reference to array"
 
             let inline arrayAccessInstruction array index accu8 accu16 accu32 accu64 accun accstr accobj =
-                let index' =
-                    match index with
-                    | RuntimeRegister.S32 { contents = i } -> i
-                    | _ -> failwith "TODO: Convert to int32 and check bounds when getting index to array element"
+                let index' = NumberValue.s32 index
                 match array with
                 | RuntimeRegister.Object { contents = RuntimeObject.Null } ->
                     raise(NullReferenceException "Cannot access an array element with a null array reference")
