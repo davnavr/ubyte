@@ -23,6 +23,8 @@ type OffsetArray<'T> =
 
     member this.AsSpan() = Span<'T>(this.items).Slice this.Start
 
+    member this.Slice(start: int32) = OffsetArray<'T>(this.Start + start, this.items)
+
     member this.CopyTo(destination: OffsetArray<'T>) = this.AsSpan().CopyTo(destination.AsSpan())
 
 [<Struct>]
@@ -534,16 +536,16 @@ module Interpreter =
             let inline (|BranchTarget|) (target: InstructionOffset) = Checked.(-) (Checked.(+) frame'.InstructionIndex target) 1
 
             let inline fieldAccessInstruction field object access =
-                if object.RegisterValue.References.Length = 0 then failwith "TODO: How to handle field access for struct?"
+                if object.RegisterValue.References.Length = 0 then
+                    failwith "TODO: How to handle field access for struct?"
                 match object.RegisterValue.ReadRef 0 with
-                | RuntimeObject.TypeInstance(otype, data) -> access otype data
+                | RuntimeObject.TypeInstance(otype, data) ->
+                    let struct(dindex, rindex) = otype.Layout.FieldIndices.[field]
+                    access
+                        { RuntimeStruct.RawData = OffsetArray(data.RawData.AsSpan().Slice(dindex, field.DataSize).ToArray())
+                          References = OffsetArray(data.References.AsSpan().Slice(rindex, field.ReferencesLength).ToArray()) }
                 | RuntimeObject.Null ->
-                    NullReferenceFieldAccessException (
-                        ValueSome frame',
-                        "Attempted to access an object field with a null object reference",
-                        field
-                    )
-                    |> raise
+                    raise(NullReferenceException(sprintf "Attempted to access the field %O with a null object reference" field))
                 | RuntimeObject.Array _ ->
                     failwith "TODO: Error when attempted to access object field using reference to array"
 
@@ -628,13 +630,9 @@ module Interpreter =
                     invoke ImmutableArray.Empty (arguments.Insert(0, destination)) constructor
                 | Obj_ldfd(Field field, Register object, Register destination) ->
                     field.CheckMutate frame'
-                    fieldAccessInstruction field object <| fun otype fields ->
-                        otype.Layout.FieldIndices.[field]
-                        failwith "TODO: Need to know field size"
+                    fieldAccessInstruction field object <| fun value -> copyRuntimeValue &value &destination.RegisterValue
                 | Obj_stfd(Field field, Register object, Register source) ->
-                    fieldAccessInstruction field object <| fun otype fields ->
-                        
-                        failwith "TODO: Storing of field values not yet supported"
+                    fieldAccessInstruction field object <| fun value -> copyRuntimeValue &source.RegisterValue &value
                 | Obj_arr_new(TypeSignature etype, Register length, Register destination) ->
                     let struct(dsize, rlen) = frame'.CurrentMethod.Module.CalculateTypeSize etype
                     let array = RuntimeArray(dsize, rlen, NumberValue.s32 length)
@@ -823,18 +821,19 @@ type RuntimeMethod (rmodule: RuntimeModule, index: MethodIndex, method: Method) 
         t.ToString()
 
 [<Sealed>]
-type RuntimeField (rmodule: RuntimeModule, field: Field, n: int32) =
+type RuntimeField (rmodule: RuntimeModule, field: Field, size) =
+    let struct(dsize, rlength) = size
     let { Field.FieldName = namei; FieldFlags = flags } = field
 
     do
         if isFlagSet FieldFlags.Static field.FieldFlags then raise(NotSupportedException "Static fields are not yet supported")
 
     member _.Module = rmodule
-
     member _.Name = rmodule.IdentifierAt namei
+    member _.DataSize: int32 = dsize
+    member _.ReferencesLength: int32 = rlength
 
     member _.IsMutable = isFlagSet FieldFlags.Mutable flags
-
     member _.IsStatic = isFlagSet FieldFlags.Static flags
 
     member val DeclaringType: RuntimeTypeDefinition = rmodule.InitializeType field.FieldOwner
@@ -857,7 +856,7 @@ type RuntimeField (rmodule: RuntimeModule, field: Field, n: int32) =
 [<IsReadOnly; Struct; NoComparison; NoEquality>]
 type RuntimeTypeLayout =
     { Fields: ImmutableArray<RuntimeField>
-      FieldIndices: IReadOnlyDictionary<RuntimeField, int32>
+      FieldIndices: IReadOnlyDictionary<RuntimeField, struct(int32 * int32)>
       RawDataSize: int32
       ObjectReferencesLength: int32 }
 
@@ -933,13 +932,9 @@ type RuntimeTypeDefinition (rm: RuntimeModule, t: TypeDefinition) as rt =
                 for fieldi in fields do
                     let field = rm.InitializeField fieldi
                     if not field.IsStatic then
-                        let struct(dsize, rlen) = field.Module.CalculateTypeSize field.FieldType
+                        let dsize, rlen = field.DataSize, field.ReferencesLength
                         fields'.Add field
-
-                        // Stores either the index into the data array or reference array, the kind of index depends on whether
-                        // dsize or rlen was set, only one will be zero
-                        fieldIndexLookup.Add(field, if dsize > rlen then sumDataSize else sumReferencesLength)
-
+                        fieldIndexLookup.Add(field, struct(sumDataSize, sumReferencesLength))
                         sumDataSize <- sumDataSize + dsize
                         sumReferencesLength <- sumReferencesLength + rlen
 
@@ -1076,8 +1071,8 @@ type RuntimeModule (m: Module, moduleImportResolver: ModuleIdentifier -> Runtime
         createIndexedLookup fields.Length <| fun (Index i as i') ->
             let f = fields.[Checked.int32 i]
             let (Index owner) = f.FieldOwner
-            let n = owners.[Checked.int32 owner].Fields.IndexOf i'
-            RuntimeField(rm, f, n)
+            //let n = owners.[Checked.int32 owner].Fields.IndexOf i' // Won't work for inherited types
+            RuntimeField(rm, f, rm.CalculateTypeSize(rm.TypeSignatureAt f.FieldType))
 
     let typeNameLookup = Dictionary()
 
@@ -1137,7 +1132,7 @@ type RuntimeModule (m: Module, moduleImportResolver: ModuleIdentifier -> Runtime
                 |> raise
         | true, existing -> existing
 
-    member _.CalculateTypeSize t =
+    member _.CalculateTypeSize(t: AnyType): struct(Int32 * int32) =
         match t with
         | ValueType vt ->
             let rawDataSize =
