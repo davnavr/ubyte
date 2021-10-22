@@ -3,7 +3,6 @@
 Features further down the list are ones I think are more difficult or will take more time to implement.
 
 - User-defined structs
-- Multiple class inheritance to allow for interfaces/mixins/traits? (still need to fix field lookup problem in runtime)
 - Comparison instructions
 - Exception handling (`try`, `catch`, and `finally`)
 - Static Single Assignment

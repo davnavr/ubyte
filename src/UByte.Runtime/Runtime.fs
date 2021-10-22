@@ -854,9 +854,6 @@ type RuntimeField (rmodule: RuntimeModule, field: Field, size) =
 
     member val FieldType = rmodule.TypeSignatureAt field.FieldType
 
-    // TODO: Fix, field offset should use current type of object instance to lookup offset since offset is messed up when multiple type inheritance is involved
-    member this.Offset = this.DeclaringType.Layout.FieldIndices.[this] // TODO: Cache field offset
-
     /// If the field is not marked as mutable, prevents modification of the field value outside of a constructor or type initializer.
     member this.CheckMutate(frame: RuntimeStackFrame) =
         if not this.IsMutable && not frame.CurrentMethod.IsConstructor then
