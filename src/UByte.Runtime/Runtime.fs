@@ -158,28 +158,33 @@ type FieldAccessException (frame, message, field: RuntimeField) =
 type NullReferenceFieldAccessException (frame, message, field) = inherit FieldAccessException(frame, message, field)
 
 [<Sealed>]
-type RuntimeArray (rawDataSize, objectReferencesLength, length) =
-    do if length < 0 then raise(ArgumentOutOfRangeException(nameof length, length, "The length of an array cannot be negative"))
-    let data = Array.zeroCreate<byte> (Checked.(*) rawDataSize length)
-    let references = Array.zeroCreate<RuntimeObject> (Checked.(*) objectReferencesLength length)
+type RuntimeArray =
+    val Length: int32
+    val Data: byte[]
+    val References: RuntimeObject[]
+
+    new (rawDataSize, objectReferencesLength, length) =
+        if length < 0 then raise(ArgumentOutOfRangeException(nameof length, length, "The length of an array cannot be negative"))
+        { Length = length
+          Data = Array.zeroCreate<byte> (Checked.(*) rawDataSize length)
+          References = Array.zeroCreate<RuntimeObject> (Checked.(*) objectReferencesLength length) }
 
     new (stype: RuntimeTypeDefinition, length) =
         let layout = stype.Layout
         RuntimeArray(layout.RawDataSize, layout.ObjectReferencesLength, length)
 
-    member _.Length = length
+    member private this.ElementLength arr = Array.length arr / this.Length
 
-    member private _.ElementLength arr = Array.length arr / length
-
-    member private this.ElementData i = OffsetArray<byte>(i * this.ElementLength data, data)
-
-    member private this.ElementReferences i = OffsetArray<RuntimeObject>(i * this.ElementLength references, references)
+    member private this.ElementReferences i = OffsetArray<RuntimeObject>(i * this.ElementLength this.References, this.References)
 
     member this.Item
-        with get index = { RuntimeStruct.RawData = this.ElementData index; References = this.ElementReferences index }
+        with get index =
+            { RuntimeStruct.RawData = OffsetArray<byte>(index * this.ElementLength this.Data, this.Data)
+              References = this.ElementReferences index }
         and set index (value: RuntimeStruct) =
-            value.RawData.AsSpan().CopyTo(Span(data, index * this.ElementLength data, value.RawData.Length))
-            value.References.AsSpan().CopyTo(Span(references, index * this.ElementLength references, value.References.Length))
+            value.RawData.AsSpan().CopyTo(Span(this.Data, index * this.ElementLength this.Data, value.RawData.Length))
+            let rdestination = Span(this.References, index * this.ElementLength this.References, value.References.Length)
+            value.References.AsSpan().CopyTo rdestination
 
 [<RequireQualifiedAccess; NoComparison; ReferenceEquality>]
 type RuntimeObject =
@@ -608,13 +613,14 @@ module Interpreter =
                     fieldAccessInstruction field object <| fun otype fields ->
                         failwith "TODO: Storing of field values not yet supported"
                 | Obj_arr_new(TypeSignature etype, Register length, Register destination) ->
-                    let length' =
-                        match length with
-                        | RuntimeRegister.S32 { contents = value } -> value
-
-                    failwith "TODO: Need to calculate size of type before creating array"
+                    let struct(dsize, rlen) = frame'.CurrentMethod.Module.CalculateTypeSize etype
+                    let array = RuntimeArray(dsize, rlen, NumberValue.s32 length)
+                    destination.RegisterValue.WriteRef(0, RuntimeObject.Array array)
                 | Obj_arr_const(TypeSignature etype, Data data, Register destination) ->
-                    failwith "TODO: Need to calculate size of type before creating array from data"
+                    let struct(dsize, rlen) = frame'.CurrentMethod.Module.CalculateTypeSize etype
+                    if rlen > 0 then invalidOp("Cannot create constant array containing elements of type " + etype.ToString())
+                    let array = RuntimeArray(dsize, rlen, data.Length / dsize)
+                    data.AsSpan().Slice(0, array.Data.Length).CopyTo(Span array.Data)
                 | Obj_arr_len(Register array, Register length) ->
                     match array.RegisterValue.ReadRef 0 with
                     | RuntimeObject.Array array' ->
@@ -842,32 +848,6 @@ type InheritedTypeLayout =
       InheritedDataSize: int32
       InheritedReferencesLength: int32 }
 
-let calculateFieldSize (field: RuntimeField) (rawDataSize: outref<_>) (objectReferencesLength: outref<_>) =
-    match field.FieldType with
-    | ValueType vt ->
-        rawDataSize <-
-            match vt with
-            | ValueType.Primitive PrimitiveType.Bool
-            | ValueType.Primitive PrimitiveType.U8
-            | ValueType.Primitive PrimitiveType.S8 -> 1
-            | ValueType.Primitive PrimitiveType.U16
-            | ValueType.Primitive PrimitiveType.S16
-            | ValueType.Primitive PrimitiveType.Char16 -> 2
-            | ValueType.Primitive PrimitiveType.U32
-            | ValueType.Primitive PrimitiveType.S32
-            | ValueType.Primitive PrimitiveType.F32
-            | ValueType.Primitive PrimitiveType.Char32 -> 4
-            | ValueType.Primitive PrimitiveType.U64
-            | ValueType.Primitive PrimitiveType.S64
-            | ValueType.Primitive PrimitiveType.F64 -> 8
-            | ValueType.Primitive PrimitiveType.UNative
-            | ValueType.Primitive PrimitiveType.SNative
-            | ValueType.UnsafePointer _ -> sizeof<unativeint>
-            | ValueType.Primitive PrimitiveType.Unit -> 0
-            | ValueType.Defined _ -> failwith "TODO: Struct fields are currently not yet supported"
-    | ReferenceType _ -> objectReferencesLength <- 1
-    | SafePointer _ -> failwith "TODO: Error for fields cannot contain safe pointers"
-
 [<Sealed>]
 type RuntimeTypeDefinition (rm: RuntimeModule, t: TypeDefinition) as rt =
     static let emptyTypeLayout =
@@ -929,8 +909,7 @@ type RuntimeTypeDefinition (rm: RuntimeModule, t: TypeDefinition) as rt =
                 for fieldi in fields do
                     let field = rm.InitializeField fieldi
                     if not field.IsStatic then
-                        let mutable dsize, rlen = 0, 0
-                        calculateFieldSize field &dsize &rlen
+                        let struct(dsize, rlen) = field.Module.CalculateTypeSize field.FieldType
                         fields'.Add field
 
                         // Stores either the index into the data array or reference array, the kind of index depends on whether
@@ -1133,6 +1112,35 @@ type RuntimeModule (m: Module, moduleImportResolver: ModuleIdentifier -> Runtime
                 )
                 |> raise
         | true, existing -> existing
+
+    member _.CalculateTypeSize t =
+        match t with
+        | ValueType vt ->
+            let rawDataSize =
+                match vt with
+                | ValueType.Primitive PrimitiveType.Bool
+                | ValueType.Primitive PrimitiveType.U8
+                | ValueType.Primitive PrimitiveType.S8 -> 1
+                | ValueType.Primitive PrimitiveType.U16
+                | ValueType.Primitive PrimitiveType.S16
+                | ValueType.Primitive PrimitiveType.Char16 -> 2
+                | ValueType.Primitive PrimitiveType.U32
+                | ValueType.Primitive PrimitiveType.S32
+                | ValueType.Primitive PrimitiveType.F32
+                | ValueType.Primitive PrimitiveType.Char32 -> 4
+                | ValueType.Primitive PrimitiveType.U64
+                | ValueType.Primitive PrimitiveType.S64
+                | ValueType.Primitive PrimitiveType.F64 -> 8
+                | ValueType.Primitive PrimitiveType.UNative
+                | ValueType.Primitive PrimitiveType.SNative
+                | ValueType.UnsafePointer _ -> sizeof<unativeint>
+                | ValueType.Primitive PrimitiveType.Unit -> 0
+                | ValueType.Defined _ -> failwith "TODO: Struct fields are currently not yet supported"
+            struct(rawDataSize, 0)
+        | ReferenceType _ ->
+            struct(0, 1)
+        | SafePointer _ ->
+            failwith "TODO: Error for fields cannot contain safe pointers"
 
     member this.InvokeEntryPoint(argv: string[]) =
         match m.EntryPoint with

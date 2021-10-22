@@ -7,32 +7,10 @@ open System.Runtime.CompilerServices
 
 open UByte.Format
 
-[<IsReadOnly; Struct; NoComparison; NoEquality>]
-type internal OffsetArray<'T> =
-    val Start: int32
-    val private items: 'T[]
+[<NoComparison; NoEquality>]
+type RuntimeRegister
 
-    member Length : int32
-
-    member AsSpan : unit -> Span<'T>
-
-type internal RuntimeObject
-
-[<IsReadOnly; Struct; NoComparison; NoEquality>]
-type internal RuntimeStruct =
-    { RawData: OffsetArray<byte>
-      References: OffsetArray<RuntimeObject> }
-
-[<NoComparison; CustomEquality>]
-type RuntimeRegister =
-    internal
-        { RegisterValue: RuntimeStruct
-          RegisterType: Model.AnyType }
-
-    override Equals : obj -> bool
-
-    override GetHashCode : unit -> int32
-
+type RuntimeRegister with
     override ToString : unit -> string
 
     interface IEquatable<RuntimeRegister>
