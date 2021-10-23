@@ -79,6 +79,8 @@ module IndexKinds =
     type [<Sealed; Class>] Method = inherit Kind
     type [<Sealed; Class>] Data = inherit Kind
     type [<Sealed; Class>] Code = inherit Kind
+    type [<Sealed; Class>] TemporaryRegister = inherit Kind
+    type [<Sealed; Class>] LocalRegister = inherit Kind
     type [<Sealed; Class>] Register = inherit Kind
 
 [<IsReadOnly; Struct; StructuralComparison; StructuralEquality>]
@@ -127,10 +129,13 @@ type DataIndex = Index<IndexKinds.Data>
 /// <summary>An index into the module's method bodies. The index of the first method body is <c>0</c>.</summary>
 type CodeIndex = Index<IndexKinds.Code>
 
+type TemporaryIndex = Index<IndexKinds.TemporaryRegister>
+
+type LocalIndex = Index<IndexKinds.LocalRegister>
+
 /// <summary>
-/// An index to a register. The index of the first register not representing a method parameter is equal to the number
-/// of method parameters. The index of the first method parameter, if any are defined, is <c>0</c>.
-/// TODO: Howt oassign indices to: argument registers, local registers, and temporary registers.
+/// An index to a register. The mapping of indices to registers is as follows: temporary registers, argument registers,
+/// local registers.
 /// </summary>
 type RegisterIndex = Index<IndexKinds.Register>
 
@@ -897,24 +902,21 @@ type TypeDefinition =
       //Initializers: vector<InitializerIndex voption>
       VTable: vector<MethodOverride> }
 
-[<Flags>]
-type RegisterFlags =
-    | None = 0uy
-    | ValidMask = 0b0000_0000uy
-
-[<IsReadOnly; Struct; NoComparison; NoEquality>]
-type RegisterType =
-    { RegisterType: TypeSignatureIndex
-      RegisterFlags: RegisterFlags }
+[<NoComparison; NoEquality>]
+type CodeBlock =
+    { /// Specifies which temporary registers in the current block map to which local register. Each local register must map to
+      /// exactly one temporary register in exactly one block.
+      Locals: vector<struct(TemporaryIndex * LocalIndex)>
+      /// <remarks>
+      /// Both the byte length and the actual number of instructions are included to simplify parsing.
+      /// </remarks>
+      Instructions: LengthEncoded<vector<InstructionSet.Instruction>> }
 
 [<NoComparison; NoEquality>]
 type Code =
-    { /// The types and special flags for the registers of the method. A length precedes each register type and flag byte to
-      /// allow easy duplication
-      RegisterTypes: vector<struct(uvarint * RegisterType)>
-      /// The instructions that make up the method body. Both the byte length and the actual number of instructions are included
-      /// to simplify parsing.
-      Instructions: LengthEncoded<vector<InstructionSet.Instruction>> }
+    { /// Indicates the total number of local registers.
+      LocalCount: uvarint
+      Blocks: vector<CodeBlock> }
 
     member RegisterCount : uvarint
 
