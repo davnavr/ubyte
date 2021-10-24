@@ -22,8 +22,8 @@ let inline bits1<'Enum, 'Source when 'Enum : enum<uint8> and 'Source :> IByteSeq
     LanguagePrimitives.EnumOfValue<_, 'Enum>(u1 stream)
 
 [<RequireQualifiedAccess>]
-module VarInt =
-    let integerOutOfRange() = raise(NotSupportedException "Cannot parse excessively large integer")
+module private VarInt =
+    let private integerOutOfRange() = raise(NotSupportedException "Cannot parse excessively large integer")
 
     let unsigned (stream: #IByteSequence): uvarint =
         let first = u1 stream
@@ -207,77 +207,93 @@ module Constant =
 
     let i32 endianness source = integer<int32, _> endianness source
 
-let instruction endianness source =
-    let inline callargs instr: Instruction = instr(index source, vector source index, vector source index)
-    let inline index1 instr: Instruction = instr(index source)
-    let inline index2 instr: Instruction = instr(index source, index source)
-    let inline index3 instr: Instruction = instr(index source, index source, index source)
-    let inline br1 instr: Instruction = instr(index source, VarInt.signed source)
-    let inline br2 instr: Instruction = instr(index source, index source, VarInt.signed source)
+let rec parsedPrimitiveType tag success continuation =
+    match tag with
+    | Tag.Type.Unit -> success PrimitiveType.Unit
+    | Tag.Type.S8 -> success PrimitiveType.S8
+    | Tag.Type.S16 -> success PrimitiveType.S16
+    | Tag.Type.S32 -> success PrimitiveType.S32
+    | Tag.Type.S64 -> success PrimitiveType.S64
+    | Tag.Type.U8 -> success PrimitiveType.U8
+    | Tag.Type.U16 -> success PrimitiveType.U16
+    | Tag.Type.U32 -> success PrimitiveType.U32
+    | Tag.Type.U64 -> success PrimitiveType.U64
+    | Tag.Type.F32 -> success PrimitiveType.F32
+    | Tag.Type.F64 -> success PrimitiveType.F64
+    | Tag.Type.Bool -> success PrimitiveType.Bool
+    | Tag.Type.Char16 -> success PrimitiveType.Char16
+    | Tag.Type.Char32 -> success PrimitiveType.Char32
+    | bad -> continuation bad
+
+let instructionPrimitiveType source = parsedPrimitiveType (bits1 source) id (failwithf "%A is not a valid primitive type")
+
+let instruction source =
+    let inline arithmeticUnaryOp instr: Instruction =
+        instr(bits1 source, instructionPrimitiveType source, index source)
+
+    let inline arithmeticBinaryOp instr: Instruction =
+        instr(bits1 source, instructionPrimitiveType source, index source, index source)
+
+    let inline bitwiseUnaryOp instr: Instruction =
+        instr(instructionPrimitiveType source, index source)
+
+    let inline bitwiseBinaryOp instr: Instruction =
+        instr(instructionPrimitiveType source, index source, index source)
+
+    let inline boffset(): BlockOffset = VarInt.signed source
+
+    let inline branchComparisonInstruction instr: Instruction =
+        instr(index source, index source, boffset(), boffset())
+
+    let inline instr2 instr: Instruction = instr(index source, index source)
+    let inline instr3 instr: Instruction = instr(index source, index source, index source)
 
     match LanguagePrimitives.EnumOfValue(VarInt.unsigned source) with
     | Opcode.nop -> Nop
     | Opcode.ret -> Ret(vector source index)
-
-    | Opcode.call -> callargs Call
-    | Opcode.``call.virt`` -> callargs Call_virt
-
-    // Register
-    | Opcode.``reg.copy`` -> index2 Reg_copy
-
-    // Arithmetic
-    | Opcode.add -> index3 Add
-    | Opcode.sub -> index3 Sub
-    | Opcode.mul -> index3 Mul
-    | Opcode.div -> index3 Div
-
-    | Opcode.incr -> index1 Incr
-
-    | Opcode.decr -> index1 Decr
-
-    | Opcode.``const.i32`` -> Const_i32(Constant.i32 endianness source, index source)
-    
-    | Opcode.``const.true`` -> index1 Const_true
-    | Opcode.``const.zero`` (*| Opcode.``const.false``*) -> index1 Const_zero
-
-    | Opcode.``and`` -> index3 And
-    | Opcode.``or`` -> index3 Or
-    | Opcode.``not`` -> index3 Not
-    | Opcode.xor -> index3 Xor
-    | Opcode.rem -> index3 Rem
-
-    | Opcode.rotl -> index2 Rotl
-    | Opcode.rotr -> index2 Rotr
-
-    | Opcode.br -> Br(VarInt.signed source)
-    | Opcode.``br.eq`` -> br2 Br_eq
-    | Opcode.``br.ne`` -> br2 Br_ne
-    | Opcode.``br.lt`` -> br2 Br_le
-    | Opcode.``br.gt`` -> br2 Br_gt
-    | Opcode.``br.le`` -> br2 Br_le
-    | Opcode.``br.ge`` -> br2 Br_ge
-    | Opcode.``br.true`` -> br1 Br_true
-    | Opcode.``br.false`` -> br1 Br_false
-
-    | Opcode.``obj.null`` -> index1 Obj_null
-    | Opcode.``obj.new`` -> Obj_new(index source, vector source index, index source)
-    | Opcode.``obj.ldfd`` -> index3 Obj_ldfd
-    | Opcode.``obj.stfd`` -> index3 Obj_stfd
-
-    | Opcode.``obj.arr.new`` -> index3 Obj_arr_new
-    | Opcode.``obj.arr.len`` -> index2 Obj_arr_len
-    | Opcode.``obj.arr.get`` -> index3 Obj_arr_get
-    | Opcode.``obj.arr.set`` -> index3 Obj_arr_set
-    | Opcode.``obj.arr.const`` -> index3 Obj_arr_const
-
-    | Opcode.``call.ret`` -> callargs Call_ret
-    | Opcode.``call.virt.ret`` -> callargs Call_virt_ret
-
-    | Opcode.``add.ovf`` -> index3 Add_ovf
-    | Opcode.``sub.ovf`` -> index3 Sub_ovf
-    | Opcode.``mul.ovf`` -> index3 Mul_ovf
-
+    | Opcode.call -> Call(bits1 source, index source, vector source index)
+    | Opcode.``call.virt`` -> Call_virt(bits1 source, index source, index source, vector source index)
+    | Opcode.add -> arithmeticBinaryOp Add
+    | Opcode.sub -> arithmeticBinaryOp Sub
+    | Opcode.mul -> arithmeticBinaryOp Mul
+    | Opcode.div -> arithmeticBinaryOp Div
+    | Opcode.incr -> arithmeticUnaryOp Incr
+    | Opcode.decr -> arithmeticUnaryOp Decr
+    | Opcode.``and`` -> bitwiseBinaryOp And
+    | Opcode.``or`` -> bitwiseBinaryOp Or
+    | Opcode.``not`` -> bitwiseUnaryOp Not
+    | Opcode.``xor`` -> bitwiseBinaryOp Xor
+    | Opcode.rem -> arithmeticBinaryOp Rem
+    | Opcode.rotl -> bitwiseBinaryOp Rotl
+    | Opcode.rotr -> bitwiseBinaryOp Rotr
+    | Opcode.``const.s`` -> Const_s(instructionPrimitiveType source, VarInt.signed source)
+    | Opcode.``const.u`` -> Const_u(instructionPrimitiveType source, VarInt.unsigned source)
+    //| Opcode.``const.f32`` ->
+    //| Opcode.``const.f64`` ->
+    | Opcode.``const.true`` -> Const_true(instructionPrimitiveType source)
+    | Opcode.``const.zero`` (*| Opcode.``const.false``*) -> Const_zero(instructionPrimitiveType source)
+    | Opcode.br -> Br(boffset())
+    | Opcode.``br.eq`` -> branchComparisonInstruction Br_eq
+    | Opcode.``br.ne`` -> branchComparisonInstruction Br_ne
+    | Opcode.``br.lt`` -> branchComparisonInstruction Br_lt
+    | Opcode.``br.gt`` -> branchComparisonInstruction Br_gt
+    | Opcode.``br.le`` -> branchComparisonInstruction Br_le
+    | Opcode.``br.ge`` -> branchComparisonInstruction Br_ge
+    | Opcode.``br.true`` -> Br_true(index source, boffset(), boffset())
+    | Opcode.``obj.new`` -> Obj_new(index source, vector source index)
+    | Opcode.``obj.null`` -> Obj_null
+    | Opcode.``obj.fd.ld`` -> instr2 Obj_fd_ld
+    | Opcode.``obj.fd.st`` -> instr3 Obj_fd_st
+    | Opcode.``obj.arr.new`` -> instr2 Obj_arr_new
+    | Opcode.``obj.arr.len`` -> Obj_arr_len(instructionPrimitiveType source, index source)
+    | Opcode.``obj.arr.get`` -> instr2 Obj_arr_get
+    | Opcode.``obj.arr.set`` -> instr3 Obj_arr_set
+    | Opcode.``obj.arr.const`` -> instr2 Obj_arr_const
     | bad -> failwithf "TODO: Unrecognized opcode 0x%08X (%A)" (uint32 bad) bad
+
+let block source =
+    { CodeBlock.Locals = vector source (fun source -> struct(index source, index source))
+      Instructions = lengthEncodedVector source instruction }
 
 let fromBytes (source: #IByteSequence) =
     let magic' = magic source
@@ -301,8 +317,8 @@ let fromBytes (source: #IByteSequence) =
 
             let rec parsedValueType tag success continuation =
                 let inline primitive t = success (ValueType.Primitive t)
-
-                match tag with
+            
+                match tag with // TODO: Avoid code duplication with parsedPrimitiveType
                 | Tag.Type.Unit -> primitive PrimitiveType.Unit
                 | Tag.Type.S8 -> primitive PrimitiveType.S8
                 | Tag.Type.S16 -> primitive PrimitiveType.S16
@@ -359,17 +375,9 @@ let fromBytes (source: #IByteSequence) =
             let struct(bytes, _) = lengthEncodedData source
             bytes
       Code =
-        lengthEncodedVector source  <| fun code ->
-            { Code.RegisterTypes =
-                vector code <| fun body ->
-                    let count = VarInt.unsigned body
-                    let rtype =
-                        { RegisterType = index body
-                          RegisterFlags = bits1 body }
-                    struct(count, rtype)
-              Instructions =
-                let struct(_, instructions) = lengthEncodedData code
-                vector instructions (instruction header'.Endianness) }
+        lengthEncodedVector source <| fun code ->
+            { Code.LocalCount = VarInt.unsigned code
+              Blocks = vector code block }
       EntryPoint =
         let struct(epoint, epoint') = lengthEncodedData source
         if epoint.IsDefaultOrEmpty

@@ -10,8 +10,8 @@ open UByte.Format.Model.InstructionSet
 let inline bits1 (value: 'Enum when 'Enum : enum<uint8>) (dest: Stream) = dest.WriteByte(uint8 value)
 
 [<RequireQualifiedAccess>]
-module VarInt =
-    let integerOutOfRange value =
+module private VarInt =
+    let private integerOutOfRange value =
         raise(ArgumentOutOfRangeException(nameof value, value, "Writing of variable-length integer is out of supported range"))
 
     let unsigned (value: uvarint) (dest: Stream) =
@@ -70,15 +70,10 @@ let moduleID id dest =
     name id.ModuleName dest
     versions id.Version dest
 
-let registerType (struct(count: uvarint, t: RegisterType)) dest =
-    VarInt.unsigned count dest
-    index t.RegisterType dest
-    bits1 t.RegisterFlags dest
-
 let inline opcode (code: Opcode) dest = VarInt.unsigned (uint32 code) dest
 
 [<RequireQualifiedAccess>]
-module Constant =
+module private Constant =
     let private integer<'T when 'T : struct and 'T : (new: unit -> 'T) and 'T :> System.ValueType>
         (value: 'T)
         endianness
@@ -97,101 +92,161 @@ module Constant =
 
     let i32 value endianness dest = integer<int32> value endianness dest
 
-let instruction endianness i dest =
-    let inline (|Opcode|) op _: Opcode = op
+let primitiveType prim (dest: Stream) =
+    match prim with
+    | PrimitiveType.S8 -> Tag.Type.S8
+    | PrimitiveType.S16 -> Tag.Type.S16
+    | PrimitiveType.S32 -> Tag.Type.S32
+    | PrimitiveType.S64 -> Tag.Type.S64
+    | PrimitiveType.U8 -> Tag.Type.U8
+    | PrimitiveType.U16 -> Tag.Type.U16
+    | PrimitiveType.U32 -> Tag.Type.U32
+    | PrimitiveType.U64 -> Tag.Type.U64
+    | PrimitiveType.UNative -> Tag.Type.UNative
+    | PrimitiveType.SNative -> Tag.Type.UNative
+    | PrimitiveType.F32 -> Tag.Type.F32
+    | PrimitiveType.F64 -> Tag.Type.F64
+    | PrimitiveType.Char16 -> Tag.Type.Char16
+    | PrimitiveType.Char32 -> Tag.Type.Char32
+    | PrimitiveType.Bool -> Tag.Type.Bool
+    | PrimitiveType.Unit -> Tag.Type.Unit
+    |> uint8
+    |> dest.WriteByte
 
-    match i with
-    | Instruction.Nop -> opcode Opcode.nop dest
-    | Instruction.Ret registers ->
+let instruction instr dest =
+    let inline arithmeticUnaryOp i (flags: ArithmeticFlags) rtype (register: RegisterIndex) =
+        opcode i dest
+        bits1 flags dest
+        primitiveType rtype dest
+        index register dest
+
+    let inline arithmeticBinaryOp i flags rtype (x: RegisterIndex) (y: RegisterIndex) =
+        arithmeticUnaryOp i flags rtype x
+        index y dest
+
+    let inline bitwiseUnaryOp i rtype (register: RegisterIndex) =
+        opcode i dest
+        primitiveType rtype dest
+        index register dest
+
+    let inline bitwiseBinaryOp i rtype x (y: RegisterIndex) =
+        bitwiseUnaryOp i rtype x
+        index y dest
+
+    let inline boffset (offset: BlockOffset) = VarInt.signed offset dest
+
+    let inline branchComparisonInstruction i x y btrue bfalse =
+        opcode i dest
+        index x dest
+        index y dest
+        boffset btrue
+        boffset bfalse
+
+    match instr with
+    | Nop -> opcode Opcode.nop dest
+    | Ret registers ->
         opcode Opcode.ret dest
         vector index registers dest
-    | (InstructionSet.Incr reg & Opcode Opcode.incr op)
-    | (InstructionSet.Decr reg & Opcode Opcode.decr op) ->
-        opcode op dest
-        index reg dest
-    | (Instruction.Call(method, aregs, rregs) & Opcode Opcode.call op)
-    | (Instruction.Call_virt(method, aregs, rregs) & Opcode Opcode.``call.virt`` op)
-    | (Instruction.Call_ret(method, aregs, rregs) & Opcode Opcode.``call.ret`` op)
-    | (Instruction.Call_virt_ret(method, aregs, rregs) & Opcode Opcode.``call.virt.ret`` op) ->
-        opcode op dest
+    //| Phi
+    //| Select
+    | Call(flags, method, arguments) ->
+        opcode Opcode.call dest
+        bits1 flags dest
         index method dest
-        vector index aregs dest
-        vector index rregs dest
-    | (Instruction.Reg_copy(reg1, reg2) & Opcode Opcode.``reg.copy`` op)
-    | (Instruction.Rotl(reg1, reg2) & Opcode Opcode.rotl op)
-    | (Instruction.Rotr(reg1, reg2) & Opcode Opcode.rotr op)
-    | (Instruction.Obj_arr_len(reg1, reg2) & Opcode Opcode.``obj.arr.len`` op) ->
-        opcode op dest
-        index reg1 dest
-        index reg2 dest
-    | (Instruction.Add(xreg, yreg, rreg) & Opcode Opcode.add op)
-    | (Instruction.Sub(xreg, yreg, rreg) & Opcode Opcode.sub op)
-    | (Instruction.Mul(xreg, yreg, rreg) & Opcode Opcode.mul op)
-    | (Instruction.Add_ovf(xreg, yreg, rreg) & Opcode Opcode.``add.ovf`` op)
-    | (Instruction.Sub_ovf(xreg, yreg, rreg) & Opcode Opcode.``sub.ovf`` op)
-    | (Instruction.Mul_ovf(xreg, yreg, rreg) & Opcode Opcode.``mul.ovf`` op)
-    | (Instruction.Div(xreg, yreg, rreg) & Opcode Opcode.div op)
-    | (Instruction.And(xreg, yreg, rreg) & Opcode Opcode.``and`` op)
-    | (Instruction.Or(xreg, yreg, rreg) & Opcode Opcode.``or`` op)
-    | (Instruction.Not(xreg, yreg, rreg) & Opcode Opcode.``not`` op)
-    | (Instruction.Xor(xreg, yreg, rreg) & Opcode Opcode.xor op)
-    | (Instruction.Rem(xreg, yreg, rreg) & Opcode Opcode.rem op)
-    | (Instruction.Obj_arr_get(xreg, yreg, rreg) & Opcode Opcode.``obj.arr.get`` op)
-    | (Instruction.Obj_arr_set(xreg, yreg, rreg) & Opcode Opcode.``obj.arr.set`` op) ->
-        opcode op dest
-        index xreg dest
-        index yreg dest
-        index rreg dest
-    | Instruction.Const_i32(value, rreg) ->
-        opcode Opcode.``const.i32`` dest
-        Constant.i32 value endianness dest
-        index rreg dest
-    | (Instruction.Const_true reg & Opcode Opcode.``const.true`` op)
-    | (Instruction.Const_false reg & Opcode Opcode.``const.false`` op)
-    | (Instruction.Const_zero reg & Opcode Opcode.``const.zero`` op)
-    | (Instruction.Obj_null reg & Opcode Opcode.``obj.null`` op) ->
-        opcode op dest
-        index reg dest
-    | Instruction.Br target ->
+        vector index arguments dest
+    | Call_virt(flags, method, this, arguments) ->
+        opcode Opcode.``call.virt`` dest
+        bits1 flags dest
+        index method dest
+        index this dest
+        vector index arguments dest
+    | Add(flags, rtype, x, y) -> arithmeticBinaryOp Opcode.add flags rtype x y
+    | Sub(flags, rtype, x, y) -> arithmeticBinaryOp Opcode.sub flags rtype x y
+    | Mul(flags, rtype, x, y) -> arithmeticBinaryOp Opcode.mul flags rtype x y
+    | Div(flags, rtype, x, y) -> arithmeticBinaryOp Opcode.div flags rtype x y
+    | Incr(flags, rtype, reg) -> arithmeticUnaryOp Opcode.incr flags rtype reg
+    | Decr(flags, rtype, reg) -> arithmeticUnaryOp Opcode.decr flags rtype reg
+    | And(rtype, x, y) -> bitwiseBinaryOp Opcode.``and`` rtype x y
+    | Or(rtype, x, y) -> bitwiseBinaryOp Opcode.``or`` rtype x y
+    | Not(rtype, reg) -> bitwiseUnaryOp Opcode.``not`` rtype reg
+    | Xor(rtype, x, y) -> bitwiseBinaryOp Opcode.``xor`` rtype x y
+    | Rem(flags, rtype, x, y) -> arithmeticBinaryOp Opcode.rem flags rtype x y
+    | Rotl(rtype, amt, reg) -> bitwiseBinaryOp Opcode.rotl rtype amt reg
+    | Rotr(rtype, amt, reg) -> bitwiseBinaryOp Opcode.rotr rtype amt reg
+    | Const_s(vtype, value) ->
+        opcode Opcode.``const.s`` dest
+        primitiveType vtype dest
+        VarInt.signed value dest
+    | Const_u(vtype, value) ->
+        opcode Opcode.``const.u`` dest
+        primitiveType vtype dest
+        VarInt.unsigned value dest
+    | Const_f32 _
+    | Const_f64 _ -> failwith "TODO: How to handle endianness of floating point values"
+    | Const_true vtype ->
+        opcode Opcode.``const.true`` dest
+        primitiveType vtype dest
+    | Const_false vtype
+    | Const_zero vtype ->
+        opcode Opcode.``const.zero`` dest
+        primitiveType vtype dest
+    | Br target ->
         opcode Opcode.br dest
-        VarInt.signed target dest
-    | (Instruction.Br_eq(xreg, yreg, target) & Opcode Opcode.``br.eq`` op)
-    | (Instruction.Br_ne(xreg, yreg, target) & Opcode Opcode.``br.ne`` op)
-    | (Instruction.Br_lt(xreg, yreg, target) & Opcode Opcode.``br.lt`` op)
-    | (Instruction.Br_gt(xreg, yreg, target) & Opcode Opcode.``br.gt`` op)
-    | (Instruction.Br_le(xreg, yreg, target) & Opcode Opcode.``br.le`` op)
-    | (Instruction.Br_ge(xreg, yreg, target) & Opcode Opcode.``br.ge`` op) ->
-        opcode op dest
-        index xreg dest
-        index yreg dest
-        VarInt.signed target dest
-    | (Instruction.Br_true(reg, target) & Opcode Opcode.``br.true`` op)
-    | (Instruction.Br_false(reg, target) & Opcode Opcode.``br.false`` op) ->
-        opcode op dest
-        index reg dest
-        VarInt.signed target dest
-    | Instruction.Obj_new(constructor, aregs, rreg) ->
+        boffset target
+    | Br_eq(x, y, btrue, bfalse) -> branchComparisonInstruction Opcode.``br.eq`` x y btrue bfalse
+    | Br_ne(x, y, btrue, bfalse) -> branchComparisonInstruction Opcode.``br.ne`` x y btrue bfalse
+    | Br_lt(x, y, btrue, bfalse) -> branchComparisonInstruction Opcode.``br.lt`` x y btrue bfalse
+    | Br_gt(x, y, btrue, bfalse) -> branchComparisonInstruction Opcode.``br.gt`` x y btrue bfalse
+    | Br_le(x, y, btrue, bfalse) -> branchComparisonInstruction Opcode.``br.le`` x y btrue bfalse
+    | Br_ge(x, y, btrue, bfalse) -> branchComparisonInstruction Opcode.``br.ge`` x y btrue bfalse
+    | Br_true(cond, btrue, bfalse) ->
+        opcode Opcode.br dest
+        index cond dest
+        boffset btrue
+        boffset bfalse
+    | Obj_new(ctor, args) ->
         opcode Opcode.``obj.new`` dest
-        index constructor dest
-        vector index aregs dest
-        index rreg dest
-    | (Instruction.Obj_ldfd(field, typei, reg) & Opcode Opcode.``obj.ldfd`` op)
-    | (Instruction.Obj_stfd(field, typei, reg) & Opcode Opcode.``obj.stfd`` op) ->
-        opcode op dest
+        index ctor dest
+        vector index args dest
+    | Obj_null -> opcode Opcode.``obj.null`` dest
+    | Obj_fd_ld(field, object) ->
+        opcode Opcode.``obj.fd.ld`` dest
         index field dest
-        index typei dest
-        index reg dest
-    | Instruction.Obj_arr_new(typei, lreg, rreg) ->
+        index object dest
+    | Obj_fd_st(field, object, src) ->
+        opcode Opcode.``obj.fd.st`` dest
+        index field dest
+        index object dest
+        index src dest
+    | Obj_arr_new(etype, len) ->
         opcode Opcode.``obj.arr.new`` dest
-        index typei dest
-        index lreg dest
-        index rreg dest
-    | Instruction.Obj_arr_const(typei, datai, rreg) ->
-        opcode Opcode.``obj.arr.const`` dest
-        index typei dest
-        index datai dest
-        index rreg dest
-    | _ -> failwithf "TODO: Cannot write unsupported instruction %A" i
+        index etype dest
+        index len dest
+    | Obj_arr_len(ltype, array) ->
+        opcode Opcode.``obj.arr.len`` dest
+        primitiveType ltype dest
+        index array dest
+    | Obj_arr_get(array, i) ->
+        opcode Opcode.``obj.arr.get`` dest
+        index array dest
+        index i dest
+    | Obj_arr_set(array, i, src) ->
+        opcode Opcode.``obj.arr.set`` dest
+        index array dest
+        index i dest
+        index src dest
+    | Obj_arr_const(etype, data) ->
+        opcode Opcode.``obj.arr.set`` dest
+        index etype dest
+        index data dest
+
+let localRegisterMapping (struct(tindex: TemporaryIndex, lindex: LocalIndex)) dest =
+    index tindex dest
+    index lindex dest
+
+let block auxbuf block dest =
+    vector localRegisterMapping block.Locals dest
+    lengthEncodedVector auxbuf dest block.Instructions instruction
 
 let toStream (stream: Stream) (md: Module) =
     if isNull stream then nullArg(nameof stream)
@@ -219,25 +274,7 @@ let toStream (stream: Stream) (md: Module) =
 
             let rec vtype =
                 function
-                | ValueType.Primitive prim ->
-                    match prim with
-                    | PrimitiveType.S8 -> Tag.Type.S8
-                    | PrimitiveType.S16 -> Tag.Type.S16
-                    | PrimitiveType.S32 -> Tag.Type.S32
-                    | PrimitiveType.S64 -> Tag.Type.S64
-                    | PrimitiveType.U8 -> Tag.Type.U8
-                    | PrimitiveType.U16 -> Tag.Type.U16
-                    | PrimitiveType.U32 -> Tag.Type.U32
-                    | PrimitiveType.U64 -> Tag.Type.U64
-                    | PrimitiveType.UNative -> Tag.Type.UNative
-                    | PrimitiveType.SNative -> Tag.Type.UNative
-                    | PrimitiveType.F32 -> Tag.Type.F32
-                    | PrimitiveType.F64 -> Tag.Type.F64
-                    | PrimitiveType.Char16 -> Tag.Type.Char16
-                    | PrimitiveType.Char32 -> Tag.Type.Char32
-                    | PrimitiveType.Bool -> Tag.Type.Bool
-                    | PrimitiveType.Unit -> Tag.Type.Unit
-                    |> ttag
+                | ValueType.Primitive prim -> primitiveType prim dest
                 | ValueType.Defined tindex ->
                     ttag Tag.Type.DefinedStruct
                     index tindex dest
@@ -355,8 +392,8 @@ let toStream (stream: Stream) (md: Module) =
             lengthEncodedData auxbuf dest <| fun dest' -> dest'.Write(data.AsSpan())
 
         lengthEncodedVector buffer stream md.Code <| fun code dest ->
-            vector registerType code.RegisterTypes dest
-            lengthEncodedVector auxbuf dest code.Instructions (instruction md.Endianness)
+            VarInt.unsigned code.LocalCount dest
+            vector (block auxbuf) code.Blocks dest
 
         match md.EntryPoint with
         | ValueNone -> VarInt.unsigned 0u stream

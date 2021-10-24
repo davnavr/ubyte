@@ -393,14 +393,14 @@ module InstructionSet =
         | Or of PrimitiveType * x: RegisterIndex * y: RegisterIndex
         /// <summary>
         /// <para>
-        /// <c>&lt;result&gt; = not &lt;integer type&gt; &lt;x&gt; &lt;y&gt;</c>
+        /// <c>&lt;result&gt; = not &lt;integer type&gt; &lt;value&gt;</c>
         /// </para>
         /// <para>
-        /// Converts the values in the <paramref name="x"/> and <paramref name="y"/> registers to the specified integer type,
-        /// computes the bitwise <c>NOT</c>, and returns the result.
+        /// Converts the value in the register to the specified integer type, computes the bitwise <c>NOT</c>, and returns the
+        /// result.
         /// </para>
         /// </summary>
-        | Not of PrimitiveType * x: RegisterIndex * y: RegisterIndex
+        | Not of PrimitiveType * RegisterIndex
         /// <summary>
         /// <para>
         /// <c>&lt;result&gt; = xor &lt;integer type&gt; &lt;x&gt; &lt;y&gt;</c>
@@ -497,7 +497,7 @@ module InstructionSet =
         /// Returns a value of <c>0</c> as the specified numeric type.
         /// </para>
         /// </summary>
-        | Const_zero of RegisterIndex
+        | Const_zero of PrimitiveType
 
         /// <summary>
         /// <para>
@@ -917,8 +917,6 @@ type Code =
     { /// Indicates the total number of local registers.
       LocalCount: uvarint
       Blocks: vector<CodeBlock> }
-
-    member RegisterCount : uvarint
 
 type Debug = unit
 
