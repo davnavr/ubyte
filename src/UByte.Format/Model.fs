@@ -216,6 +216,8 @@ module InstructionSet =
     type Instruction =
         | Nop
         | Ret of results: vector<RegisterIndex>
+        | Phi of vector<struct(RegisterIndex * BlockOffset)>
+        | Select of condition: RegisterIndex * vtrue: RegisterIndex * vfalse: RegisterIndex
         | Call of CallFlags * method: MethodIndex * arguments: vector<RegisterIndex>
         | Call_virt of CallFlags * method: MethodIndex * this: RegisterIndex * arguments: vector<RegisterIndex>
         | Add of ArithmeticFlags * PrimitiveType * x: RegisterIndex * y: RegisterIndex
@@ -245,7 +247,7 @@ module InstructionSet =
         | Br_gt of x: RegisterIndex * y: RegisterIndex * btrue: BlockOffset * bfalse: BlockOffset
         | Br_le of x: RegisterIndex * y: RegisterIndex * btrue: BlockOffset * bfalse: BlockOffset
         | Br_ge of x: RegisterIndex * y: RegisterIndex * btrue: BlockOffset * bfalse: BlockOffset
-        | Br_true of cond: RegisterIndex * btrue: BlockOffset * bfalse: BlockOffset
+        | Br_true of condition: RegisterIndex * btrue: BlockOffset * bfalse: BlockOffset
         | Obj_new of constructor: MethodIndex * arguments: vector<RegisterIndex>
         | Obj_null
         | Obj_fd_ld of field: FieldIndex * object: RegisterIndex

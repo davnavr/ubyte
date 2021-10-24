@@ -147,8 +147,14 @@ let instruction instr dest =
     | Ret registers ->
         opcode Opcode.ret dest
         vector index registers dest
-    //| Phi
-    //| Select
+    | Phi values ->
+        opcode Opcode.phi dest
+        vector (fun struct(rindex, bindex) dest -> index rindex dest; boffset bindex) values dest
+    | Select(condition, vtrue, vfalse) ->
+        opcode Opcode.select dest
+        index condition dest
+        index vtrue dest
+        index vfalse dest
     | Call(flags, method, arguments) ->
         opcode Opcode.call dest
         bits1 flags dest

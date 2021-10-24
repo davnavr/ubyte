@@ -251,6 +251,8 @@ let instruction source =
     match LanguagePrimitives.EnumOfValue(VarInt.unsigned source) with
     | Opcode.nop -> Nop
     | Opcode.ret -> Ret(vector source index)
+    | Opcode.phi -> Phi(vector source (fun pair -> struct(index pair, VarInt.signed pair)))
+    | Opcode.select -> instr3 Select
     | Opcode.call -> Call(bits1 source, index source, vector source index)
     | Opcode.``call.virt`` -> Call_virt(bits1 source, index source, index source, vector source index)
     | Opcode.add -> arithmeticBinaryOp Add

@@ -297,8 +297,25 @@ module InstructionSet =
         /// </para>
         /// </summary>
         | Ret of results: vector<RegisterIndex> // TODO: How to ignore some return values? Maybe treat index 0 as ignore?
-        //| Phi of 
-        //| Select of 
+        /// <summary>
+        /// <para>
+        /// <c>&lt;result&gt; = phi &lt;register0&gt; when &lt;block0&gt; or &lt;register1&gt; when &lt;block1&gt; or ...</c>
+        /// </para>
+        /// <para>
+        /// Returns the value contained in the corresponding register depending on the previous block that was executed.
+        /// </para>
+        /// </summary>
+        | Phi of vector<struct(RegisterIndex * BlockOffset)>
+        /// <summary>
+        /// <para>
+        /// <c>&lt;result&gt; = select &lt;condition&gt; then &lt;vtrue&gt; else &lt;vfalse&gt; </c>
+        /// </para>
+        /// <para>
+        /// Returns the value in the <paramref name="vtrue"/> register if the value in the <paramref name="condition"/> register
+        /// is <see langword="true"/>; otherwise, returns the value in the <paramref name="vfalse"/> register.
+        /// </para>
+        /// </summary>
+        | Select of condition: RegisterIndex * vtrue: RegisterIndex * vfalse: RegisterIndex
         /// <summary>
         /// <para>
         /// <c>(&lt;results&gt;) = call [tail.prohibited | tail.required] &lt;method&gt; (&lt;arguments&gt;)</c>
@@ -570,14 +587,15 @@ module InstructionSet =
         | Br_ge of x: RegisterIndex * y: RegisterIndex * btrue: BlockOffset * bfalse: BlockOffset
         /// <summary>
         /// <para>
-        /// <c>br.true &lt;cond&gt; then &lt;btrue&gt; else &lt;bfalse&gt;</c>
+        /// <c>br.true &lt;condition&gt; then &lt;btrue&gt; else &lt;bfalse&gt;</c>
         /// </para>
         /// <para>
-        /// If the value in the <paramref name="cond"/> register is <see langword="true"/>, branches to the block specified by the
-        /// <paramref name="btrue"/> offset; otherwise, branches to the block specified by the <paramref name="bfalse"/> offset.
+        /// If the value in the <paramref name="condition"/> register is <see langword="true"/>, branches to the block specifie
+        /// by the <paramref name="btrue"/> offset; otherwise, branches to the block specified by the <paramref name="bfalse"/>
+        /// offset.
         /// </para>
         /// </summary>
-        | Br_true of cond: RegisterIndex * btrue: BlockOffset * bfalse: BlockOffset
+        | Br_true of condition: RegisterIndex * btrue: BlockOffset * bfalse: BlockOffset
 
         /// <summary>
         /// <para>
