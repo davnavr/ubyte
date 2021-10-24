@@ -20,11 +20,6 @@ type ModuleImportDecl =
     | Name of Position * Name
     | Version of ParsedVersionNumbers
 
-[<System.Runtime.CompilerServices.IsReadOnly; Struct; NoComparison; NoEquality>]
-type ParsedCodeLocals =
-    { LocalsType: Symbol
-      LocalNames: Symbol list }
-
 [<RequireQualifiedAccess; NoComparison; NoEqualityAttribute>]
 type InvalidInstructionError =
     | UnknownInstruction of Position * string
@@ -34,7 +29,7 @@ type InvalidInstructionError =
     | UndefinedTypeSignature of Symbol
     | UndefinedData of Symbol
     | InvalidIntegerLiteral of Position * size: int32 * literal: string
-    | UndefinedLabel of Position * Name
+    | UndefinedBlock of Symbol
 
 type IInstructionResolver =
     abstract FindField: field: Symbol -> FieldIndex voption
@@ -42,23 +37,30 @@ type IInstructionResolver =
     abstract FindTypeSignature: signature: Symbol -> TypeSignatureIndex voption
     abstract FindData: signature: Symbol -> DataIndex voption
 
-type RegisterLookup = Symbol -> RegisterIndex voption
+[<RequireQualifiedAccess; System.Runtime.CompilerServices.IsReadOnly; Struct; NoComparison; NoEquality>]
+type ParsedRegister =
+    { IsTemporary: bool
+      Name: Symbol }
+
+type RegisterLookup = ParsedRegister -> RegisterIndex voption
 
 type InstructionErrorsBuilder = System.Collections.Generic.ICollection<InvalidInstructionError>
 
-type CodeLabelLookup = (Position * Name) -> InstructionSet.InstructionOffset voption
+type CodeBlockLookup = Symbol -> InstructionSet.BlockOffset voption
 
-[<RequireQualifiedAccess; NoComparison; NoEquality>]
-type ParsedInstructionOrLabel =
-    | Instruction of
-        (RegisterLookup -> IInstructionResolver -> InstructionErrorsBuilder -> CodeLabelLookup -> InstructionSet.Instruction voption)
-    | Label of Position * Name
+type ParsedInstruction =
+    RegisterLookup -> IInstructionResolver -> InstructionErrorsBuilder -> CodeBlockLookup -> InstructionSet.Instruction voption
+
+[<RequireQualifiedAccess; System.Runtime.CompilerServices.IsReadOnly; Struct; NoComparison; NoEquality>]
+type ParsedBlock =
+    { Symbol: Symbol
+      Instructions: struct(ParsedRegister list * ParsedInstruction) list }
 
 [<NoComparison; NoEquality>]
 type ParsedCode =
-    { Locals: ParsedCodeLocals list
-      Arguments: Symbol list;
-      Body: ParsedInstructionOrLabel list }
+    { Locals: Symbol list
+      Arguments: Symbol voption list;
+      Blocks: ParsedBlock list }
 
 [<NoComparison; NoEquality>]
 type ParsedNamespace =

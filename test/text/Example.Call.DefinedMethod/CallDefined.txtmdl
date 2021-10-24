@@ -12,20 +12,20 @@
 .signature @sig_helper method (@sig_int) (@sig_int)
 
 .code @code_helper {
-    .locals @sig_int (@l_sum)
-    .arguments (@a0)
-
-    const.i32 12 @l_sum
-    add @a0 @l_sum @l_sum
-    ret @l_sum
+    .arguments ($a0)
+    .block $ENTRY {
+        %t0 = const.s s32 12
+        %t1 = add s32 $a0 %t0
+        ret %t1
+    }
 }
 
 .code @code_main {
-    .locals @sig_int (@l0)
-
-    const.i32 9 @l0
-    call @method_helper (@l0) (@l0)
-    ret @l0
+    .block $ENTRY {
+        %t0 = const.s s32 9
+        %t1 = call @method_helper (%t0)
+        ret %t1
+    }
 }
 
 .namespace @namespace_example {

@@ -21,13 +21,12 @@
 .data @data_message utf32le "Hello World!"
 
 .code @code_main {
-    .locals @sig_int (@l0)
-    .locals @sig_string (@l_str)
-
-    obj.arr.const @sig_char @data_message @l_str
-    call @method_println () (@l_str)
-    const.zero @l0
-    ret @l0
+    .block $ENTRY {
+        %l_str = obj.arr.const @sig_char @data_message
+        call @method_println (%l_str)
+        %l_exit = const.zero s32
+        ret (%l_exit)
+    }
 }
 
 .namespace @namespace_example {

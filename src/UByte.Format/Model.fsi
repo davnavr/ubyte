@@ -318,13 +318,22 @@ module InstructionSet =
         | Select of condition: RegisterIndex * vtrue: RegisterIndex * vfalse: RegisterIndex
         /// <summary>
         /// <para>
-        /// <c>(&lt;results&gt;) = call [tail.prohibited | tail.required] &lt;method&gt; (&lt;arguments&gt;)</c>
+        /// <c>(&lt;result0&gt;, &lt;result1&gt;, ...) = call [tail.prohibited | tail.required] &lt;method&gt; (&lt;argument0&gt;, &lt;argument1&gt;, ...)</c>
         /// </para>
         /// <para>
         /// Calls the specified <paramref name="method"/> with the specified <paramref name="arguments"/>.
         /// </para>
         /// </summary>
         | Call of CallFlags * method: MethodIndex * arguments: vector<RegisterIndex> //* results: vector<uvarint>
+        /// <summary>
+        /// <para>
+        /// <c>(&lt;result0&gt;, &lt;result1&gt;, ...) = call.virt [tail.prohibited | tail.required] [throw.nullthis] &lt;method&gt; &lt;this&gt; (&lt;argument1&gt;, &lt;argument2&gt;, ...)</c>
+        /// </para>
+        /// <para>
+        /// Calls an instance <paramref name="method"/> based on the type of the <paramref name="this"/> object
+        /// reference.
+        /// </para>
+        /// </summary>
         | Call_virt of CallFlags * method: MethodIndex * this: RegisterIndex * arguments: vector<RegisterIndex>
         //| Call_indr of CallFlags * method: RegisterIndex * arguments: vector<RegisterIndex>
         //| Global_ld
@@ -647,13 +656,13 @@ module InstructionSet =
         | Obj_arr_new of etype: TypeSignatureIndex * length: RegisterIndex
         /// <summary>
         /// <para>
-        /// <c>&lt;result&gt; = obj.arr.len &lt;numeric type&gt; &lt;array&gt;</c>
+        /// <c>&lt;result&gt; = obj.arr.len [throw.ovf] &lt;numeric type&gt; &lt;array&gt;</c>
         /// </para>
         /// <para>
         /// Returns the length of the specified <paramref name="array"/>, as a number of the specified type.
         /// </para>
         /// </summary>
-        | Obj_arr_len of PrimitiveType * array: RegisterIndex
+        | Obj_arr_len of ArithmeticFlags * PrimitiveType * array: RegisterIndex
         /// <summary>
         /// <para>
         /// <c>&lt;result&gt; = obj.arr.get &lt;array&gt; &lt;index&gt;</c>
