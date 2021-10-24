@@ -287,7 +287,7 @@ let instruction source =
     | Opcode.``obj.fd.ld`` -> instr2 Obj_fd_ld
     | Opcode.``obj.fd.st`` -> instr3 Obj_fd_st
     | Opcode.``obj.arr.new`` -> instr2 Obj_arr_new
-    | Opcode.``obj.arr.len`` -> Obj_arr_len(instructionPrimitiveType source, index source)
+    | Opcode.``obj.arr.len`` -> Obj_arr_len(bits1 source, instructionPrimitiveType source, index source)
     | Opcode.``obj.arr.get`` -> instr2 Obj_arr_get
     | Opcode.``obj.arr.set`` -> instr3 Obj_arr_set
     | Opcode.``obj.arr.const`` -> instr2 Obj_arr_const

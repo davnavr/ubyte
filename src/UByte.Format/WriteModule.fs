@@ -228,8 +228,9 @@ let instruction instr dest =
         opcode Opcode.``obj.arr.new`` dest
         index etype dest
         index len dest
-    | Obj_arr_len(ltype, array) ->
+    | Obj_arr_len(flags, ltype, array) ->
         opcode Opcode.``obj.arr.len`` dest
+        bits1 flags dest
         primitiveType ltype dest
         index array dest
     | Obj_arr_get(array, i) ->
