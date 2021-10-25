@@ -13,23 +13,23 @@
 
 .code @code_factorial {
     .arguments ($a0)
-    .locals (@l_one)
+    .locals ($l_one)
     .block $ENTRY {
-        @l_one = const.s s32 1
+        $l_one = const.s s32 1
         %t_zero = const.zero s32
         br.eq $a0 %t_zero then $RETURN_EARLY else $CHECK_ONE
     }
     .block $CHECK_ONE {
-        br.eq $a0 @l_one then $RETURN_EARLY else $NEXT
+        br.eq $a0 $l_one then $RETURN_EARLY else $NEXT
     }
     .block $NEXT {
-        %t0 = sub s32 $a0 @l_one
+        %t0 = sub s32 $a0 $l_one
         %t1 = call @method_factorial (%t0)
         %t_result = mul s32 $a0 %t1
         ret %t_result
     }
     .block $RETURN_EARLY {
-        ret @l_one
+        ret $l_one
     }
 }
 

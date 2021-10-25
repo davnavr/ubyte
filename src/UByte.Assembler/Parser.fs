@@ -428,14 +428,18 @@ let code: Parser<ParsedCode, _> =
         //"const.f64"
 
         let branchComparisonInstruction name instr =
-            pipe4 localCodeRegister localCodeRegister lsymbol lsymbol <| fun xreg yreg btrue bfalse rlookup _ errors blocks ->
-                voptional {
+            pipe4
+                localCodeRegister
+                localCodeRegister
+                (whitespace >>. keyword "then" >>. whitespace >>. lsymbol)
+                (whitespace >>. keyword "else" >>. whitespace >>. lsymbol)
+                (fun xreg yreg btrue bfalse rlookup _ errors blocks -> voptional {
                     let! xreg' = lookupRegisterName rlookup errors xreg
                     let! yreg' = lookupRegisterName rlookup errors yreg
                     let! btrue' = lookupCodeBlock blocks errors btrue
                     let! bfalse' = lookupCodeBlock blocks errors bfalse
                     return instr(xreg', yreg', btrue', bfalse')
-                }
+                })
             |> addInstructionParser name
 
         branchComparisonInstruction "br.eq" InstructionSet.Br_eq
