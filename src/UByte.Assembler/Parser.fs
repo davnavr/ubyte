@@ -86,8 +86,8 @@ let nsymbol c: Parser<Symbol, _> =
 
 let symbol: Parser<Symbol, _> = nsymbol '@'
 
-let optsymbol: Parser<Symbol voption, _> = choice [
-    symbol |>> ValueSome
+let optsymbol c: Parser<Symbol voption, _> = choice [
+    nsymbol c |>> ValueSome
     skipChar '_' >>% ValueNone
 ]
 
@@ -554,8 +554,8 @@ let code: Parser<ParsedCode, _> =
         pipe2 (nsymbol '$') instr (fun name instrs -> { ParsedBlock.Symbol = name; Instructions = instrs })
 
     pipe3
-        (manyLocalRegisters "arguments" optsymbol)
-        (manyLocalRegisters "locals" symbol)
+        (manyLocalRegisters "arguments" (optsymbol '$'))
+        (manyLocalRegisters "locals" (nsymbol '$'))
         (many1 cblock)
         (fun arguments locals blocks -> { ParsedCode.Locals = locals; Arguments = arguments; Blocks = blocks })
     |> block
