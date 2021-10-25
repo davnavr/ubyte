@@ -10,6 +10,25 @@ open UByte.Format.Model
 
 let inline isFlagSet flag value = value &&& flag = flag
 
+let primitiveTypeSize ptype =
+    match ptype with
+    | PrimitiveType.Bool
+    | PrimitiveType.U8
+    | PrimitiveType.S8 -> 1
+    | PrimitiveType.U16
+    | PrimitiveType.S16
+    | PrimitiveType.Char16 -> 2
+    | PrimitiveType.U32
+    | PrimitiveType.S32
+    | PrimitiveType.F32
+    | PrimitiveType.Char32 -> 4
+    | PrimitiveType.U64
+    | PrimitiveType.S64
+    | PrimitiveType.F64 -> 8
+    | PrimitiveType.UNative
+    | PrimitiveType.SNative -> sizeof<unativeint>
+    | PrimitiveType.Unit -> 0
+
 [<Struct>]
 type OffsetArray<'T> =
     val Start: int32
@@ -89,17 +108,19 @@ type RuntimeRegister =
         | atype -> string atype
 
 type RuntimeRegister with
+    [<Obsolete>]
     static member Raw(size, vtype) =
         { RegisterValue = RuntimeStruct.Raw size
           RegisterType = AnyType.ValueType vtype }
 
+    [<Obsolete>]
     static member Object rtype =
         { RegisterValue = RuntimeStruct.Object()
           RegisterType = AnyType.ReferenceType rtype }
 
-[<AutoOpen>]
+[<RequireQualifiedAccess>]
 module private RuntimeRegister =
-    let getPrimitiveType register =
+    let primitiveType register =
         match register.RegisterType with
         | AnyType.ValueType(ValueType.Primitive prim) -> prim
         | _ -> invalidArg (nameof register) "Cannot retrieve numeric value from a register not containing a primitive type"
@@ -127,19 +148,18 @@ type RuntimeStackFrame
     (
         prev: RuntimeStackFrame voption,
         args: ImmutableArray<RuntimeRegister>,
-        locals: ImmutableArray<RuntimeRegister>,
         returns: ImmutableArray<RuntimeRegister>,
-        instructions: ImmutableArray<InstructionSet.Instruction>,
-        method: RuntimeMethod // TODO: Should be Choice<RuntimeMethod, RuntimeTypeInitializer>.
+        blocks: ImmutableArray<CodeBlock>,
+        method: RuntimeMethod
     )
     =
-    let mutable iindex = 0
+    let mutable bindex, iindex = 0, 0
 
     member _.ArgumentRegisters = args
     member _.InstructionIndex with get() = iindex and set i = iindex <- i
-    member _.LocalRegisters = locals
+    member _.BlockIndex with get() = bindex and set i = bindex <- i
     member _.ReturnRegisters = returns
-    member _.Instructions = instructions
+    member _.Code = blocks
     member _.CurrentMethod = method
     member _.Previous = prev
 
@@ -149,15 +169,11 @@ type RuntimeStackFrame
         while current.IsSome do
             let current' = current.Value
             Printf.bprintf trace "  at %O" current'.CurrentMethod
-            if not current'.Instructions.IsDefaultOrEmpty then
-                Printf.bprintf trace " offset 0x%04X" current'.InstructionIndex
+            if not current'.CurrentMethod.IsExternal then
+                Printf.bprintf trace "block %i instruction 0x%04X" current'.BlockIndex current'.InstructionIndex
             current <- current'.Previous
             if current.IsSome then trace.Append Environment.NewLine |> ignore
         trace.ToString()
-
-    member this.RegisterAt (Index i: RegisterIndex) =
-        let i' = Checked.int32 i
-        if i' >= args.Length then this.LocalRegisters.[i' - args.Length] else args.[i']
 
 type RuntimeException =
     inherit Exception
@@ -247,7 +263,7 @@ module Interpreter =
     module private NumberValue =
         let inline private number register u8 s8 u16 s16 u32 s32 u64 s64 f32 f64 unative snative =
             let value = &register.RegisterValue
-            match getPrimitiveType register with
+            match RuntimeRegister.primitiveType register with
             | PrimitiveType.Bool
             | PrimitiveType.U8 -> value.ReadRaw<uint8> 0 |> u8
             | PrimitiveType.S8 -> value.ReadRaw<int8> 0 |> s8
@@ -314,85 +330,107 @@ module Interpreter =
     /// Contains functions for performing arithmetic on the values stored in registers.
     [<RequireQualifiedAccess>]
     module private Arithmetic =
+        let private noUnitType() = raise(InvalidOperationException "Cannot use Unit type in an arithmetic operation")
+
         // Performs an operation on two integers and stores a result value, with no overflow checks.
-        let inline private binop opu8 ops8 opu16 ops16 opu32 ops32 opu64 ops64 opunative opsnative opf32 opf64 xreg yreg rreg =
-            let value = &rreg.RegisterValue
-            match getPrimitiveType rreg with
+        let inline private binop opu8 ops8 opu16 ops16 opu32 ops32 opu64 ops64 opunative opsnative opf32 opf64 vtype xreg yreg (destination: inref<RuntimeStruct>) =
+            match vtype with
             | PrimitiveType.U8
-            | PrimitiveType.Bool -> value.WriteRaw<uint8>(0, opu8 (NumberValue.u8 xreg) (NumberValue.u8 yreg))
-            | PrimitiveType.S8 -> value.WriteRaw<int8>(0, ops8 (NumberValue.s8 xreg) (NumberValue.s8 yreg))
+            | PrimitiveType.Bool -> destination.WriteRaw<uint8>(0, opu8 (NumberValue.u8 xreg) (NumberValue.u8 yreg))
+            | PrimitiveType.S8 -> destination.WriteRaw<int8>(0, ops8 (NumberValue.s8 xreg) (NumberValue.s8 yreg))
             | PrimitiveType.U16
-            | PrimitiveType.Char16 -> value.WriteRaw<uint16>(0, opu16 (NumberValue.u16 xreg) (NumberValue.u16 yreg))
-            | PrimitiveType.S16 -> value.WriteRaw<int16>(0, ops16 (NumberValue.s16 xreg) (NumberValue.s16 yreg))
+            | PrimitiveType.Char16 -> destination.WriteRaw<uint16>(0, opu16 (NumberValue.u16 xreg) (NumberValue.u16 yreg))
+            | PrimitiveType.S16 -> destination.WriteRaw<int16>(0, ops16 (NumberValue.s16 xreg) (NumberValue.s16 yreg))
             | PrimitiveType.U32
-            | PrimitiveType.Char32 -> value.WriteRaw<uint32>(0, opu32 (NumberValue.u32 xreg) (NumberValue.u32 yreg))
-            | PrimitiveType.S32 -> value.WriteRaw<int32>(0, ops32 (NumberValue.s32 xreg) (NumberValue.s32 yreg))
-            | PrimitiveType.U64 -> value.WriteRaw<uint64>(0, opu64 (NumberValue.u64 xreg) (NumberValue.u64 yreg))
-            | PrimitiveType.S64 -> value.WriteRaw<int64>(0, ops64 (NumberValue.s64 xreg) (NumberValue.s64 yreg))
+            | PrimitiveType.Char32 -> destination.WriteRaw<uint32>(0, opu32 (NumberValue.u32 xreg) (NumberValue.u32 yreg))
+            | PrimitiveType.S32 -> destination.WriteRaw<int32>(0, ops32 (NumberValue.s32 xreg) (NumberValue.s32 yreg))
+            | PrimitiveType.U64 -> destination.WriteRaw<uint64>(0, opu64 (NumberValue.u64 xreg) (NumberValue.u64 yreg))
+            | PrimitiveType.S64 -> destination.WriteRaw<int64>(0, ops64 (NumberValue.s64 xreg) (NumberValue.s64 yreg))
             | PrimitiveType.UNative ->
-                value.WriteRaw<unativeint>(0, opunative (NumberValue.unative xreg) (NumberValue.unative yreg))
+                destination.WriteRaw<unativeint>(0, opunative (NumberValue.unative xreg) (NumberValue.unative yreg))
             | PrimitiveType.SNative ->
-                value.WriteRaw<nativeint>(0, opsnative (NumberValue.snative xreg) (NumberValue.snative yreg))
-            | PrimitiveType.F32 -> value.WriteRaw<single>(0, opf32 (NumberValue.f32 xreg) (NumberValue.f32 yreg))
-            | PrimitiveType.F64 -> value.WriteRaw<double>(0, opf64 (NumberValue.f64 xreg) (NumberValue.f64 yreg))
-            | PrimitiveType.Unit -> ()
+                destination.WriteRaw<nativeint>(0, opsnative (NumberValue.snative xreg) (NumberValue.snative yreg))
+            | PrimitiveType.F32 -> destination.WriteRaw<single>(0, opf32 (NumberValue.f32 xreg) (NumberValue.f32 yreg))
+            | PrimitiveType.F64 -> destination.WriteRaw<double>(0, opf64 (NumberValue.f64 xreg) (NumberValue.f64 yreg))
+            | PrimitiveType.Unit -> noUnitType()
 
-        let inline private unop opu8 ops8 opu16 ops16 opu32 ops32 opu64 ops64 opunative opsnative opf32 opf64 register =
-            let value = &register.RegisterValue
-            match getPrimitiveType register with
-            | PrimitiveType.S8 -> value.WriteRaw<int8>(0, ops8(value.ReadRaw<int8> 0))
+        let inline private unop opu8 ops8 opu16 ops16 opu32 ops32 opu64 ops64 opunative opsnative opf32 opf64 vtype (destination: inref<RuntimeStruct>) =
+            match vtype with
+            | PrimitiveType.S8 -> destination.WriteRaw<int8>(0, ops8(destination.ReadRaw<int8> 0))
             | PrimitiveType.U8
-            | PrimitiveType.Bool -> value.WriteRaw<uint8>(0, opu8(value.ReadRaw<uint8> 0))
-            | PrimitiveType.S16 -> value.WriteRaw<int16>(0, ops16(value.ReadRaw<int16> 0))
+            | PrimitiveType.Bool -> destination.WriteRaw<uint8>(0, opu8(destination.ReadRaw<uint8> 0))
+            | PrimitiveType.S16 -> destination.WriteRaw<int16>(0, ops16(destination.ReadRaw<int16> 0))
             | PrimitiveType.U16
-            | PrimitiveType.Char16 -> value.WriteRaw<uint16>(0, opu16(value.ReadRaw<uint16> 0))
-            | PrimitiveType.S32 -> value.WriteRaw<int32>(0, ops32(value.ReadRaw<int32> 0))
+            | PrimitiveType.Char16 -> destination.WriteRaw<uint16>(0, opu16(destination.ReadRaw<uint16> 0))
+            | PrimitiveType.S32 -> destination.WriteRaw<int32>(0, ops32(destination.ReadRaw<int32> 0))
             | PrimitiveType.U32
-            | PrimitiveType.Char32 -> value.WriteRaw<uint32>(0, opu32(value.ReadRaw<uint32> 0))
-            | PrimitiveType.S64 -> value.WriteRaw<int64>(0, ops64(value.ReadRaw<int64> 0))
-            | PrimitiveType.U64 -> value.WriteRaw<uint64>(0, opu64(value.ReadRaw<uint64> 0))
-            | PrimitiveType.SNative -> value.WriteRaw<nativeint>(0, opsnative(value.ReadRaw<nativeint> 0))
-            | PrimitiveType.UNative -> value.WriteRaw<unativeint>(0, opunative(value.ReadRaw<unativeint> 0))
-            | PrimitiveType.F32 -> value.WriteRaw<single>(0, opf32(value.ReadRaw<single> 0))
-            | PrimitiveType.F64 -> value.WriteRaw<double>(0, opf64(value.ReadRaw<double> 0))
-            | PrimitiveType.Unit -> ()
+            | PrimitiveType.Char32 -> destination.WriteRaw<uint32>(0, opu32(destination.ReadRaw<uint32> 0))
+            | PrimitiveType.S64 -> destination.WriteRaw<int64>(0, ops64(destination.ReadRaw<int64> 0))
+            | PrimitiveType.U64 -> destination.WriteRaw<uint64>(0, opu64(destination.ReadRaw<uint64> 0))
+            | PrimitiveType.SNative -> destination.WriteRaw<nativeint>(0, opsnative(destination.ReadRaw<nativeint> 0))
+            | PrimitiveType.UNative -> destination.WriteRaw<unativeint>(0, opunative(destination.ReadRaw<unativeint> 0))
+            | PrimitiveType.F32 -> destination.WriteRaw<single>(0, opf32(destination.ReadRaw<single> 0))
+            | PrimitiveType.F64 -> destination.WriteRaw<double>(0, opf64(destination.ReadRaw<double> 0))
+            | PrimitiveType.Unit -> noUnitType()
 
-        let add xreg yreg rreg = binop (+) (+) (+) (+) (+) (+) (+) (+) (+) (+) (+) (+) xreg yreg rreg
-        let sub xreg yreg rreg = binop (-) (-) (-) (-) (-) (-) (-) (-) (-) (-) (-) (-) xreg yreg rreg
-        let mul xreg yreg rreg = binop (*) (*) (*) (*) (*) (*) (*) (*) (*) (*) (*) (*) xreg yreg rreg
+        let add vtype xreg yreg (destination: inref<_>) =
+            binop (+) (+) (+) (+) (+) (+) (+) (+) (+) (+) (+) (+) vtype xreg yreg &destination
+
+        let sub vtype xreg yreg (destination: inref<_>) =
+            binop (-) (-) (-) (-) (-) (-) (-) (-) (-) (-) (-) (-) vtype xreg yreg &destination
+
+        let mul vtype xreg yreg (destination: inref<_>) =
+            binop (*) (*) (*) (*) (*) (*) (*) (*) (*) (*) (*) (*) vtype xreg yreg &destination
 
         let private bitf32 operation = fun (Reinterpret.F32 x) (Reinterpret.F32 y) -> Reinterpret.(|U32|) (operation x y)
         let private bitf64 operation = fun (Reinterpret.F64 x) (Reinterpret.F64 y) -> Reinterpret.(|U64|) (operation x y)
+
         // TODO: Fix, bitwise operations should require that floats be reinterpreted as the corresponding integer types.
-        let ``and`` xreg yreg rreg =
-            binop (&&&) (&&&) (&&&) (&&&) (&&&) (&&&) (&&&) (&&&) (&&&) (&&&) (bitf32 (&&&)) (bitf64 (&&&)) xreg yreg rreg
-        let ``or`` xreg yreg rreg =
-            binop (|||) (|||) (|||) (|||) (|||) (|||) (|||) (|||) (|||) (|||) (bitf32 (|||)) (bitf64 (|||)) xreg yreg rreg
+        let ``and`` vtype xreg yreg (destination: inref<_>) =
+            binop (&&&) (&&&) (&&&) (&&&) (&&&) (&&&) (&&&) (&&&) (&&&) (&&&) (bitf32 (&&&)) (bitf64 (&&&)) vtype xreg yreg &destination
+
+        let ``or`` vtype xreg yreg (destination: inref<_>) =
+            binop (|||) (|||) (|||) (|||) (|||) (|||) (|||) (|||) (|||) (|||) (bitf32 (|||)) (bitf64 (|||)) vtype xreg yreg &destination
+
         //let ``not`` xreg yreg rreg = unop (~~~) (~~~) (~~~) (~~~) (~~~) (~~~) (~~~) (~~~) (~~~) (~~~) xreg yreg rreg
-        let xor xreg yreg rreg =
-            binop (^^^) (^^^) (^^^) (^^^) (^^^) (^^^) (^^^) (^^^) (^^^) (^^^) (bitf32 (^^^)) (bitf64 (^^^)) xreg yreg rreg
+
+        let xor vtype xreg yreg (destination: inref<_>) =
+            binop (^^^) (^^^) (^^^) (^^^) (^^^) (^^^) (^^^) (^^^) (^^^) (^^^) (bitf32 (^^^)) (bitf64 (^^^)) vtype xreg yreg &destination
 
         let inline private oneop (op: _ -> _ -> _) = op LanguagePrimitives.GenericOne
+
         let inline private increment value = oneop (+) value
-        let incr reg =
-            unop increment increment increment increment increment increment increment increment increment increment increment increment reg
+
+        let incr vtype (destination: inref<_>) =
+            unop increment increment increment increment increment increment increment increment increment increment increment increment vtype &destination
+
         let inline private decrement value = oneop (-) value
-        let decr reg =
-            unop decrement decrement decrement decrement decrement decrement decrement decrement decrement decrement decrement decrement reg
+
+        let decr vtype (destination: inref<_>) =
+            unop decrement decrement decrement decrement decrement decrement decrement decrement decrement decrement decrement decrement vtype &destination
 
         [<RequireQualifiedAccess>]
         module Checked =
             open Microsoft.FSharp.Core.Operators.Checked
 
-            let add xreg yreg rreg = binop (+) (+) (+) (+) (+) (+) (+) (+) (+) (+) (+) (+) xreg yreg rreg
-            let sub xreg yreg rreg = binop (-) (-) (-) (-) (-) (-) (-) (-) (-) (-) (-) (-) xreg yreg rreg
-            let mul xreg yreg rreg = binop (*) (*) (*) (*) (*) (*) (*) (*) (*) (*) (*) (*) xreg yreg rreg
+            let add vtype xreg yreg (destination: inref<_>) =
+                binop (+) (+) (+) (+) (+) (+) (+) (+) (+) (+) (+) (+) vtype xreg yreg &destination
+
+            let sub vtype xreg yreg (destination: inref<_>) =
+                binop (-) (-) (-) (-) (-) (-) (-) (-) (-) (-) (-) (-) vtype xreg yreg &destination
+
+            let mul vtype xreg yreg (destination: inref<_>) =
+                binop (*) (*) (*) (*) (*) (*) (*) (*) (*) (*) (*) (*) vtype xreg yreg &destination
+
             let inline private increment value = oneop (+) value
-            let incr reg =
-                unop increment increment increment increment increment increment increment increment increment increment increment increment reg
+
+            let incr vtype (destination: inref<_>) =
+                unop increment increment increment increment increment increment increment increment increment increment increment increment vtype &destination
+
             let inline private decrement value = oneop (-) value
-            let decr reg =
-                unop decrement decrement decrement decrement decrement decrement decrement decrement decrement decrement decrement decrement reg
+
+            let decr vtype (destination: inref<_>) =
+                unop decrement decrement decrement decrement decrement decrement decrement decrement decrement decrement decrement decrement vtype &destination
 
     /// Contains functions for comparing the values stored in registers.
     [<RequireQualifiedAccess>]
@@ -515,41 +553,103 @@ module Interpreter =
         let isLessOrEqual xreg yreg = comparison (<=) (<=) (<=) (<=) (<=) (<=) (<=) (<=) (<=) (<=) (<=) (<=) refeq xreg yreg
         let isGreaterOrEqual xreg yreg = comparison (>=) (>=) (>=) (>=) (>=) (<=) (<=) (<=) (<=) (<=) (<=) (<=) refeq xreg yreg
 
-    let private (|Registers|) (frame: RuntimeStackFrame) (registers: ImmutableArray<RegisterIndex>) =
-        let mutable registers' = Array.zeroCreate registers.Length
-        for i = 0 to registers.Length - 1 do registers'.[i] <- frame.RegisterAt registers.[i]
-        Unsafe.As<RuntimeRegister[], ImmutableArray<RuntimeRegister>> &registers'
+    let private (|ValidArithmeticFlags|) (flags: ArithmeticFlags) =
+        if flags &&& (~~~ArithmeticFlags.ValidMask) <> ArithmeticFlags.None then
+            failwithf "TODO: Bad arithmetic flags %A" flags
+        flags
+
+    [<Sealed>]
+    type TemporaryRegisterPool () =
+        let mutable data, dcount = Array.zeroCreate<byte> 64, 0
+        let mutable references, rcount = Array.zeroCreate<RuntimeObject> 4, 0
+        // TODO: Have pool for RuntimeRegister instances to avoid creating new ones all the time.
+        let registers = ImmutableArray.CreateBuilder()
+
+        static member private CreateOrReuseArray(size, array: byref<'T[]>, count: byref<_>) =
+            let count' = Checked.(+) count size
+            if count + size <= array.Length then
+                let start = count
+                count <- count'
+                OffsetArray(start, array)
+            else
+                count <- 0
+                array <- Array.zeroCreate(max count' (array.Length * 2))
+                OffsetArray(Array.zeroCreate size)
+
+        member _.Count = registers.Count
+
+        member _.Item with get (Index index: TemporaryIndex) = registers.[Checked.int32 index]
+
+        member _.Allocate(rtype, dsize, rlength) =
+            let register =
+                { RuntimeRegister.RegisterType = rtype
+                  // TODO: Fix, if data or references array is reallocated then bad things
+                  RegisterValue =
+                    { RuntimeStruct.RawData = TemporaryRegisterPool.CreateOrReuseArray(dsize, &data, &dcount)
+                      References = TemporaryRegisterPool.CreateOrReuseArray(rlength, &references, &rcount) } }
+            registers.Add register
+            register
+
+        member _.Clear() =
+            registers.Clear()
+            Span(data).Clear()
+            Span(references).Clear()
+            dcount <- 0
+            rcount <- 0
 
     let interpret returns arguments (entrypoint: RuntimeMethod) =
         let frame: RuntimeStackFrame voption ref = ref ValueNone
+        let temporaries = TemporaryRegisterPool()
         let mutable runExternalCode: (RuntimeStackFrame voption ref -> unit) voption = ValueNone
-        let inline throwRuntimeExn message = raise(RuntimeException(frame.contents, message))
+        let mutable ex = ValueNone
 
+#if DEBUG
+        let invoke returns (arguments: ImmutableArray<_>) (method: RuntimeMethod) =
+#else
         let inline invoke returns (arguments: ImmutableArray<_>) (method: RuntimeMethod) =
+#endif
             method.SetupStackFrame(returns, frame, &runExternalCode)
-            let arguments' = frame.contents.Value.ArgumentRegisters
+            let arguments' = frame.Value.Value.ArgumentRegisters
             if arguments.Length <> arguments'.Length then
                 failwithf "TODO: Error for argument array lengths do not match, expected %i got %i" arguments'.Length arguments.Length
+            temporaries.Clear()
             copyRegisterValues arguments arguments'
 
         invoke returns arguments entrypoint
 
         let inline cont() =
-            match frame.contents with
-            | ValueSome frame'-> frame'.InstructionIndex < frame'.Instructions.Length
+            match frame.Value with
+            | ValueSome frame'-> frame'.BlockIndex < frame'.Code.Length
             | ValueNone -> false
 
-        while cont() do
-            let frame' = frame.contents.Value
+        let lookupRegisterAt (RegisterIndex.Index index) =
+            let tcount = uint32 temporaries.Count
+            if index < tcount then
+                temporaries.[Index index]
+            else
+                let frame' = frame.Value.Value
+                let index' = index + tcount
+                let acount = uint32 frame'.ArgumentRegisters.Length
+                if index' < acount then
+                    frame'.ArgumentRegisters.[Checked.int32 index]
+                else
+                    failwith "TODO: Lookup local registers"
 
-            let inline (|Register|) rindex = frame'.RegisterAt rindex
+        while cont() do
+            let frame' = frame.Value.Value
+
+            let inline (|Register|) rindex = lookupRegisterAt rindex
             let inline (|Method|) mindex: RuntimeMethod = frame'.CurrentMethod.Module.InitializeMethod mindex
             let inline (|Field|) findex: RuntimeField = frame'.CurrentMethod.Module.InitializeField findex
             let inline (|TypeSignature|) tindex: AnyType = frame'.CurrentMethod.Module.TypeSignatureAt tindex
             let inline (|Data|) dindex: ImmutableArray<_> = frame'.CurrentMethod.Module.DataAt dindex
-            let inline (|BranchTarget|) (target: InstructionOffset) = Checked.(-) (Checked.(+) frame'.InstructionIndex target) 1
+            let inline (|BranchTarget|) (target: BlockOffset) = Checked.(+) frame'.BlockIndex target
 
+#if DEBUG
             let inline fieldAccessInstruction field object access =
+#else
+            let fieldAccessInstruction field object access =
+#endif
                 if object.RegisterValue.References.Length = 0 then
                     failwith "TODO: How to handle field access for struct?"
                 match object.RegisterValue.ReadRef 0 with
@@ -563,7 +663,11 @@ module Interpreter =
                 | RuntimeObject.Array _ ->
                     failwith "TODO: Error when attempted to access object field using reference to array"
 
+#if DEBUG
+            let arrayAccessInstruction array index access =
+#else
             let inline arrayAccessInstruction array index access =
+#endif
                 let index' = NumberValue.s32 index
                 match array.RegisterValue.ReadRef 0 with
                 | RuntimeObject.Array array' -> access array' index'
@@ -572,120 +676,37 @@ module Interpreter =
                 | RuntimeObject.Null ->
                     raise(NullReferenceException "Cannot access an array element with a null array reference")
 
-            (*
+            let inline allocateRegisterPrimitive rtype =
+                temporaries.Allocate(AnyType.ValueType(ValueType.Primitive rtype), primitiveTypeSize rtype, 0)
+
             match ex with
             | ValueSome e ->
-                failwith "TODO: Lookup exception handlers"
+                raise(System.NotImplementedException("TODO: Implement exception handling: " + Environment.NewLine + frame'.StackTrace, e))
             | ValueNone -> ()
-            *)
 
             try
-                match frame'.Instructions.[frame'.InstructionIndex] with
-                | Reg_copy(source, dest) ->
-                    copyRuntimeValue &(frame'.RegisterAt source).RegisterValue &(frame'.RegisterAt dest).RegisterValue
-                | Add(Register x, Register y, Register r) -> Arithmetic.add x y r
-                | Sub(Register x, Register y, Register r) -> Arithmetic.sub x y r
-                | Mul(Register x, Register y, Register r) -> Arithmetic.mul x y r
-                | And(Register x, Register y, Register r) -> Arithmetic.``and`` x y r
-                | Or(Register x, Register y, Register r) -> Arithmetic.``or`` x y r
-                | Xor(Register x, Register y, Register r) -> Arithmetic.xor x y r
-                | Incr(Register register) -> Arithmetic.incr register
-                | Decr(Register register) -> Arithmetic.decr register
-                | Add_ovf(Register x, Register y, Register r) -> Arithmetic.Checked.add x y r
-                | Sub_ovf(Register x, Register y, Register r) -> Arithmetic.Checked.sub x y r
-                | Mul_ovf(Register x, Register y, Register r) -> Arithmetic.Checked.mul x y r
-                | Incr_ovf(Register register) -> Arithmetic.Checked.incr register
-                | Decr_ovf(Register register) -> Arithmetic.Checked.decr register
-                | Const_i32(value, Register dest) -> dest.RegisterValue.WriteRaw(0, value)
-                | Const_true(Register dest) -> dest.RegisterValue.WriteRaw(0, true)
-                | Const_false(Register dest)
-                | Const_zero(Register dest) -> dest.RegisterValue.WriteRaw(0, 0uy)
-                | Ret(Registers frame' registers) ->
-                    copyRegisterValues registers frame'.ReturnRegisters
-                    frame.Value <- frame'.Previous
-                | Call(Method method, Registers frame' aregs, Registers frame' rregs) ->
-                    invoke rregs aregs method
-                | Call_virt(Method method, Registers frame' aregs, Registers frame' rregs) ->
-                    let inline invalidVirtualMethod reason =
-                        "Cannot call virtual method " +
-                        reason +
-                        " , the type containing the method to call cannot be deduced"
-                        |> throwRuntimeExn
-                    if aregs.IsDefaultOrEmpty then
-                        invalidVirtualMethod "with no arguments"
-                    match aregs.[0].RegisterValue.ReadRef 0 with
-                    | RuntimeObject.Null -> invalidVirtualMethod "with null object reference"
-                    | RuntimeObject.TypeInstance(otype, _) -> invoke rregs aregs otype.VTable.[method]
-                    | RuntimeObject.Array _ -> invalidVirtualMethod "with an array object reference"
-                | Call_ret(Method method, Registers frame' aregs, _) -> // TODO: Does call.ret need to specify return values?
-                    frame.Value <- frame'.Previous
-                    invoke frame'.ReturnRegisters aregs method
-                | Br(BranchTarget target) -> frame'.InstructionIndex <- target
-                | Br_eq(Register xreg, Register yreg, BranchTarget target) ->
-                    if Compare.isEqual xreg yreg then frame'.InstructionIndex <- target
-                | Br_ne(Register xreg, Register yreg, BranchTarget target) ->
-                    if Compare.isNotEqual xreg yreg then frame'.InstructionIndex <- target
-                | Br_lt(Register xreg, Register yreg, BranchTarget target) ->
-                    if Compare.isLessThan xreg yreg then frame'.InstructionIndex <- target
-                | Br_gt(Register xreg, Register yreg, BranchTarget target) ->
-                    if Compare.isGreaterThan xreg yreg then frame'.InstructionIndex <- target
-                | Br_le(Register xreg, Register yreg, BranchTarget target) ->
-                    if Compare.isLessOrEqual xreg yreg then frame'.InstructionIndex <- target
-                | Br_ge(Register xreg, Register yreg, BranchTarget target) ->
-                    if Compare.isGreaterOrEqual xreg yreg then frame'.InstructionIndex <- target
-                | Br_true(Register register, BranchTarget target) ->
-                    if Compare.isTrueValue register then frame'.InstructionIndex <- target
-                | Br_false(Register register, BranchTarget target) ->
-                    if Compare.isFalseValue register then frame'.InstructionIndex <- target
-                | Obj_null(Register destination) -> destination.RegisterValue.WriteRef(0, RuntimeObject.Null)
-                | Obj_new(Method constructor, Registers frame' arguments, Register destination) ->
-                    let o = RuntimeObject.TypeInstance(constructor.DeclaringType, constructor.DeclaringType.InitializeObjectFields())
-                    destination.RegisterValue.WriteRef(0, o)
-                    invoke ImmutableArray.Empty (arguments.Insert(0, destination)) constructor
-                | Obj_ldfd(Field field, Register object, Register destination) ->
-                    field.CheckMutate frame'
-                    fieldAccessInstruction field object <| fun value -> copyRuntimeValue &value &destination.RegisterValue
-                | Obj_stfd(Field field, Register object, Register source) ->
-                    fieldAccessInstruction field object <| fun value -> copyRuntimeValue &source.RegisterValue &value
-                | Obj_arr_new(TypeSignature etype, Register length, Register destination) ->
-                    let struct(dsize, rlen) = frame'.CurrentMethod.Module.CalculateTypeSize etype
-                    let array = RuntimeArray(dsize, rlen, NumberValue.s32 length)
-                    destination.RegisterValue.WriteRef(0, RuntimeObject.Array array)
-                | Obj_arr_const(TypeSignature etype, Data data, Register destination) ->
-                    let struct(dsize, rlen) = frame'.CurrentMethod.Module.CalculateTypeSize etype
-                    if rlen > 0 then invalidOp("Cannot create constant array containing elements of type " + etype.ToString())
-                    let array = RuntimeArray(dsize, rlen, data.Length / dsize)
-                    data.AsSpan().Slice(0, array.Data.Length).CopyTo(Span array.Data)
-                    destination.RegisterValue.WriteRef(0, RuntimeObject.Array array)
-                | Obj_arr_len(Register array, Register length) ->
-                    match array.RegisterValue.ReadRef 0 with
-                    | RuntimeObject.Array array' ->
-                        length.RegisterValue.WriteRaw<int32>(0, array'.Length)
-                    | RuntimeObject.Null ->
-                        raise(NullReferenceException "Cannot access array length with a null array reference")
-                    | RuntimeObject.TypeInstance(otype, _) ->
-                        invalidOp("Cannot access array length with an object reference of type " + otype.ToString())
-                | Obj_arr_get(Register array, Register index, Register destination) ->
-                    arrayAccessInstruction array index <| fun array i ->
-                        let value = array.[i]
-                        copyRuntimeValue &value &destination.RegisterValue
-                | Obj_arr_set(Register array, Register index, Register source) ->
-                    arrayAccessInstruction array index <| fun array i ->
-                        array.[i] <- source.RegisterValue
+                match frame'.Code.[frame'.BlockIndex].Instructions.[frame'.InstructionIndex] with
+                | Add(ValidArithmeticFlags flags, vtype, Register x, Register y) ->
+                    let destination = allocateRegisterPrimitive vtype
+                    if isFlagSet ArithmeticFlags.ThrowOnOverflow flags
+                    then Arithmetic.Checked.add vtype x y &destination.RegisterValue
+                    else Arithmetic.add vtype x y &destination.RegisterValue
                 | Nop -> ()
-                | bad -> failwithf "TODO: Unsupported instruction %A" bad
 
                 match runExternalCode with
                 | ValueNone -> ()
                 | ValueSome run ->
                     run frame
                     runExternalCode <- ValueNone
-
-                frame'.InstructionIndex <- Checked.(+) frame'.InstructionIndex 1
             with
-            | e ->
-                //ex <- ValueSome e
-                raise(System.NotImplementedException("TODO: Implement exception handling: " + Environment.NewLine + frame'.StackTrace, e))
+            | e -> ex <- ValueSome e
+
+            frame'.InstructionIndex <- Checked.(+) frame'.InstructionIndex 1
+            if frame'.InstructionIndex = frame'.Code.[frame'.BlockIndex].Instructions.Length then
+                frame'.InstructionIndex <- 0
+                frame'.BlockIndex <- Checked.(+) frame'.BlockIndex 1
+                // TODO: Assign local registers
+                temporaries.Clear()
 
         match frame.contents with
         | ValueNone -> ()
@@ -748,6 +769,10 @@ type RuntimeMethod (rmodule: RuntimeModule, index: MethodIndex, method: Method) 
     member _.IsInstance = isFlagSet MethodFlags.Instance flags
     member _.IsConstructor = isFlagSet MethodFlags.ConstructorMask flags
     member _.IsVirtual = isFlagSet MethodFlags.Virtual flags
+    member _.IsExternal =
+        match method.Body with
+        | MethodBody.External _ -> true
+        | _ -> false
 
     member private _.CreateRegister rtype =
         match rmodule.TypeSignatureAt rtype with
@@ -787,17 +812,8 @@ type RuntimeMethod (rmodule: RuntimeModule, index: MethodIndex, method: Method) 
         match body with
         | MethodBody.Defined codei ->
             let code = rmodule.CodeAt codei
-
             let args = this.CreateArgumentRegisters()
-
-            let registers =
-                let registers = ImmutableArray.CreateBuilder()
-                for struct(count, rtype) in code.RegisterTypes do
-                    let create = this.CreateRegister rtype.RegisterType
-                    for _ = 1 to Checked.int32 count do create() |> registers.Add
-                registers.ToImmutable()
-
-            frame.contents <- ValueSome(RuntimeStackFrame(frame.contents, args, registers, returns, code.Instructions, this))
+            frame.contents <- ValueSome(RuntimeStackFrame(frame.contents, args, returns, code.Blocks, this))
         | MethodBody.Abstract ->
             if not this.IsVirtual then failwith "TODO: Error for abstract method must be virtual"
 
@@ -811,7 +827,7 @@ type RuntimeMethod (rmodule: RuntimeModule, index: MethodIndex, method: Method) 
             let library' = this.Module.IdentifierAt library
             let efunction' = this.Module.IdentifierAt efunction
             let args = this.CreateArgumentRegisters()
-            let frame' = RuntimeStackFrame(frame.contents, args, ImmutableArray.Empty, returns, ImmutableArray.Empty, this)
+            let frame' = RuntimeStackFrame(frame.contents, args, returns, ImmutableArray.Empty, this)
             frame.contents <- ValueSome frame'
             runExternalCode <- ValueSome <| fun frame'' ->
                 ExternalCode.call library' efunction' frame''.contents.Value
@@ -1101,7 +1117,7 @@ type RuntimeModule (m: Module, moduleImportResolver: ModuleIdentifier -> Runtime
 
     member _.DataAt(Index i: DataIndex) = m.Data.[Checked.int32 i]
 
-    member _.CodeAt(Index i: CodeIndex) = m.Code.[Checked.int32 i]
+    member _.CodeAt(Index i: CodeIndex): Code = m.Code.[Checked.int32 i]
 
     member _.InitializeMethod i = definedMethodLookup i
 
@@ -1146,27 +1162,10 @@ type RuntimeModule (m: Module, moduleImportResolver: ModuleIdentifier -> Runtime
     member _.CalculateTypeSize(t: AnyType): struct(Int32 * int32) =
         match t with
         | ValueType vt ->
-            let rawDataSize =
-                match vt with
-                | ValueType.Primitive PrimitiveType.Bool
-                | ValueType.Primitive PrimitiveType.U8
-                | ValueType.Primitive PrimitiveType.S8 -> 1
-                | ValueType.Primitive PrimitiveType.U16
-                | ValueType.Primitive PrimitiveType.S16
-                | ValueType.Primitive PrimitiveType.Char16 -> 2
-                | ValueType.Primitive PrimitiveType.U32
-                | ValueType.Primitive PrimitiveType.S32
-                | ValueType.Primitive PrimitiveType.F32
-                | ValueType.Primitive PrimitiveType.Char32 -> 4
-                | ValueType.Primitive PrimitiveType.U64
-                | ValueType.Primitive PrimitiveType.S64
-                | ValueType.Primitive PrimitiveType.F64 -> 8
-                | ValueType.Primitive PrimitiveType.UNative
-                | ValueType.Primitive PrimitiveType.SNative
-                | ValueType.UnsafePointer _ -> sizeof<unativeint>
-                | ValueType.Primitive PrimitiveType.Unit -> 0
-                | ValueType.Defined _ -> failwith "TODO: Struct fields are currently not yet supported"
-            struct(rawDataSize, 0)
+            match vt with
+            | ValueType.Primitive prim -> struct(primitiveTypeSize prim, 0)
+            | ValueType.UnsafePointer _ -> struct(sizeof<unativeint>, 0)
+            | ValueType.Defined _ -> failwith "TODO: Struct fields are currently not yet supported"
         | ReferenceType _ ->
             struct(0, 1)
         | SafePointer _ ->

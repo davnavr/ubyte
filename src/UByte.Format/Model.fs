@@ -205,6 +205,7 @@ module InstructionSet =
         | None = 0uy
         | ThrowOnOverflow = 1uy
         | ThrowOnDivideByZero = 1uy
+        | ValidMask = 1uy
 
     [<Flags>]
     type CallFlags =

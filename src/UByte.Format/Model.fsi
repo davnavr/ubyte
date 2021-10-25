@@ -246,6 +246,7 @@ module InstructionSet =
         /// denominator is zero.
         /// </summary>
         | ThrowOnDivideByZero = 1uy
+        | ValidMask = 1uy
 
     [<Flags>]
     type CallFlags =
