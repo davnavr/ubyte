@@ -22,11 +22,11 @@ let comma = skipChar ','
 let sbopen = skipChar '['
 
 let commaSepInsideParens inner =
-    between (whitespace >>. propen .>> whitespace) (prclose .>> whitespace) (sepBy1 (whitespace >>. inner) comma)
+    between (whitespace >>. propen .>> whitespace) (prclose .>> whitespace) (sepBy (whitespace >>. inner) comma)
 
 let separator = choice [
     notEmpty whitespace
-    followedBy (choice [ bropen; brclose; propen; prclose; comma; sbopen ])
+    followedByL (choice [ bropen; brclose; propen; prclose; comma; sbopen ]) "opening or closing"
 ]
 
 let keyword word = whitespace >>. skipString word .>> separator
@@ -193,6 +193,8 @@ let methodsig: Parser<Symbol list * Symbol list, _> =
 let attributes (flags: (string * 'Flag) list when 'Flag :> System.Enum): Parser<_, _> =
     List.map (fun (name, flag) -> keyword name >>% flag) flags |> choice
 
+let optattributes (flags: (_ * 'Flag) list): Parser<_, _> = attributes flags <|> preturn Unchecked.defaultof<'Flag>
+
 [<RequireQualifiedAccess>]
 type InvalidInstructionError =
     | UnknownInstruction of Position * string
@@ -239,10 +241,9 @@ let code: Parser<ParsedCode, _> =
 
     let codeRegisterList = commaSepInsideParens localCodeRegister
 
-    let manyCodeRegisters = choice [
-        let equals = skipChar '='
-        codeRegisterList .>> equals
-        localCodeRegister .>> equals |>> List.singleton
+    let manyCodeRegisters eq = choice [
+        codeRegisterList .>> eq
+        localCodeRegister .>> eq |>> List.singleton
         preturn List.empty
     ]
 
@@ -325,8 +326,8 @@ let code: Parser<ParsedCode, _> =
         noOperandInstruction "nop" InstructionSet.Nop
         noOperandInstruction "obj.null" InstructionSet.Obj_null
 
-        let commonArithmeticFlags = attributes [ "throw.ovf", InstructionSet.ArithmeticFlags.ThrowOnOverflow ]
-        let divisionArithmeticFlags = attributes [ "throw.div0", InstructionSet.ArithmeticFlags.ThrowOnDivideByZero ]
+        let commonArithmeticFlags = optattributes [ "throw.ovf", InstructionSet.ArithmeticFlags.ThrowOnOverflow ]
+        let divisionArithmeticFlags = optattributes [ "throw.div0", InstructionSet.ArithmeticFlags.ThrowOnDivideByZero ]
 
         let withRegisterCount name count instr =
             parray count localCodeRegister |>> fun registers rlookup _ errors _ -> voptional {
@@ -444,7 +445,7 @@ let code: Parser<ParsedCode, _> =
         branchComparisonInstruction "br.le" InstructionSet.Br_le
         branchComparisonInstruction "br.ge" InstructionSet.Br_ge
 
-        let callInstructionFlags extra = attributes [
+        let callInstructionFlags extra = optattributes [
             "tail.prohibited", InstructionSet.CallFlags.NoTailCallOptimization
             "tail.required", InstructionSet.CallFlags.RequiresTailCallOptimization
             yield! extra
@@ -501,7 +502,7 @@ let code: Parser<ParsedCode, _> =
         |> addInstructionParser "br"
 
         // TODO: Have choice for parser list in parens or just one register
-        manyCodeRegisters |>> fun registers rlookup _ errors _ -> voptional {
+        manyCodeRegisters (preturn ()) |>> fun registers rlookup _ errors _ -> voptional {
             let! registers' = lookupRegisterList rlookup errors registers
             return InstructionSet.Ret registers'
         }
@@ -534,18 +535,23 @@ let code: Parser<ParsedCode, _> =
             | false, _ -> unknown pos name .>> skipRestOfLine true
 
     let manyLocalRegisters word register = choice [
-        period >>. keyword word >>. commaSepInsideParens register
+        period >>. keyword word |> attempt >>. commaSepInsideParens register
         preturn List.empty
     ]
 
     let cblock =
-        let instr = pipe2 manyCodeRegisters instruction <| fun rregs instr -> struct(rregs, instr)
+        let instr =
+            pipe2
+                (manyCodeRegisters (whitespace >>. skipChar '=' .>> whitespace))
+                instruction
+                (fun rregs instr -> struct(rregs, instr))
+            |> line
+            |> many
+            |> block
 
         period >>.
         keyword "block" >>.
-        pipe2 symbol (instr .>> whitespace |> line |> many |> block) (fun name instrs ->
-            { ParsedBlock.Symbol = name
-              Instructions = instrs })
+        pipe2 (nsymbol '$') instr (fun name instrs -> { ParsedBlock.Symbol = name; Instructions = instrs })
 
     pipe3
         (manyLocalRegisters "arguments" optsymbol)
