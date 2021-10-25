@@ -691,114 +691,161 @@ let assemble declarations = // TODO: Fix, use result so at least one error objec
                     findLookupValue tsignatures (sprintf "A type signature corresponding to the symbol @%O could not be found")
 
                 let resolveArgumentRegisters =
-                    let rec inner index (lookup: Dictionary<Name, RegisterIndex>) registers success =
+                    let rec inner index (lookup: Dictionary<Name, uint32>) registers success =
+                        let index' = Checked.(+) 1u index
                         match registers with
                         | [] when success -> ValueSome lookup
                         | [] -> ValueNone
-                        | struct(pos, name) :: remaining ->
-                            let success' = lookup.TryAdd(name, Index index)
-                            if not success' then addValidationError (duplicateSymbolMessage "An argument register" name) pos
-                            inner (Checked.(+) 1u index) lookup remaining success'
+                        | ValueSome(struct(pos, name)) :: remaining ->
+                            let success' = lookup.TryAdd(name, index)
+                            if not success' then
+                                addValidationError
+                                    (sprintf "An argument register corresponding to the symbol $%O already exists" name)
+                                    pos
+                            inner index' lookup remaining success'
+                        | ValueNone :: remaining ->
+                            inner index' lookup remaining success
 
-                    fun start registers -> inner start (Dictionary()) registers true
+                    fun registers -> inner 0u (Dictionary()) registers true
 
                 let resolveLocalRegisters =
-                    let registers = ImmutableArray.CreateBuilder<struct(_ * RegisterType)>()
-
-                    let countLocalRegisters (lookup: Dictionary<_, _>) names =
-                        let rec inner names count success =
-                            match names with
-                            | [] when success -> ValueSome count
-                            | [] -> ValueNone
-                            | ((_, name): Symbol) :: remaining ->
-                                inner
-                                    remaining
-                                    (Checked.(+) 1u count)
-                                    (success && lookup.TryAdd(name, RegisterIndex.Index(uint32 lookup.Count)))
-                        inner names 0u true
-
-                    let rec inner locals lookup success =
+                    let rec inner locals (lookup: Dictionary<Name, uint32>) success =
                         match locals with
-                        | [] when success -> ValueSome(registers.ToImmutable())
+                        | [] when success -> ValueSome lookup
                         | [] -> ValueNone
-                        | loc :: remaining ->
-                            let result = voptional {
-                                let! ltype = resolveTypeSignature loc.LocalsType
-                                let! count = countLocalRegisters lookup loc.LocalNames
-                                return struct(count, { RegisterType = ltype; RegisterFlags = RegisterFlags.None })
-                            }
-
-                            let success' =
-                                match result with
-                                | ValueSome rt when success ->
-                                    registers.Add rt
-                                    true
-                                | _ ->
-                                    false
-
+                        | struct(pos, name) :: remaining ->
+                            let success' = lookup.TryAdd(name, uint32 lookup.Count)
+                            if not success' then
+                                addValidationError
+                                    (sprintf "A local register corresponding to the symbol $%O already exists" name)
+                                    pos
                             inner remaining lookup success'
 
-                    fun lookup locals ->
-                        registers.Clear()
-                        inner locals lookup true
+                    fun locals -> inner locals (Dictionary()) true
 
-                let ierrors = List<InvalidInstructionError> 0
+                let ierrors = List<InvalidInstructionError> 0 :> InstructionErrorsBuilder
 
                 let resolveCodeInstructions =
                     let instrs = ImmutableArray.CreateBuilder<InstructionSet.Instruction>()
-                    let labels = Dictionary()
-                    let instrs' = List()
+                    let lmapping = ImmutableArray.CreateBuilder<struct(_ * _)>()
+                    let temps = Dictionary<Name, TemporaryIndex>()
 
-                    let rec resolveCodeLabels body i success =
-                        match body with
-                        | [] -> success
-                        | ParsedInstructionOrLabel.Label(pos, name) :: remaining ->
-                            let success' = labels.TryAdd(name, i)
-                            if not success' then addValidationError (sprintf "Duplicate code label %O" name) pos
-                            resolveCodeLabels remaining i success'
-                        | ParsedInstructionOrLabel.Instruction instr :: remaining ->
-                            instrs'.Add instr
-                            resolveCodeLabels remaining (Checked.(+) 1 i) success
-
-                    fun body (rlookup: IReadOnlyDictionary<_, _>) ->
+                    fun body blocki (blocks: Dictionary<_, _>) (locals: Dictionary<_, _>) (arguments: Dictionary<_, _>) ->
                         instrs.Clear()
-                        instrs'.Clear()
+                        lmapping.Clear()
+                        temps.Clear()
                         ierrors.Clear()
-                        labels.Clear()
 
-                        let mutable success = resolveCodeLabels body 0 true
-                        let index = ref 0
+                        let mutable success, index, tempi = true, 0, 0u
 
-                        let rlookup' ((_, register): Symbol) =
-                            match rlookup.TryGetValue register with
-                            | true, i -> ValueSome i
-                            | false, _ -> ValueNone
+                        let inline registerNotFound id = ierrors.Add(InvalidInstructionError.UndefinedRegister id)
 
-                        let llookup ((_, name) as label) =
-                            match labels.TryGetValue name with
-                            | true, offset ->
-                                ValueSome(Checked.(-) offset index.contents)
+                        let blockRegisterResolver ({ ParsedRegister.Name = (_, name) as id } as register) =
+                            if register.IsTemporary then
+                                match temps.TryGetValue name with
+                                | true, (Index i) -> ValueSome(RegisterIndex.Index i)
+                                | false, _ ->
+                                    registerNotFound id
+                                    ValueNone
+                            else
+                                match locals.TryGetValue name with
+                                | true, i ->
+                                    Checked.(+) (uint32 temps.Count) i
+                                    |> RegisterIndex.Index
+                                    |> ValueSome
+                                | false, _ ->
+                                    match arguments.TryGetValue name with
+                                    | true, i ->
+                                        Checked.(+) (uint32 temps.Count) i
+                                        |> Checked.(+) (uint32 locals.Count)
+                                        |> RegisterIndex.Index
+                                        |> ValueSome
+                                    | false, _ ->
+                                        registerNotFound id
+                                        ValueNone
+
+                        let blockOffsetLookup (struct(_, name) as id) =
+                            match blocks.TryGetValue name with
+                            | true, struct(index, _) ->
+                                Checked.(-) index blocki
+                                |> Checked.int32
+                                |> ValueSome
                             | false, _ ->
-                                ierrors.Add(InvalidInstructionError.UndefinedLabel label)
+                                ierrors.Add(InvalidInstructionError.UndefinedBlock id)
                                 ValueNone
 
-                        for instruction in instrs' do
-                            success <-
-                                match instruction rlookup' iresolver (ierrors :> InstructionErrorsBuilder) llookup with
-                                | ValueSome instruction' ->
-                                    instrs.Add instruction'
-                                    success
-                                | ValueNone ->
-                                    false
-                            index.contents <- Checked.(+) index.contents 1
+                        List.iter
+                            (fun struct(results: ParsedRegister list, instruction: ParsedInstruction) ->
+                                List.iter
+                                    (function
+                                    | { ParsedRegister.IsTemporary = true; ParsedRegister.Name = pos, name } ->
+                                        if not(temps.TryAdd(name, TemporaryIndex.Index tempi)) then
+                                            addValidationError
+                                                (sprintf "A temporary register corresponding to the symbol %%%O already exists" name)
+                                                pos
+                                            success <- false
+                                        else
+                                            tempi <- Checked.(+) tempi 1u
+                                    | { ParsedRegister.IsTemporary = false; ParsedRegister.Name = _, name as id } ->
+                                        match locals.TryGetValue name with
+                                        | true, i ->
+                                            lmapping.Add(TemporaryIndex.Index tempi, LocalIndex.Index(uint32 i))
+                                            tempi <- Checked.(+) tempi 1u
+                                        | false, _ ->
+                                            registerNotFound id
+                                            success <- false)
+                                    results
 
-                        if success then ValueSome(instrs.ToImmutable()) else ValueNone
+                                match instruction blockRegisterResolver iresolver ierrors blockOffsetLookup with
+                                | ValueSome instruction' -> instrs.Add instruction'
+                                | ValueNone -> success <- false
+
+                                index <- Checked.(+) index 1)
+                            body
+
+                        if success then
+                            { CodeBlock.Locals = lmapping.ToImmutable()
+                              Instructions = instrs.ToImmutable() }
+                            |> ValueSome
+                        else ValueNone
+
+                let resolveCodeBlocks blocks locals arguments =
+                    let rec resolveBlockNames blocks (lookup: Dictionary<Name, _>) success =
+                        match blocks with
+                        | [] when success -> ValueSome lookup
+                        | [] -> ValueNone
+                        | { ParsedBlock.Symbol = struct(pos, name); ParsedBlock.Instructions = code } :: remaining ->
+                            let success' = lookup.TryAdd(name, struct(uint32 lookup.Count, code))
+                            if not success' then
+                                addValidationError
+                                    (sprintf "A block corresponding to the symbol $%O already exists" name)
+                                    pos
+                            resolveBlockNames remaining lookup success'
+
+                    let rec resolveBlockInstructions (blockIndexLookup: Dictionary<Name, struct(uint32 * _)>) =
+                        let mutable blocks', success = Array.zeroCreate<CodeBlock> blockIndexLookup.Count, true
+
+                        for KeyValue(_, struct(i, code)) in blockIndexLookup do
+                            match resolveCodeInstructions code i blockIndexLookup locals arguments with
+                            | ValueSome block -> blocks'.[Checked.int32 i] <- block
+                            | ValueNone -> success <- false
+
+                        if success
+                        then ValueSome(Unsafe.As<CodeBlock[], ImmutableArray<CodeBlock>> &blocks')
+                        else ValueNone
+
+                    voptional {
+                        let! blockIndexLookup = resolveBlockNames blocks (Dictionary()) true
+                        return! resolveBlockInstructions blockIndexLookup
+                    }
 
                 let addInstructionErrors() =
                     for err in ierrors do
                         match err with
                         | InvalidInstructionError.UndefinedRegister(pos, name) ->
-                            addValidationError (sprintf "A register corresponding to the symbol @%O could not be found" name) pos
+                            addValidationError
+                                (sprintf "A register corresponding to the symbol $%O or %%%O could not be found" name name)
+                                pos
                         | InvalidInstructionError.InvalidIntegerLiteral(pos, size, literal) ->
                             addValidationError (sprintf "\"%s\" is not a valid %i-bit integer literal" literal size) pos
                         | InvalidInstructionError.UnknownInstruction(pos, name) ->
@@ -809,19 +856,18 @@ let assemble declarations = // TODO: Fix, use result so at least one error objec
                             addValidationError (undefinedSymbolMessage "A method" name) pos
                         | InvalidInstructionError.UndefinedTypeSignature(pos, name) ->
                             addValidationError (undefinedSymbolMessage "A type signature" name) pos
-                        | InvalidInstructionError.UndefinedLabel(pos, name) ->
-                            addValidationError (undefinedSymbolMessage "A code label" name) pos
+                        | InvalidInstructionError.UndefinedBlock(pos, name) ->
+                            addValidationError (undefinedSymbolMessage "A code block" name) pos
                         | InvalidInstructionError.UndefinedData(pos, name) ->
                             addValidationError (undefinedSymbolMessage "A data" name) pos
 
                 mapLookupValues codes <| fun _ code -> voptional {
-                    // TODO: Don't forget to change this assembler code if order of registers is changed.
-                    let! rlookup = resolveArgumentRegisters 0u code.Arguments
-                    let! registers = resolveLocalRegisters rlookup code.Locals
-                    let instructions = resolveCodeInstructions code.Body rlookup
+                    let! locals' = resolveLocalRegisters code.Locals
+                    let! arguments' = resolveArgumentRegisters code.Arguments
+                    let blocks = resolveCodeBlocks code.Blocks locals' arguments'
                     addInstructionErrors()
-                    let! instructions' = instructions
-                    return { Code.RegisterTypes = registers; Instructions = instructions' }
+                    let! blocks' = blocks
+                    return { Code.LocalCount = uint32 locals'.Count; Blocks = blocks' }
                 }
 
             let main' = ValueOption.map (findLookupValue mdefinitions (undefinedSymbolMessage "An entrypoint method")) mmain
