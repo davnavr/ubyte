@@ -737,7 +737,15 @@ module Interpreter =
                     if isFlagSet ArithmeticFlags.ThrowOnOverflow flags
                     then Arithmetic.Checked.decr vtype register &destination.RegisterValue
                     else Arithmetic.decr vtype register &destination.RegisterValue
-                // TODO: Handle bitwise operatiors
+                | And(vtype, Register x, Register y) ->
+                    let destination = allocateRegisterPrimitive vtype
+                    Arithmetic.``and`` vtype x y &destination.RegisterValue
+                | Or(vtype, Register x, Register y) ->
+                    let destination = allocateRegisterPrimitive vtype
+                    Arithmetic.``or`` vtype x y &destination.RegisterValue
+                | Xor(vtype, Register x, Register y) ->
+                    let destination = allocateRegisterPrimitive vtype
+                    Arithmetic.xor vtype x y &destination.RegisterValue
                 // TODO: Should exception be thrown if Constant integer overflows?
                 | Const_u(vtype, value) ->
                     let destination = allocateRegisterPrimitive vtype
