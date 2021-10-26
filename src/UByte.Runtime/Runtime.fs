@@ -253,7 +253,6 @@ module Interpreter =
     open UByte.Format.Model.InstructionSet
 
     let private copyRegisterValues (source: ImmutableArray<RuntimeRegister>) (dest: ImmutableArray<RuntimeRegister>) =
-        if source.Length > dest.Length then failwith "TODO: Error, more source registers than destination registers" // TODO: Have validation of arguments lengths be the caller's problem.
         for i = 0 to dest.Length - 1 do copyRuntimeValue &source.[i].RegisterValue &dest.[i].RegisterValue
 
     /// Contains functions for retrieving numeric values stored in registers.
@@ -538,13 +537,10 @@ module Interpreter =
                 i <- i + 1
             value
 
-        let inline isFalseValue register = not(isTrueValue register)
-
         let isLessThan xreg yreg = comparison (<) (<) (<) (<) (<) (<) (<) (<) (<) (<) (<) (<) (fun _ _ -> false) xreg yreg
         let isGreaterThan xreg yreg = comparison (>) (>) (>) (>) (>) (>) (>) (>) (>) (>) (>) (>) (fun _ _ -> false) xreg yreg
         let private refeq a b = Object.ReferenceEquals(a, b)
         let isEqual xreg yreg = comparison (=) (=) (=) (=) (=) (=) (=) (=) (=) (=) (=) (=) refeq xreg yreg
-        let inline isNotEqual xreg yreg = not(isEqual xreg yreg)
         let isLessOrEqual xreg yreg = comparison (<=) (<=) (<=) (<=) (<=) (<=) (<=) (<=) (<=) (<=) (<=) (<=) refeq xreg yreg
         let isGreaterOrEqual xreg yreg = comparison (>=) (>=) (>=) (>=) (>=) (<=) (<=) (<=) (<=) (<=) (<=) (<=) refeq xreg yreg
 
@@ -596,6 +592,7 @@ module Interpreter =
         member _.Item with get (Index index: TemporaryIndex) = registers.[Checked.int32 index]
 
         member _.Allocate(rtype, dsize, rlength) =
+            failwith "TODO: Assign to local registers when temporary is created"
             let register =
                 { RuntimeRegister.RegisterType = rtype
                   // TODO: Fix, if data or references array is reallocated then bad things
@@ -628,6 +625,8 @@ module Interpreter =
             if arguments.Length <> arguments'.Length then
                 failwithf "TODO: Error for argument array lengths do not match, expected %i got %i" arguments'.Length arguments.Length
             temporaries.Clear()
+            if arguments.Length < arguments'.Length then
+                invalidOp (sprintf "An instruction that calls a method must provide at least as many arguments as specified in the method signature, %i arguments were expected when only %i were provided" arguments'.Length arguments.Length)
             copyRegisterValues arguments arguments'
 
         invoke returns arguments entrypoint
@@ -650,6 +649,11 @@ module Interpreter =
                 else
                     failwith "TODO: Lookup local registers"
 
+        let (|LookupRegisterArray|) (indices: ImmutableArray<RegisterIndex>) =
+            let mutable registers = Array.zeroCreate indices.Length // TODO: Cache register lookup array.
+            for i = 0 to registers.Length - 1 do registers.[i] <- lookupRegisterAt indices.[i]
+            Unsafe.As<RuntimeRegister[], ImmutableArray<RuntimeRegister>> &registers
+
         while cont() do
             let frame' = frame.Value.Value
 
@@ -659,6 +663,15 @@ module Interpreter =
             let inline (|TypeSignature|) tindex: AnyType = frame'.CurrentMethod.Module.TypeSignatureAt tindex
             let inline (|Data|) dindex: ImmutableArray<_> = frame'.CurrentMethod.Module.DataAt dindex
             let inline (|BranchTarget|) (target: BlockOffset) = Checked.(+) frame'.BlockIndex target
+
+#if DEBUG
+            let branchToTarget (BranchTarget target) =
+#else
+            let inline branchToTarget (BranchTarget target) =
+#endif
+                frame'.InstructionIndex <- 0
+                frame'.BlockIndex <- target
+                temporaries.Clear()
 
 #if DEBUG
             let inline fieldAccessInstruction field object access =
@@ -701,6 +714,8 @@ module Interpreter =
 
             try
                 match frame'.Code.[frame'.BlockIndex].Instructions.[frame'.InstructionIndex] with
+                //| Phi values ->
+                //| Select(Register condition, Register vtrue, Register vfalse) ->
                 // TODO: Create common helper function for arithmetic operations, and don't use inref<_> since RuntimeRegister can be used directly
                 | Add(ValidArithmeticFlags flags, vtype, Register x, Register y) ->
                     let destination = allocateRegisterPrimitive vtype
@@ -761,6 +776,26 @@ module Interpreter =
                     Constant.boolean vtype true &destination.RegisterValue
                 //| Const_f32 value ->
                 //| Const_f64 value ->
+                | Ret(LookupRegisterArray results) ->
+                    if results.Length < frame'.ReturnRegisters.Length then
+                        invalidOp(sprintf "Expected to return %i values but only returned %i values" frame'.ReturnRegisters.Length results.Length)
+                    copyRegisterValues results frame'.ReturnRegisters
+                    frame.Value <- frame'.Previous
+                    failwith "TODO: Bad, stack frame should store temporary registers"
+                | Br target -> branchToTarget target
+                | Br_eq(Register x, Register y, ttrue, tfalse)
+                | Br_ne(Register x, Register y, tfalse, ttrue) ->
+                    branchToTarget (if Compare.isEqual x y then ttrue else tfalse)
+                | Br_lt(Register x, Register y, tfalse, ttrue) ->
+                    branchToTarget (if Compare.isLessThan x y then ttrue else tfalse)
+                | Br_gt(Register x, Register y, tfalse, ttrue) ->
+                    branchToTarget (if Compare.isGreaterThan x y then ttrue else tfalse)
+                | Br_le(Register x, Register y, tfalse, ttrue) ->
+                    branchToTarget (if Compare.isLessOrEqual x y then ttrue else tfalse)
+                | Br_ge(Register x, Register y, tfalse, ttrue) ->
+                    branchToTarget (if Compare.isGreaterOrEqual x y then ttrue else tfalse)
+                | Br_true(Register condition, ttrue, tfalse) ->
+                    branchToTarget (if Compare.isTrueValue condition then ttrue else tfalse)
                 | Nop -> ()
 
                 match runExternalCode with
@@ -775,7 +810,6 @@ module Interpreter =
             if frame'.InstructionIndex = frame'.Code.[frame'.BlockIndex].Instructions.Length then
                 frame'.InstructionIndex <- 0
                 frame'.BlockIndex <- Checked.(+) frame'.BlockIndex 1
-                // TODO: Assign local registers
                 temporaries.Clear()
 
         match frame.contents with
