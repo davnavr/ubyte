@@ -46,6 +46,11 @@ type OffsetArray<'T> =
 
     member this.CopyTo(destination: OffsetArray<'T>) = this.AsSpan().CopyTo(destination.AsSpan())
 
+    member this.Clone() =
+        let other = OffsetArray<'T> this.Length
+        this.CopyTo other
+        other
+
 [<Struct>]
 type RuntimeStruct = { RawData: OffsetArray<byte>; References: OffsetArray<RuntimeObject> }
 
@@ -68,6 +73,9 @@ module private RuntimeStruct =
         if destination.References.Length > source.References.Length then source.RawData.AsSpan().Clear()
         source.RawData.CopyTo destination.RawData
         source.References.CopyTo destination.References
+
+    let duplicateRuntimeValue (source: inref<RuntimeStruct>) =
+        { RuntimeStruct.RawData = source.RawData.Clone(); References = source.References.Clone() }
 
 type RuntimeRegister =
     { RegisterValue: RuntimeStruct; RegisterType: AnyType }
@@ -129,6 +137,9 @@ module private RuntimeRegister = // TODO: Make it so registers only contain prim
               RuntimeStruct.References = OffsetArray rlen }
           RegisterType = rtype }
 
+    let clone source =
+        { RuntimeRegister.RegisterType = source.RegisterType; RegisterValue = duplicateRuntimeValue &source.RegisterValue }
+
 [<RequireQualifiedAccess>]
 module private Reinterpret =
     let inline (|F32|) value: uint32 =
@@ -158,10 +169,21 @@ type RuntimeStackFrame
     )
     =
     let mutable bindex, iindex = 0, 0
+    let mutable previousBlockIndex = ValueNone
 
     member _.ArgumentRegisters = args
     member _.InstructionIndex with get() = iindex and set i = iindex <- i
-    member _.BlockIndex with get() = bindex and set i = bindex <- i
+
+    member _.BlockIndex
+        with get() = bindex
+        and set i =
+            previousBlockIndex <-
+                match i with
+                | 0 -> previousBlockIndex
+                | _ -> ValueSome i
+            bindex <- i
+
+    member _.PreviousBlockIndex = previousBlockIndex
     member val TemporaryRegisters = List<RuntimeRegister>()
     member _.ReturnRegisters = returns
     member _.Code = blocks
@@ -730,10 +752,18 @@ module Interpreter =
 
             try
                 match frame'.Code.[frame'.BlockIndex].Instructions.[frame'.InstructionIndex] with // TODO: Ensure stack frame keeps track of previously executed block.
-                | Phi values ->
-                    failwith "TODO: Select a value"
+                | Phi values -> // TODO: In format, reverse order of indices so BlockOffset is first to allow usage as key in dictionary.
+                    match frame'.PreviousBlockIndex with
+                    | ValueSome prev ->
+                        // TODO: Use for loop to avoid extra allocations, maybe even require sorting in the binary format.
+                        let struct(valuei, _) = Seq.find (fun struct(_, blocki) -> blocki = prev) values
+                        frame'.TemporaryRegisters.Add(RuntimeRegister.clone(lookupRegisterAt valuei))
+                    | ValueNone ->
+                        invalidOp "Usage of phi instruction is prohibited in the first block of a method"
                 | Select(Register condition, Register vtrue, Register vfalse) ->
-                    failwith "TODO: Select a value"
+                    if Compare.isTrueValue condition then vtrue else vfalse
+                    |> RuntimeRegister.clone
+                    |> frame'.TemporaryRegisters.Add
                 // TODO: Create common helper function for arithmetic operations, and don't use inref<_> since RuntimeRegister can be used directly
                 | Add(ValidArithmeticFlags flags, vtype, Register x, Register y) ->
                     let destination = createPrimitiveRegister vtype
