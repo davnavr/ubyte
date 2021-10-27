@@ -243,7 +243,7 @@ let instruction instr dest =
         index i dest
         index src dest
     | Obj_arr_const(etype, data) ->
-        opcode Opcode.``obj.arr.set`` dest
+        opcode Opcode.``obj.arr.const`` dest
         index etype dest
         index data dest
 
