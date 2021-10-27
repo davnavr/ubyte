@@ -1323,11 +1323,18 @@ type RuntimeModule (m: Module, moduleImportResolver: ModuleIdentifier -> Runtime
                         match tstring with
                         | ReferenceOrValueType.Reference(ReferenceType.Vector tchar) ->
                             let inline characterArrayArguments ctype convert =
-                                let argv' = RuntimeArray(0, 1, argv.Length, ReferenceOrValueType.ValueType(ValueType.Primitive ctype) |> ReferenceType.Vector |> AnyType.ReferenceType)
+                                let argty =
+                                    ValueType.Primitive ctype
+                                    |> ReferenceOrValueType.Value
+                                    |> ReferenceType.Vector
+
+                                let argv' = RuntimeArray(0, 1, argv.Length, AnyType.ReferenceType argty)
+
                                 for i = 0 to argv.Length - 1 do
                                     let arg = RuntimeStruct.Object()
                                     arg.WriteRef(0, RuntimeObject.Array(convert argv.[i]))
                                     argv'.[i] <- arg
+
                                 let argv'' = RuntimeRegister.Object argt
                                 argv''.RegisterValue.WriteRef(0, RuntimeObject.Array argv')
                                 ImmutableArray.Create argv''
