@@ -180,9 +180,7 @@ type RuntimeStackFrame
 
     member _.ArgumentRegisters = args
     member _.InstructionIndex with get() = iindex and set i = iindex <- i
-
     member _.BlockIndex = bindex
-
     member _.PreviousBlockIndex = previousBlockIndex
     member val TemporaryRegisters = List<RuntimeRegister>()
     member _.ReturnRegisters = returns
@@ -210,8 +208,8 @@ type RuntimeStackFrame
     member this.JumpTo index =
         previousBlockIndex <- ValueSome bindex
         bindex <- index
-        this.InstructionIndex <- 0
-        locals.Clear()
+        iindex <- -1
+        locals.Clear() // TODO: Figure out how to save locals for use in next block.
         this.TemporaryRegisters.Clear()
         for struct(tindex, lindex) in this.CurrentBlock.Locals do
             locals.Add(lindex, tindex)
@@ -688,7 +686,7 @@ module Interpreter =
 
         let inline cont() =
             match frame.Value with
-            | ValueSome frame'-> frame'.BlockIndex < frame'.Code.Length
+            | ValueSome frame' -> frame'.BlockIndex < frame'.Code.Length && frame'.InstructionIndex < frame'.CurrentBlock.Instructions.Length
             | ValueNone -> false
 
         while cont() do
@@ -930,7 +928,8 @@ module Interpreter =
 
         match frame.contents with
         | ValueNone -> entryPointResults
-        | ValueSome _ -> raise(MissingReturnInstructionException(frame.contents, "Reached unexpected end of code"))
+        | ValueSome frame' as info ->
+            raise(MissingReturnInstructionException(info, sprintf "Reached unexpected end of code in block %i" frame'.BlockIndex))
 
 [<Sealed>]
 type InvalidConstructorException (method: RuntimeMethod, frame, message) =
