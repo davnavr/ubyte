@@ -558,18 +558,33 @@ module Interpreter =
     /// Contains functions for storing values into registers.
     [<RequireQualifiedAccess>]
     module private Constant =
-        let inline private number u32 s32 vtype value (destination: inref<RuntimeStruct>) =
+        let inline private number u8 s8 u16 s16 u32 s32 u64 s64 unative snative f32 f64 vtype value (destination: inref<RuntimeStruct>) =
             match vtype with
-            | PrimitiveType.U32 -> destination.WriteRaw<uint32>(0, u32 value)
+            | PrimitiveType.U8 | PrimitiveType.Bool -> destination.WriteRaw<uint8>(0, u8 value)
+            | PrimitiveType.S8 -> destination.WriteRaw<int8>(0, s8 value)
+            | PrimitiveType.U16 | PrimitiveType.Char16 -> destination.WriteRaw<uint16>(0, u16 value)
+            | PrimitiveType.S16 -> destination.WriteRaw<int16>(0, s16 value)
+            | PrimitiveType.U32 | PrimitiveType.Char32 -> destination.WriteRaw<uint32>(0, u32 value)
             | PrimitiveType.S32 -> destination.WriteRaw<int32>(0, s32 value)
+            | PrimitiveType.U64 -> destination.WriteRaw<uint64>(0, u64 value)
+            | PrimitiveType.S64 -> destination.WriteRaw<int64>(0, s64 value)
+            | PrimitiveType.F32 -> destination.WriteRaw<single>(0, f32 value)
+            | PrimitiveType.F64 -> destination.WriteRaw<double>(0, f64 value)
+            | PrimitiveType.UNative -> destination.WriteRaw<unativeint>(0, unative value)
+            | PrimitiveType.SNative -> destination.WriteRaw<nativeint>(0, snative value)
+            | PrimitiveType.Unit -> ()
 
-        let uinteger vtype (value: uint32) (destination: inref<_>) = number uint32 int32 vtype value &destination
-        let sinteger vtype (value: int32) (destination: inref<_>) = number uint32 int32 vtype value &destination
+        let uinteger vtype (value: uint32) (destination: inref<_>) =
+            number uint8 int8 uint16 int16 uint32 int32 uint64 int64 unativeint nativeint float32 float vtype value &destination
+
+        let sinteger vtype (value: int32) (destination: inref<_>) =
+            number uint8 int8 uint16 int16 uint32 int32 uint64 int64 unativeint nativeint float32 float vtype value &destination
 
         module Checked =
             open Microsoft.FSharp.Core.Operators.Checked
 
-            let sinteger vtype (value: int32) (destination: inref<_>) = number uint32 int32 vtype value &destination
+            let sinteger vtype (value: int32) (destination: inref<_>) =
+                number uint8 int8 uint16 int16 uint32 int32 uint64 int64 unativeint nativeint float32 float vtype value &destination
 
         let private noBooleanFloat() = invalidOp "Conversion of boolean value to float is not supported"
 
