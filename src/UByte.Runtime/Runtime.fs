@@ -196,12 +196,12 @@ type RuntimeStackFrame
         if index < tcount then
             this.TemporaryRegisters.[Checked.int32 index]
         else
-            let index' = index + tcount
+            let index' = Checked.(-) index tcount
             let acount = uint32 this.ArgumentRegisters.Length
             if index' < acount then
-                this.ArgumentRegisters.[Checked.int32 index]
+                this.ArgumentRegisters.[Checked.int32 index']
             else
-                let index' = LocalIndex.Index(index' + acount)
+                let index' = LocalIndex.Index(index - tcount - acount)
                 match locals.TryGetValue index' with
                 | true, Index i -> this.TemporaryRegisters.[Checked.int32 i]
                 | false, _ ->
@@ -694,12 +694,18 @@ module Interpreter =
         while cont() do
             let frame' = frame.Value.Value
 
+#if DEBUG
+            let (|Register|) rindex =
+#else
+            let inline (|Register|) rindex =
+#endif
+                frame'.RegisterAt rindex
+
             let (|LookupRegisterArray|) (indices: ImmutableArray<RegisterIndex>) =
                 let mutable registers = Array.zeroCreate indices.Length // TODO: Cache register lookup array.
                 for i = 0 to registers.Length - 1 do registers.[i] <- frame'.RegisterAt indices.[i]
                 Unsafe.As<RuntimeRegister[], ImmutableArray<RuntimeRegister>> &registers
 
-            let inline (|Register|) rindex = frame'.RegisterAt rindex
             let inline (|Method|) mindex: RuntimeMethod = frame'.CurrentMethod.Module.InitializeMethod mindex
             let inline (|Field|) findex: RuntimeField = frame'.CurrentMethod.Module.InitializeField findex
             let inline (|TypeSignature|) tindex: AnyType = frame'.CurrentMethod.Module.TypeSignatureAt tindex
