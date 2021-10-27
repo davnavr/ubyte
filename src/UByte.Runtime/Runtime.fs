@@ -117,7 +117,7 @@ type RuntimeRegister with
           RegisterType = AnyType.ReferenceType rtype }
 
 [<RequireQualifiedAccess>]
-module private RuntimeRegister =
+module private RuntimeRegister = // TODO: Make it so registers only contain primtive type or object reference, no struct
     let primitiveType register =
         match register.RegisterType with
         | AnyType.ValueType(ValueType.Primitive prim) -> prim
@@ -206,16 +206,18 @@ type RuntimeArray =
     val Length: int32
     val Data: byte[]
     val References: RuntimeObject[]
+    val ElementType: AnyType // TODO: Array element type only works with primitive types, cases that use type indices would be invalid if used outside of the intended module.
 
-    new (rawDataSize, objectReferencesLength, length) =
+    new (rawDataSize, objectReferencesLength, length, etype) =
         if length < 0 then raise(ArgumentOutOfRangeException(nameof length, length, "The length of an array cannot be negative"))
         { Length = length
           Data = Array.zeroCreate<byte> (Checked.(*) rawDataSize length)
-          References = Array.zeroCreate<RuntimeObject> (Checked.(*) objectReferencesLength length) }
+          References = Array.zeroCreate<RuntimeObject> (Checked.(*) objectReferencesLength length)
+          ElementType = etype }
 
-    new (stype: RuntimeTypeDefinition, length) =
+    new (stype: RuntimeTypeDefinition, length, etype) =
         let layout = stype.Layout
-        RuntimeArray(layout.RawDataSize, layout.ObjectReferencesLength, length)
+        RuntimeArray(layout.RawDataSize, layout.ObjectReferencesLength, length, etype)
 
     member private this.ElementLength arr = Array.length arr / this.Length
     member private this.ElementReferences i = OffsetArray<RuntimeObject>(i * this.ElementLength this.References, this.References)
@@ -790,12 +792,12 @@ module Interpreter =
                     fieldAccessInstruction field object <| fun value -> copyRuntimeValue &source.RegisterValue &value
                 | Obj_arr_new(TypeSignature etype, Register length) ->
                     let struct(dsize, rlen) = frame'.CurrentMethod.Module.CalculateTypeSize etype
-                    let array = RuntimeArray(dsize, rlen, NumberValue.s32 length)
+                    let array = RuntimeArray(dsize, rlen, NumberValue.s32 length, etype)
                     createReferenceRegister((*ReferenceType.Vector etype*) ReferenceType.Any).RegisterValue.WriteRef(0, RuntimeObject.Array array) // TODO: Get/check array element type.
                 | Obj_arr_const(TypeSignature etype, Data data) ->
                     let struct(dsize, rlen) = frame'.CurrentMethod.Module.CalculateTypeSize etype
                     if rlen > 0 then invalidOp("Cannot create constant array containing elements of type " + etype.ToString())
-                    let array = RuntimeArray(dsize, rlen, data.Length / dsize)
+                    let array = RuntimeArray(dsize, rlen, data.Length / dsize, etype)
                     data.AsSpan().Slice(0, array.Data.Length).CopyTo(Span array.Data)
                     createReferenceRegister((*ReferenceType.Vector etype*) ReferenceType.Any).RegisterValue.WriteRef(0, RuntimeObject.Array array) // TODO: Get/check array element type.
                 | Obj_arr_len(ValidArithmeticFlags flags, ltype, Register array) ->
@@ -813,7 +815,7 @@ module Interpreter =
                     arrayAccessInstruction array index <| fun array i ->
                         let value = array.[i]
                         let destination =
-                            { RuntimeRegister.RegisterType = failwith "TODO: What type to use to store array element?"
+                            { RuntimeRegister.RegisterType = array.ElementType
                               RegisterValue =
                                 { RuntimeStruct.RawData = OffsetArray array.DataLength
                                   References = OffsetArray array.ReferenceCount } }
@@ -1320,8 +1322,8 @@ type RuntimeModule (m: Module, moduleImportResolver: ModuleIdentifier -> Runtime
                     | AnyType.ReferenceType(ReferenceType.Vector tstring as argt) ->
                         match tstring with
                         | ReferenceOrValueType.Reference(ReferenceType.Vector tchar) ->
-                            let inline characterArrayArguments convert =
-                                let argv' = RuntimeArray(0, 1, argv.Length)
+                            let inline characterArrayArguments ctype convert =
+                                let argv' = RuntimeArray(0, 1, argv.Length, ReferenceOrValueType.ValueType(ValueType.Primitive ctype) |> ReferenceType.Vector |> AnyType.ReferenceType)
                                 for i = 0 to argv.Length - 1 do
                                     let arg = RuntimeStruct.Object()
                                     arg.WriteRef(0, RuntimeObject.Array(convert argv.[i]))
@@ -1331,20 +1333,20 @@ type RuntimeModule (m: Module, moduleImportResolver: ModuleIdentifier -> Runtime
                                 ImmutableArray.Create argv''
 
                             match tchar with // TODO: Create a Char8 type for UTF-8 strings
-                            | ReferenceOrValueType.Value(ValueType.Primitive PrimitiveType.Char16) ->
-                                characterArrayArguments <| fun arg ->
-                                    let arg' = RuntimeArray(2, 0, arg.Length)
+                            | ReferenceOrValueType.Value(ValueType.Primitive PrimitiveType.Char16 as c16) ->
+                                characterArrayArguments PrimitiveType.Char16 <| fun arg ->
+                                    let arg' = RuntimeArray(2, 0, arg.Length, AnyType.ValueType c16)
                                     for i = 0 to arg.Length - 1 do
                                         let c = RuntimeStruct.Raw 2
                                         c.WriteRaw(0, uint16 arg.[i])
                                         arg'.[i] <- c
                                     arg'
-                            | ReferenceOrValueType.Value(ValueType.Primitive PrimitiveType.Char32) ->
+                            | ReferenceOrValueType.Value(ValueType.Primitive PrimitiveType.Char32 as c32) ->
                                 let buffer = List()
-                                characterArrayArguments <| fun arg ->
+                                characterArrayArguments PrimitiveType.Char32 <| fun arg ->
                                     buffer.Clear()
                                     for cu in arg.EnumerateRunes() do buffer.Add(uint32 cu.Value)
-                                    let arg' = RuntimeArray(4, 0, buffer.Count)
+                                    let arg' = RuntimeArray(4, 0, buffer.Count, AnyType.ValueType c32)
                                     for i = 0 to buffer.Count - 1 do
                                         let c = RuntimeStruct.Raw 4
                                         c.WriteRaw(0, buffer.[i])
