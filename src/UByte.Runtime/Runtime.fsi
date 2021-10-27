@@ -65,18 +65,11 @@ type RuntimeField =
 [<RequireQualifiedAccess>]
 module Interpreter =
     /// <summary>Interprets a method.</summary>
-    /// <param name="returns">
-    /// An array of registers that will contain the return values after the <paramref name="entrypoint"/> method is interpreted.
-    /// </param>
     /// <param name="arguments">
     /// An array of registers containing the arguments to pass to the <paramref name="entrypoint"/> method.
     /// </param>
     /// <param name="entrypoint">The method to call and interpret.</param>
-    val interpret :
-        returns: ImmutableArray<RuntimeRegister> ->
-        arguments: ImmutableArray<RuntimeRegister> ->
-        entrypoint: RuntimeMethod ->
-        unit
+    val interpret : arguments: ImmutableArray<RuntimeRegister> -> entrypoint: RuntimeMethod -> ImmutableArray<RuntimeRegister>
 
 type RuntimeStackFrame with member CurrentMethod : RuntimeMethod
 

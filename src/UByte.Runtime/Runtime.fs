@@ -123,6 +123,12 @@ module private RuntimeRegister =
         | AnyType.ValueType(ValueType.Primitive prim) -> prim
         | _ -> invalidArg (nameof register) "Cannot retrieve numeric value from a register not containing a primitive type"
 
+    let create rtype (dsize: int32) (rlen: int32) =
+        { RuntimeRegister.RegisterValue =
+            { RuntimeStruct.RawData = OffsetArray dsize
+              RuntimeStruct.References = OffsetArray rlen }
+          RegisterType = rtype }
+
 [<RequireQualifiedAccess>]
 module private Reinterpret =
     let inline (|F32|) value: uint32 =
@@ -156,6 +162,7 @@ type RuntimeStackFrame
     member _.ArgumentRegisters = args
     member _.InstructionIndex with get() = iindex and set i = iindex <- i
     member _.BlockIndex with get() = bindex and set i = bindex <- i
+    member val TemporaryRegisters = List<RuntimeRegister>()
     member _.ReturnRegisters = returns
     member _.Code = blocks
     member _.CurrentMethod = method
@@ -569,67 +576,28 @@ module Interpreter =
             failwithf "TODO: Bad arithmetic flags %A" flags
         flags
 
-    [<Sealed>]
-    type TemporaryRegisterPool () =
-        let mutable data, dcount = Array.zeroCreate<byte> 64, 0
-        let mutable references, rcount = Array.zeroCreate<RuntimeObject> 4, 0
-        // TODO: Have pool for RuntimeRegister instances to avoid creating new ones all the time.
-        let registers = ImmutableArray.CreateBuilder()
-
-        static member private CreateOrReuseArray(size, array: byref<'T[]>, count: byref<_>) =
-            let count' = Checked.(+) count size
-            if count + size <= array.Length then
-                let start = count
-                count <- count'
-                OffsetArray(start, array)
-            else
-                count <- 0
-                array <- Array.zeroCreate(max count' (array.Length * 2))
-                OffsetArray(Array.zeroCreate size)
-
-        member _.Count = registers.Count
-
-        member _.Item with get (Index index: TemporaryIndex) = registers.[Checked.int32 index]
-
-        member _.Allocate(rtype, dsize, rlength) =
-            failwith "TODO: Assign to local registers when temporary is created"
-            let register =
-                { RuntimeRegister.RegisterType = rtype
-                  // TODO: Fix, if data or references array is reallocated then bad things
-                  RegisterValue =
-                    { RuntimeStruct.RawData = TemporaryRegisterPool.CreateOrReuseArray(dsize, &data, &dcount)
-                      References = TemporaryRegisterPool.CreateOrReuseArray(rlength, &references, &rcount) } }
-            registers.Add register
-            register
-
-        member _.Clear() =
-            registers.Clear()
-            Span(data).Clear()
-            Span(references).Clear()
-            dcount <- 0
-            rcount <- 0
-
-    let interpret returns arguments (entrypoint: RuntimeMethod) =
+    let interpret arguments (entrypoint: RuntimeMethod) =
         let frame: RuntimeStackFrame voption ref = ref ValueNone
-        let temporaries = TemporaryRegisterPool()
         let mutable runExternalCode: (RuntimeStackFrame voption ref -> unit) voption = ValueNone
         let mutable ex = ValueNone
 
 #if DEBUG
-        let invoke returns (arguments: ImmutableArray<_>) (method: RuntimeMethod) =
+        let invoke flags (arguments: ImmutableArray<_>) (method: RuntimeMethod) =
 #else
-        let inline invoke returns (arguments: ImmutableArray<_>) (method: RuntimeMethod) =
+        let inline invoke flags (arguments: ImmutableArray<_>) (method: RuntimeMethod) =
 #endif
-            method.SetupStackFrame(returns, frame, &runExternalCode)
+            if isFlagSet CallFlags.RequiresTailCallOptimization flags then
+                raise(NotImplementedException "Tail call optimization is not yet supported")
+            method.SetupStackFrame(frame, &runExternalCode)
             let arguments' = frame.Value.Value.ArgumentRegisters
             if arguments.Length <> arguments'.Length then
                 failwithf "TODO: Error for argument array lengths do not match, expected %i got %i" arguments'.Length arguments.Length
-            temporaries.Clear()
             if arguments.Length < arguments'.Length then
                 invalidOp (sprintf "An instruction that calls a method must provide at least as many arguments as specified in the method signature, %i arguments were expected when only %i were provided" arguments'.Length arguments.Length)
             copyRegisterValues arguments arguments'
 
-        invoke returns arguments entrypoint
+        invoke CallFlags.None arguments entrypoint
+        let entryPointResults = frame.Value.Value.ReturnRegisters
 
         let inline cont() =
             match frame.Value with
@@ -637,9 +605,10 @@ module Interpreter =
             | ValueNone -> false
 
         let lookupRegisterAt (RegisterIndex.Index index) =
+            let temporaries = frame.Value.Value.TemporaryRegisters
             let tcount = uint32 temporaries.Count
             if index < tcount then
-                temporaries.[Index index]
+                temporaries.[Checked.int32 index]
             else
                 let frame' = frame.Value.Value
                 let index' = index + tcount
@@ -671,7 +640,7 @@ module Interpreter =
 #endif
                 frame'.InstructionIndex <- 0
                 frame'.BlockIndex <- target
-                temporaries.Clear()
+                frame'.TemporaryRegisters.Clear()
 
 #if DEBUG
             let inline fieldAccessInstruction field object access =
@@ -705,7 +674,9 @@ module Interpreter =
                     raise(NullReferenceException "Cannot access an array element with a null array reference")
 
             let inline allocateRegisterPrimitive rtype =
-                temporaries.Allocate(AnyType.ValueType(ValueType.Primitive rtype), primitiveTypeSize rtype, 0)
+                let register = RuntimeRegister.Raw(primitiveTypeSize rtype, ValueType.Primitive rtype)
+                frame'.TemporaryRegisters.Add register
+                register
 
             match ex with
             | ValueSome e ->
@@ -776,12 +747,31 @@ module Interpreter =
                     Constant.boolean vtype true &destination.RegisterValue
                 //| Const_f32 value ->
                 //| Const_f64 value ->
+                | Call(flags, Method method, LookupRegisterArray arguments) ->
+                    invoke flags arguments method
+                | Call_virt(flags, Method method, Register this, LookupRegisterArray arguments) ->
+                    if not(isFlagSet CallFlags.ThrowOnNullThis flags) then
+                        invalidOp "Calling virtual method without checking for null object reference is not supported"
+
+                    match this.RegisterValue.ReadRef 0 with
+                    | RuntimeObject.Null ->
+                        "Cannot call virtual method with null object reference since the type containing the method to call " +
+                        "cannot be deduced"
+                        |> invalidOp
+                    | RuntimeObject.TypeInstance(otype, _) -> 
+                        invoke flags (arguments.Insert(0, this)) otype.VTable.[method]
+                    | RuntimeObject.Array _ ->
+                        invalidOp "Cannot call virtual method with an array object reference"
+                | Obj_new(Method constructor, LookupRegisterArray arguments) ->
+                    let o = RuntimeObject.TypeInstance(constructor.DeclaringType, constructor.DeclaringType.InitializeObjectFields())
+                    let destination = RuntimeRegister.Object(ReferenceType.Defined constructor.DeclaringType.Index) // TODO: Cache the ReferenceType in RuntimeTypeDefinition.
+                    destination.RegisterValue.WriteRef(0, o)
+                    invoke CallFlags.None (arguments.Insert(0, destination)) constructor
                 | Ret(LookupRegisterArray results) ->
                     if results.Length < frame'.ReturnRegisters.Length then
                         invalidOp(sprintf "Expected to return %i values but only returned %i values" frame'.ReturnRegisters.Length results.Length)
                     copyRegisterValues results frame'.ReturnRegisters
                     frame.Value <- frame'.Previous
-                    failwith "TODO: Bad, stack frame should store temporary registers"
                 | Br target -> branchToTarget target
                 | Br_eq(Register x, Register y, ttrue, tfalse)
                 | Br_ne(Register x, Register y, tfalse, ttrue) ->
@@ -810,10 +800,10 @@ module Interpreter =
             if frame'.InstructionIndex = frame'.Code.[frame'.BlockIndex].Instructions.Length then
                 frame'.InstructionIndex <- 0
                 frame'.BlockIndex <- Checked.(+) frame'.BlockIndex 1
-                temporaries.Clear()
+                frame'.TemporaryRegisters.Clear()
 
         match frame.contents with
-        | ValueNone -> ()
+        | ValueNone -> entryPointResults
         | ValueSome _ -> raise(MissingReturnInstructionException(frame.contents, "Reached unexpected end of code"))
 
 [<Sealed>]
@@ -878,46 +868,30 @@ type RuntimeMethod (rmodule: RuntimeModule, index: MethodIndex, method: Method) 
         | MethodBody.External _ -> true
         | _ -> false
 
-    member private _.CreateRegister rtype =
-        match rmodule.TypeSignatureAt rtype with
-        | ValueType vt ->
-            match vt with
-            | ValueType.Primitive PrimitiveType.S8 
-            | ValueType.Primitive PrimitiveType.Bool
-            | ValueType.Primitive PrimitiveType.U8 -> fun() -> RuntimeRegister.Raw(1, vt)
-            | ValueType.Primitive PrimitiveType.S16
-            | ValueType.Primitive PrimitiveType.U16
-            | ValueType.Primitive PrimitiveType.Char16 -> fun() -> RuntimeRegister.Raw(2, vt)
-            | ValueType.Primitive PrimitiveType.S32
-            | ValueType.Primitive PrimitiveType.U32
-            | ValueType.Primitive PrimitiveType.Char32 -> fun() -> RuntimeRegister.Raw(4, vt)
-            | ValueType.Primitive PrimitiveType.S64
-            | ValueType.Primitive PrimitiveType.U64
-            | ValueType.Primitive PrimitiveType.F32
-            | ValueType.Primitive PrimitiveType.F64 -> fun() -> RuntimeRegister.Raw(9, vt)
-            | ValueType.Primitive PrimitiveType.SNative
-            | ValueType.Primitive PrimitiveType.UNative
-            | ValueType.UnsafePointer _ -> fun() -> RuntimeRegister.Raw(sizeof<nativeint>, vt)
-            | ValueType.Primitive PrimitiveType.Unit -> fun() -> failwith "TODO: Prevent usage of Unit in register types."
-            | ValueType.Defined _ -> failwith "TODO: Add support for registers containing structs"
-        | ReferenceType rt -> fun() -> RuntimeRegister.Object rt
-        | SafePointer _ -> failwithf "TODO: Safe pointers in registers not yet supported"
+    member private _.CreateRuntimeRegister(tindex: TypeSignatureIndex): RuntimeRegister =
+        let t = rmodule.TypeSignatureAt tindex
+        let struct(dsize, rlen) = rmodule.CalculateTypeSize t
+        RuntimeRegister.create t dsize rlen
 
     member this.CreateArgumentRegisters() =
         let { MethodSignature.ParameterTypes = atypes } = rmodule.MethodSignatureAt method.Signature
         let mutable registers = Array.zeroCreate atypes.Length
-
-        for i = 0 to registers.Length - 1 do
-            registers.[i] <- this.CreateRegister atypes.[i] ()
-
+        for i = 0 to registers.Length - 1 do registers.[i] <- this.CreateRuntimeRegister atypes.[i]
         Unsafe.As<RuntimeRegister[], ImmutableArray<RuntimeRegister>> &registers
 
-    member this.SetupStackFrame(returns, frame: _ ref, runExternalCode: outref<_ voption>) =
+    member this.CreateReturnRegisters() =
+        let { MethodSignature.ReturnTypes = rtypes } = this.Signature
+        let mutable returns = Array.zeroCreate rtypes.Length
+        for i = 0 to returns.Length - 1 do returns.[i] <- this.CreateRuntimeRegister rtypes.[i]
+        Unsafe.As<RuntimeRegister[], ImmutableArray<RuntimeRegister>> &returns
+
+    member this.SetupStackFrame(frame: RuntimeStackFrame voption ref, runExternalCode: outref<_ voption>) =
+        let returns = this.CreateReturnRegisters()
         match body with
         | MethodBody.Defined codei ->
             let code = rmodule.CodeAt codei
             let args = this.CreateArgumentRegisters()
-            frame.contents <- ValueSome(RuntimeStackFrame(frame.contents, args, returns, code.Blocks, this))
+            frame.contents <- ValueSome(RuntimeStackFrame(frame.Value, args, returns, code.Blocks, this))
         | MethodBody.Abstract ->
             if not this.IsVirtual then failwith "TODO: Error for abstract method must be virtual"
 
@@ -931,10 +905,10 @@ type RuntimeMethod (rmodule: RuntimeModule, index: MethodIndex, method: Method) 
             let library' = this.Module.IdentifierAt library
             let efunction' = this.Module.IdentifierAt efunction
             let args = this.CreateArgumentRegisters()
-            let frame' = RuntimeStackFrame(frame.contents, args, returns, ImmutableArray.Empty, this)
+            let frame' = RuntimeStackFrame(frame.Value, args, returns, ImmutableArray.Empty, this)
             frame.contents <- ValueSome frame'
             runExternalCode <- ValueSome <| fun frame'' ->
-                ExternalCode.call library' efunction' frame''.contents.Value
+                ExternalCode.call library' efunction' frame''.Value.Value
                 frame''.contents <- frame'.Previous
 
     override this.ToString() =
@@ -1003,7 +977,7 @@ type InheritedTypeLayout =
       InheritedReferencesLength: int32 }
 
 [<Sealed>]
-type RuntimeTypeDefinition (rm: RuntimeModule, t: TypeDefinition) as rt =
+type RuntimeTypeDefinition (rm: RuntimeModule, index: TypeDefinitionIndex, t: TypeDefinition) as rt =
     static let emptyTypeLayout =
         lazy
             { RuntimeTypeLayout.Fields = ImmutableArray.Empty
@@ -1096,15 +1070,12 @@ type RuntimeTypeDefinition (rm: RuntimeModule, t: TypeDefinition) as rt =
             emptyMethodOverrides
 
     member _.Module = rm
-
+    member _.Index: TypeDefinitionIndex = index
     member _.InheritedTypes = fst findInheritedTypes.Value
-
     member _.Layout: RuntimeTypeLayout = layout.Value
-
     member _.VTable: IReadOnlyDictionary<RuntimeMethod, RuntimeMethod> = vtable.Value
 
     member val Name = rm.IdentifierAt t.TypeName
-
     member val Namespace = rm.NamespaceAt t.TypeNamespace
 
     member _.FindMethod name = // TODO: Figure out if methods defined in inherited class(es)
@@ -1179,7 +1150,7 @@ type RuntimeModule (m: Module, moduleImportResolver: ModuleIdentifier -> Runtime
         let imports = m.Imports.ImportedTypes
         let definitions = m.Definitions.DefinedTypes
         createDefinitionOrImportLookup definitions.Length imports.Length
-            (fun i _ -> RuntimeTypeDefinition(rm, definitions.[i]))
+            (fun i i' -> RuntimeTypeDefinition(rm, i', definitions.[i]))
             (fun i _ ->
                 let t = imports.[Checked.int32 i]
                 let owner = importedModuleLookup t.Module
@@ -1263,7 +1234,7 @@ type RuntimeModule (m: Module, moduleImportResolver: ModuleIdentifier -> Runtime
                 |> raise
         | true, existing -> existing
 
-    member _.CalculateTypeSize(t: AnyType): struct(Int32 * int32) =
+    member _.CalculateTypeSize(t: AnyType): struct(int32 * int32) =
         match t with
         | ValueType vt ->
             match vt with
@@ -1327,9 +1298,8 @@ type RuntimeModule (m: Module, moduleImportResolver: ModuleIdentifier -> Runtime
                     | bad -> failwithf "TODO: Error for invalid entrypoint argument type %A" bad
                 | _ -> failwith "TODO: Error for invalid number of arguments for entrypoint"
 
-            let result = RuntimeRegister.Raw(4, ValueType.Primitive PrimitiveType.S32)
-            Interpreter.interpret (ImmutableArray.Create result) arguments main
-            result.RegisterValue.ReadRaw<int32> 0
+            let results = Interpreter.interpret arguments main
+            results.[0].RegisterValue.ReadRaw<int32> 0
         | ValueNone -> raise(MissingEntryPointException(this, "The entry point method of the module is not defined"))
 
     override this.ToString() = sprintf "(%s, v%O)" this.Name this.Version
