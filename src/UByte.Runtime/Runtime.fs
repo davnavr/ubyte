@@ -163,6 +163,7 @@ type RuntimeStackFrame
     (
         prev: RuntimeStackFrame voption,
         args: ImmutableArray<RuntimeRegister>,
+        localRegisterCount: uint32,
         returns: ImmutableArray<RuntimeRegister>,
         blocks: ImmutableArray<CodeBlock>,
         method: RuntimeMethod
@@ -170,25 +171,50 @@ type RuntimeStackFrame
     =
     let mutable bindex, iindex = 0, 0
     let mutable previousBlockIndex = ValueNone
+    let locals = Dictionary<LocalIndex, TemporaryIndex>(Checked.int32 localRegisterCount)
+    do
+        if not blocks.IsDefaultOrEmpty then
+            // TODO: Avoid code duplication with JumpTo
+            for struct(tindex, lindex) in blocks.[0].Locals do
+                locals.Add(lindex, tindex)
 
     member _.ArgumentRegisters = args
     member _.InstructionIndex with get() = iindex and set i = iindex <- i
 
-    member _.BlockIndex
-        with get() = bindex
-        and set i =
-            previousBlockIndex <-
-                match i with
-                | 0 -> previousBlockIndex
-                | _ -> ValueSome i
-            bindex <- i
+    member _.BlockIndex = bindex
 
     member _.PreviousBlockIndex = previousBlockIndex
     member val TemporaryRegisters = List<RuntimeRegister>()
     member _.ReturnRegisters = returns
     member _.Code = blocks
     member _.CurrentMethod = method
+    member this.CurrentBlock = blocks.[this.BlockIndex]
     member _.Previous = prev
+
+    member this.RegisterAt(RegisterIndex.Index index) =
+        let tcount = uint32 this.TemporaryRegisters.Count
+        if index < tcount then
+            this.TemporaryRegisters.[Checked.int32 index]
+        else
+            let index' = index + tcount
+            let acount = uint32 this.ArgumentRegisters.Length
+            if index' < acount then
+                this.ArgumentRegisters.[Checked.int32 index]
+            else
+                let index' = LocalIndex.Index(index' + acount)
+                match locals.TryGetValue index' with
+                | true, Index i -> this.TemporaryRegisters.[Checked.int32 i]
+                | false, _ ->
+                    raise(KeyNotFoundException(sprintf "A register corresponding to the index 0x%0X could not be found" index))
+
+    member this.JumpTo index =
+        previousBlockIndex <- ValueSome bindex
+        bindex <- index
+        this.InstructionIndex <- 0
+        locals.Clear()
+        this.TemporaryRegisters.Clear()
+        for struct(tindex, lindex) in this.CurrentBlock.Locals do
+            locals.Add(lindex, tindex)
 
     member this.StackTrace =
         let trace = System.Text.StringBuilder()
@@ -401,7 +427,6 @@ module Interpreter =
         let private bitf32 operation = fun (Reinterpret.F32 x) (Reinterpret.F32 y) -> Reinterpret.(|U32|) (operation x y)
         let private bitf64 operation = fun (Reinterpret.F64 x) (Reinterpret.F64 y) -> Reinterpret.(|U64|) (operation x y)
 
-        // TODO: Fix, bitwise operations should require that floats be reinterpreted as the corresponding integer types.
         let ``and`` vtype xreg yreg (destination: inref<_>) =
             binop (&&&) (&&&) (&&&) (&&&) (&&&) (&&&) (&&&) (&&&) (&&&) (&&&) (bitf32 (&&&)) (bitf64 (&&&)) vtype xreg yreg &destination
 
@@ -666,43 +691,21 @@ module Interpreter =
             | ValueSome frame'-> frame'.BlockIndex < frame'.Code.Length
             | ValueNone -> false
 
-        let lookupRegisterAt (RegisterIndex.Index index) =
-            let frame' = frame.Value.Value
-            let temporaries = frame'.TemporaryRegisters
-            let tcount = uint32 temporaries.Count
-            if index < tcount then
-                temporaries.[Checked.int32 index]
-            else
-                let index' = index + tcount
-                let acount = uint32 frame'.ArgumentRegisters.Length
-                if index' < acount then
-                    frame'.ArgumentRegisters.[Checked.int32 index]
-                else
-                    failwith "TODO: Lookup local registers"
-
-        let (|LookupRegisterArray|) (indices: ImmutableArray<RegisterIndex>) =
-            let mutable registers = Array.zeroCreate indices.Length // TODO: Cache register lookup array.
-            for i = 0 to registers.Length - 1 do registers.[i] <- lookupRegisterAt indices.[i]
-            Unsafe.As<RuntimeRegister[], ImmutableArray<RuntimeRegister>> &registers
-
         while cont() do
             let frame' = frame.Value.Value
 
-            let inline (|Register|) rindex = lookupRegisterAt rindex
+            let (|LookupRegisterArray|) (indices: ImmutableArray<RegisterIndex>) =
+                let mutable registers = Array.zeroCreate indices.Length // TODO: Cache register lookup array.
+                for i = 0 to registers.Length - 1 do registers.[i] <- frame'.RegisterAt indices.[i]
+                Unsafe.As<RuntimeRegister[], ImmutableArray<RuntimeRegister>> &registers
+
+            let inline (|Register|) rindex = frame'.RegisterAt rindex
             let inline (|Method|) mindex: RuntimeMethod = frame'.CurrentMethod.Module.InitializeMethod mindex
             let inline (|Field|) findex: RuntimeField = frame'.CurrentMethod.Module.InitializeField findex
             let inline (|TypeSignature|) tindex: AnyType = frame'.CurrentMethod.Module.TypeSignatureAt tindex
             let inline (|Data|) dindex: ImmutableArray<_> = frame'.CurrentMethod.Module.DataAt dindex
             let inline (|BranchTarget|) (target: BlockOffset) = Checked.(+) frame'.BlockIndex target
-
-#if DEBUG
-            let branchToTarget (BranchTarget target) =
-#else
-            let inline branchToTarget (BranchTarget target) =
-#endif
-                frame'.InstructionIndex <- 0
-                frame'.BlockIndex <- target
-                frame'.TemporaryRegisters.Clear()
+            let inline branchToTarget (BranchTarget target) = frame'.JumpTo target
 
 #if DEBUG
             let inline fieldAccessInstruction field object access =
@@ -751,13 +754,13 @@ module Interpreter =
             | ValueNone -> ()
 
             try
-                match frame'.Code.[frame'.BlockIndex].Instructions.[frame'.InstructionIndex] with // TODO: Ensure stack frame keeps track of previously executed block.
+                match frame'.CurrentBlock.Instructions.[frame'.InstructionIndex] with
                 | Phi values -> // TODO: In format, reverse order of indices so BlockOffset is first to allow usage as key in dictionary.
                     match frame'.PreviousBlockIndex with
                     | ValueSome prev ->
                         // TODO: Use for loop to avoid extra allocations, maybe even require sorting in the binary format.
                         let struct(valuei, _) = Seq.find (fun struct(_, blocki) -> blocki = prev) values
-                        frame'.TemporaryRegisters.Add(RuntimeRegister.clone(lookupRegisterAt valuei))
+                        frame'.TemporaryRegisters.Add(RuntimeRegister.clone(frame'.RegisterAt valuei))
                     | ValueNone ->
                         invalidOp "Usage of phi instruction is prohibited in the first block of a method"
                 | Select(Register condition, Register vtrue, Register vfalse) ->
@@ -918,10 +921,6 @@ module Interpreter =
             | e -> ex <- ValueSome e
 
             frame'.InstructionIndex <- Checked.(+) frame'.InstructionIndex 1
-            if frame'.InstructionIndex = frame'.Code.[frame'.BlockIndex].Instructions.Length then
-                frame'.InstructionIndex <- 0
-                frame'.BlockIndex <- Checked.(+) frame'.BlockIndex 1
-                frame'.TemporaryRegisters.Clear()
 
         match frame.contents with
         | ValueNone -> entryPointResults
@@ -1012,7 +1011,7 @@ type RuntimeMethod (rmodule: RuntimeModule, index: MethodIndex, method: Method) 
         | MethodBody.Defined codei ->
             let code = rmodule.CodeAt codei
             let args = this.CreateArgumentRegisters()
-            frame.contents <- ValueSome(RuntimeStackFrame(frame.Value, args, returns, code.Blocks, this))
+            frame.contents <- ValueSome(RuntimeStackFrame(frame.Value, args, code.LocalCount, returns, code.Blocks, this))
         | MethodBody.Abstract ->
             if not this.IsVirtual then failwith "TODO: Error for abstract method must be virtual"
 
@@ -1026,7 +1025,7 @@ type RuntimeMethod (rmodule: RuntimeModule, index: MethodIndex, method: Method) 
             let library' = this.Module.IdentifierAt library
             let efunction' = this.Module.IdentifierAt efunction
             let args = this.CreateArgumentRegisters()
-            let frame' = RuntimeStackFrame(frame.Value, args, returns, ImmutableArray.Empty, this)
+            let frame' = RuntimeStackFrame(frame.Value, args, 0u, returns, ImmutableArray.Empty, this)
             frame.contents <- ValueSome frame'
             runExternalCode <- ValueSome <| fun frame'' ->
                 ExternalCode.call library' efunction' frame''.Value.Value
