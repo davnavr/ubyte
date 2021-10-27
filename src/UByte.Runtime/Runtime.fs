@@ -171,12 +171,13 @@ type RuntimeStackFrame
     =
     let mutable bindex, iindex = 0, 0
     let mutable previousBlockIndex = ValueNone
-    let locals = Dictionary<LocalIndex, TemporaryIndex>(Checked.int32 localRegisterCount)
+    let currentLocalLookup = Dictionary<LocalIndex, TemporaryIndex>(Checked.int32 localRegisterCount)
+    let previousLocalLookup = Dictionary<LocalIndex, RuntimeRegister>(Checked.int32 localRegisterCount)
     do
         if not blocks.IsDefaultOrEmpty then
             // TODO: Avoid code duplication with JumpTo
             for struct(tindex, lindex) in blocks.[0].Locals do
-                locals.Add(lindex, tindex)
+                currentLocalLookup.Add(lindex, tindex)
 
     member _.ArgumentRegisters = args
     member _.InstructionIndex with get() = iindex and set i = iindex <- i
@@ -189,7 +190,7 @@ type RuntimeStackFrame
     member this.CurrentBlock = blocks.[this.BlockIndex]
     member _.Previous = prev
 
-    member this.RegisterAt(RegisterIndex.Index index) =
+    member this.RegisterAt(RegisterIndex.Index index) = // NOTE: Factorial bug seems to be an assembler bug, code somewhere assumes there is an extra register besides the one local and one argument
         let tcount = uint32 this.TemporaryRegisters.Count
         if index < tcount then
             this.TemporaryRegisters.[Checked.int32 index]
@@ -200,19 +201,26 @@ type RuntimeStackFrame
                 this.ArgumentRegisters.[Checked.int32 index']
             else
                 let index' = LocalIndex.Index(index - tcount - acount)
-                match locals.TryGetValue index' with
+                match currentLocalLookup.TryGetValue index' with
                 | true, Index i -> this.TemporaryRegisters.[Checked.int32 i]
                 | false, _ ->
-                    raise(KeyNotFoundException(sprintf "A register corresponding to the index 0x%0X could not be found" index))
+                    match previousLocalLookup.TryGetValue index' with
+                    | true, lregister -> lregister
+                    | false, _ ->
+                        sprintf "A register corresponding to the index 0x%0X could not be found" index
+                        |> KeyNotFoundException
+                        |> raise
 
     member this.JumpTo index =
         previousBlockIndex <- ValueSome bindex
         bindex <- index
         iindex <- -1
-        locals.Clear() // TODO: Figure out how to save locals for use in next block.
+        for KeyValue(lindex, Index lregister) in currentLocalLookup do
+            previousLocalLookup.[lindex] <- this.TemporaryRegisters.[Checked.int32 lregister]
+        currentLocalLookup.Clear()
         this.TemporaryRegisters.Clear()
         for struct(tindex, lindex) in this.CurrentBlock.Locals do
-            locals.Add(lindex, tindex)
+            currentLocalLookup.Add(lindex, tindex)
 
     member this.StackTrace =
         let trace = System.Text.StringBuilder()
