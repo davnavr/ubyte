@@ -175,7 +175,7 @@ type RuntimeStackFrame
             let current' = current.Value
             Printf.bprintf trace "  at %O" current'.CurrentMethod
             if not current'.CurrentMethod.IsExternal then
-                Printf.bprintf trace "block %i instruction 0x%04X" current'.BlockIndex current'.InstructionIndex
+                Printf.bprintf trace " block %i instruction 0x%04X" current'.BlockIndex current'.InstructionIndex
             current <- current'.Previous
             if current.IsSome then trace.Append Environment.NewLine |> ignore
         trace.ToString()
@@ -598,8 +598,17 @@ module Interpreter =
             match vtype with
             | PrimitiveType.Bool | PrimitiveType.S8 | PrimitiveType.U8 ->
                 destination.WriteRaw<bool>(0, value)
+            | PrimitiveType.S16 | PrimitiveType.U16 | PrimitiveType.Char16 ->
+                destination.WriteRaw<uint16>(0, if value then 1us else 0us)
+            | PrimitiveType.S32 | PrimitiveType.U32 | PrimitiveType.Char32 ->
+                destination.WriteRaw<uint32>(0, if value then 1u else 0u)
+            | PrimitiveType.S64 | PrimitiveType.U64 ->
+                destination.WriteRaw<uint64>(0, if value then 1UL else 0UL)
+            | PrimitiveType.SNative | PrimitiveType.UNative ->
+                destination.WriteRaw<unativeint>(0, if value then 1un else 0un)
             | PrimitiveType.F32 | PrimitiveType.F64 ->
                 noBooleanFloat()
+            | PrimitiveType.Unit -> ()
 
     let private (|ValidArithmeticFlags|) (flags: ArithmeticFlags) =
         if flags &&& (~~~ArithmeticFlags.ValidMask) <> ArithmeticFlags.None then
@@ -636,12 +645,12 @@ module Interpreter =
             | ValueNone -> false
 
         let lookupRegisterAt (RegisterIndex.Index index) =
-            let temporaries = frame.Value.Value.TemporaryRegisters
+            let frame' = frame.Value.Value
+            let temporaries = frame'.TemporaryRegisters
             let tcount = uint32 temporaries.Count
             if index < tcount then
                 temporaries.[Checked.int32 index]
             else
-                let frame' = frame.Value.Value
                 let index' = index + tcount
                 let acount = uint32 frame'.ArgumentRegisters.Length
                 if index' < acount then
@@ -720,9 +729,11 @@ module Interpreter =
             | ValueNone -> ()
 
             try
-                match frame'.Code.[frame'.BlockIndex].Instructions.[frame'.InstructionIndex] with
-                //| Phi values ->
-                //| Select(Register condition, Register vtrue, Register vfalse) ->
+                match frame'.Code.[frame'.BlockIndex].Instructions.[frame'.InstructionIndex] with // TODO: Ensure stack frame keeps track of previously executed block.
+                | Phi values ->
+                    failwith "TODO: Select a value"
+                | Select(Register condition, Register vtrue, Register vfalse) ->
+                    failwith "TODO: Select a value"
                 // TODO: Create common helper function for arithmetic operations, and don't use inref<_> since RuntimeRegister can be used directly
                 | Add(ValidArithmeticFlags flags, vtype, Register x, Register y) ->
                     let destination = createPrimitiveRegister vtype
