@@ -403,6 +403,12 @@ module Interpreter =
         let decr vtype register (destination: inref<_>) =
             unop decrement decrement decrement decrement decrement decrement decrement decrement decrement decrement decrement decrement vtype register &destination
 
+        let not vtype register (destination: inref<_>) =
+            unop (~~~) (~~~) (~~~) (~~~) (~~~) (~~~) (~~~) (~~~) (~~~) (~~~)
+                (fun (Reinterpret.F32 i) ->  Reinterpret.(|U32|) (~~~i))
+                (fun (Reinterpret.F64 i) -> Reinterpret.(|U64|) (~~~i))
+                vtype register &destination
+
         [<RequireQualifiedAccess>]
         module Checked =
             open Microsoft.FSharp.Core.Operators.Checked
@@ -762,6 +768,9 @@ module Interpreter =
                 | Xor(vtype, Register x, Register y) ->
                     let destination = createPrimitiveRegister vtype
                     Arithmetic.xor vtype x y &destination.RegisterValue
+                | Not(vtype, Register register) ->
+                    let destination = createPrimitiveRegister vtype
+                    Arithmetic.not vtype register &destination.RegisterValue
                 // TODO: Should exception be thrown if Constant integer overflows?
                 | Const_u(vtype, value) ->
                     let destination = createPrimitiveRegister vtype
@@ -776,8 +785,8 @@ module Interpreter =
                     let destination = createPrimitiveRegister vtype
                     Constant.boolean vtype true &destination.RegisterValue
                 | Obj_null -> (createReferenceRegister ReferenceType.Any).RegisterValue.WriteRef(0, RuntimeObject.Null)
-                //| Const_f32 value ->
-                //| Const_f64 value ->
+                | Const_f32 _
+                | Const_f64 _ -> failwith "TODO: Storing of constant floating point integers is not yet supported"
                 | Call(flags, Method method, LookupRegisterArray arguments) ->
                     frame'.TemporaryRegisters.AddRange(invoke flags arguments method)
                 | Call_virt(flags, Method method, Register this, LookupRegisterArray arguments) ->
