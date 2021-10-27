@@ -218,16 +218,18 @@ type RuntimeArray =
         RuntimeArray(layout.RawDataSize, layout.ObjectReferencesLength, length)
 
     member private this.ElementLength arr = Array.length arr / this.Length
-
     member private this.ElementReferences i = OffsetArray<RuntimeObject>(i * this.ElementLength this.References, this.References)
+
+    member this.DataLength = this.ElementLength this.Data
+    member this.ReferenceCount = this.ElementLength this.References
 
     member this.Item
         with get(index: int32): RuntimeStruct =
-            { RawData = OffsetArray<byte>(index * this.ElementLength this.Data, this.Data)
+            { RawData = OffsetArray<byte>(index * this.DataLength, this.Data)
               References = this.ElementReferences index }
         and set index (value: RuntimeStruct) =
-            value.RawData.AsSpan().CopyTo(Span(this.Data, index * this.ElementLength this.Data, value.RawData.Length))
-            let rdestination = Span(this.References, index * this.ElementLength this.References, value.References.Length)
+            value.RawData.AsSpan().CopyTo(Span(this.Data, index * this.DataLength, value.RawData.Length))
+            let rdestination = Span(this.References, index * this.ReferenceCount, value.References.Length)
             value.References.AsSpan().CopyTo rdestination
 
 [<RequireQualifiedAccess; NoComparison; ReferenceEquality>]
@@ -554,13 +556,18 @@ module Interpreter =
     /// Contains functions for storing values into registers.
     [<RequireQualifiedAccess>]
     module private Constant =
-        let inline private number vtype value (destination: inref<RuntimeStruct>) =
+        let inline private number u32 s32 vtype value (destination: inref<RuntimeStruct>) =
             match vtype with
-            | PrimitiveType.U32 -> destination.WriteRaw<uint32>(0, Checked.uint32 value)
-            | PrimitiveType.S32 -> destination.WriteRaw<int32>(0, Checked.int32 value)
+            | PrimitiveType.U32 -> destination.WriteRaw<uint32>(0, u32 value)
+            | PrimitiveType.S32 -> destination.WriteRaw<int32>(0, s32 value)
 
-        let uinteger vtype (value: uint32) (destination: inref<_>) = number vtype value &destination
-        let sinteger vtype (value: int32) (destination: inref<_>) = number vtype value &destination
+        let uinteger vtype (value: uint32) (destination: inref<_>) = number uint32 int32 vtype value &destination
+        let sinteger vtype (value: int32) (destination: inref<_>) = number uint32 int32 vtype value &destination
+
+        module Checked =
+            open Microsoft.FSharp.Core.Operators.Checked
+
+            let sinteger vtype (value: int32) (destination: inref<_>) = number uint32 int32 vtype value &destination
 
         let private noBooleanFloat() = invalidOp "Conversion of boolean value to float is not supported"
 
@@ -589,15 +596,16 @@ module Interpreter =
             if isFlagSet CallFlags.RequiresTailCallOptimization flags then
                 raise(NotImplementedException "Tail call optimization is not yet supported")
             method.SetupStackFrame(frame, &runExternalCode)
-            let arguments' = frame.Value.Value.ArgumentRegisters
+            let frame' = frame.Value.Value
+            let arguments' = frame'.ArgumentRegisters
             if arguments.Length <> arguments'.Length then
                 failwithf "TODO: Error for argument array lengths do not match, expected %i got %i" arguments'.Length arguments.Length
             if arguments.Length < arguments'.Length then
                 invalidOp (sprintf "An instruction that calls a method must provide at least as many arguments as specified in the method signature, %i arguments were expected when only %i were provided" arguments'.Length arguments.Length)
             copyRegisterValues arguments arguments'
+            frame'.ReturnRegisters
 
-        invoke CallFlags.None arguments entrypoint
-        let entryPointResults = frame.Value.Value.ReturnRegisters
+        let entryPointResults = invoke CallFlags.None arguments entrypoint
 
         let inline cont() =
             match frame.Value with
@@ -673,8 +681,13 @@ module Interpreter =
                 | RuntimeObject.Null ->
                     raise(NullReferenceException "Cannot access an array element with a null array reference")
 
-            let inline allocateRegisterPrimitive rtype =
+            let inline createPrimitiveRegister rtype =
                 let register = RuntimeRegister.Raw(primitiveTypeSize rtype, ValueType.Primitive rtype)
+                frame'.TemporaryRegisters.Add register
+                register
+
+            let inline createReferenceRegister rtype =
+                let register = RuntimeRegister.Object rtype
                 frame'.TemporaryRegisters.Add register
                 register
 
@@ -689,66 +702,67 @@ module Interpreter =
                 //| Select(Register condition, Register vtrue, Register vfalse) ->
                 // TODO: Create common helper function for arithmetic operations, and don't use inref<_> since RuntimeRegister can be used directly
                 | Add(ValidArithmeticFlags flags, vtype, Register x, Register y) ->
-                    let destination = allocateRegisterPrimitive vtype
+                    let destination = createPrimitiveRegister vtype
                     if isFlagSet ArithmeticFlags.ThrowOnOverflow flags
                     then Arithmetic.Checked.add vtype x y &destination.RegisterValue
                     else Arithmetic.add vtype x y &destination.RegisterValue
                 | Sub(ValidArithmeticFlags flags, vtype, Register x, Register y) ->
-                    let destination = allocateRegisterPrimitive vtype
+                    let destination = createPrimitiveRegister vtype
                     if isFlagSet ArithmeticFlags.ThrowOnOverflow flags
                     then Arithmetic.Checked.sub vtype x y &destination.RegisterValue
                     else Arithmetic.sub vtype x y &destination.RegisterValue
                 | Mul(ValidArithmeticFlags flags, vtype, Register x, Register y) ->
-                    let destination = allocateRegisterPrimitive vtype
+                    let destination = createPrimitiveRegister vtype
                     if isFlagSet ArithmeticFlags.ThrowOnOverflow flags
                     then Arithmetic.Checked.mul vtype x y &destination.RegisterValue
                     else Arithmetic.mul vtype x y &destination.RegisterValue
                 | Div(ValidArithmeticFlags flags, vtype, Register x, Register y) ->
-                    let destination = allocateRegisterPrimitive vtype
+                    let destination = createPrimitiveRegister vtype
                     if isFlagSet ArithmeticFlags.ThrowOnDivideByZero flags
                     then Arithmetic.Checked.div vtype x y &destination.RegisterValue
                     else Arithmetic.div vtype x y &destination.RegisterValue
                 | Rem(ValidArithmeticFlags flags, vtype, Register x, Register y) ->
-                    let destination = allocateRegisterPrimitive vtype
+                    let destination = createPrimitiveRegister vtype
                     if isFlagSet ArithmeticFlags.ThrowOnDivideByZero flags
                     then Arithmetic.Checked.rem vtype x y &destination.RegisterValue
                     else Arithmetic.rem vtype x y &destination.RegisterValue
                 | Incr(ValidArithmeticFlags flags, vtype, Register register) ->
-                    let destination = allocateRegisterPrimitive vtype
+                    let destination = createPrimitiveRegister vtype
                     if isFlagSet ArithmeticFlags.ThrowOnOverflow flags
                     then Arithmetic.Checked.incr vtype register &destination.RegisterValue
                     else Arithmetic.incr vtype register &destination.RegisterValue
                 | Decr(ValidArithmeticFlags flags, vtype, Register register) ->
-                    let destination = allocateRegisterPrimitive vtype
+                    let destination = createPrimitiveRegister vtype
                     if isFlagSet ArithmeticFlags.ThrowOnOverflow flags
                     then Arithmetic.Checked.decr vtype register &destination.RegisterValue
                     else Arithmetic.decr vtype register &destination.RegisterValue
                 | And(vtype, Register x, Register y) ->
-                    let destination = allocateRegisterPrimitive vtype
+                    let destination = createPrimitiveRegister vtype
                     Arithmetic.``and`` vtype x y &destination.RegisterValue
                 | Or(vtype, Register x, Register y) ->
-                    let destination = allocateRegisterPrimitive vtype
+                    let destination = createPrimitiveRegister vtype
                     Arithmetic.``or`` vtype x y &destination.RegisterValue
                 | Xor(vtype, Register x, Register y) ->
-                    let destination = allocateRegisterPrimitive vtype
+                    let destination = createPrimitiveRegister vtype
                     Arithmetic.xor vtype x y &destination.RegisterValue
                 // TODO: Should exception be thrown if Constant integer overflows?
                 | Const_u(vtype, value) ->
-                    let destination = allocateRegisterPrimitive vtype
+                    let destination = createPrimitiveRegister vtype
                     Constant.uinteger vtype value &destination.RegisterValue
                 | Const_s(vtype, value) ->
-                    let destination = allocateRegisterPrimitive vtype
+                    let destination = createPrimitiveRegister vtype
                     Constant.sinteger vtype value &destination.RegisterValue
                 | Const_true vtype ->
-                    let destination = allocateRegisterPrimitive vtype
+                    let destination = createPrimitiveRegister vtype
                     Constant.boolean vtype true &destination.RegisterValue
                 | Const_false vtype | Const_zero vtype ->
-                    let destination = allocateRegisterPrimitive vtype
+                    let destination = createPrimitiveRegister vtype
                     Constant.boolean vtype true &destination.RegisterValue
+                | Obj_null -> (createReferenceRegister ReferenceType.Any).RegisterValue.WriteRef(0, RuntimeObject.Null)
                 //| Const_f32 value ->
                 //| Const_f64 value ->
                 | Call(flags, Method method, LookupRegisterArray arguments) ->
-                    invoke flags arguments method
+                    frame'.TemporaryRegisters.AddRange(invoke flags arguments method)
                 | Call_virt(flags, Method method, Register this, LookupRegisterArray arguments) ->
                     if not(isFlagSet CallFlags.ThrowOnNullThis flags) then
                         invalidOp "Calling virtual method without checking for null object reference is not supported"
@@ -759,14 +773,54 @@ module Interpreter =
                         "cannot be deduced"
                         |> invalidOp
                     | RuntimeObject.TypeInstance(otype, _) -> 
-                        invoke flags (arguments.Insert(0, this)) otype.VTable.[method]
+                        frame'.TemporaryRegisters.AddRange(invoke flags (arguments.Insert(0, this)) otype.VTable.[method])
                     | RuntimeObject.Array _ ->
                         invalidOp "Cannot call virtual method with an array object reference"
                 | Obj_new(Method constructor, LookupRegisterArray arguments) ->
                     let o = RuntimeObject.TypeInstance(constructor.DeclaringType, constructor.DeclaringType.InitializeObjectFields())
-                    let destination = RuntimeRegister.Object(ReferenceType.Defined constructor.DeclaringType.Index) // TODO: Cache the ReferenceType in RuntimeTypeDefinition.
+                    let destination = createReferenceRegister(ReferenceType.Defined constructor.DeclaringType.Index) // TODO: Cache the ReferenceType in RuntimeTypeDefinition.
                     destination.RegisterValue.WriteRef(0, o)
-                    invoke CallFlags.None (arguments.Insert(0, destination)) constructor
+                    invoke CallFlags.None (arguments.Insert(0, destination)) constructor |> ignore
+                | Obj_fd_ld(Field field, Register object) ->
+                    field.CheckMutate frame'
+                    let destination = { RuntimeRegister.RegisterType = field.FieldType; RegisterValue = field.AllocateValue() }
+                    frame'.TemporaryRegisters.Add destination
+                    fieldAccessInstruction field object <| fun value -> copyRuntimeValue &value &destination.RegisterValue
+                | Obj_fd_st(Field field, Register object, Register source) ->
+                    fieldAccessInstruction field object <| fun value -> copyRuntimeValue &source.RegisterValue &value
+                | Obj_arr_new(TypeSignature etype, Register length) ->
+                    let struct(dsize, rlen) = frame'.CurrentMethod.Module.CalculateTypeSize etype
+                    let array = RuntimeArray(dsize, rlen, NumberValue.s32 length)
+                    createReferenceRegister((*ReferenceType.Vector etype*) ReferenceType.Any).RegisterValue.WriteRef(0, RuntimeObject.Array array) // TODO: Get/check array element type.
+                | Obj_arr_const(TypeSignature etype, Data data) ->
+                    let struct(dsize, rlen) = frame'.CurrentMethod.Module.CalculateTypeSize etype
+                    if rlen > 0 then invalidOp("Cannot create constant array containing elements of type " + etype.ToString())
+                    let array = RuntimeArray(dsize, rlen, data.Length / dsize)
+                    data.AsSpan().Slice(0, array.Data.Length).CopyTo(Span array.Data)
+                    createReferenceRegister((*ReferenceType.Vector etype*) ReferenceType.Any).RegisterValue.WriteRef(0, RuntimeObject.Array array) // TODO: Get/check array element type.
+                | Obj_arr_len(ValidArithmeticFlags flags, ltype, Register array) ->
+                    let destination = createPrimitiveRegister ltype
+                    match array.RegisterValue.ReadRef 0 with
+                    | RuntimeObject.Array array' ->
+                        if isFlagSet ArithmeticFlags.ThrowOnOverflow flags
+                        then Constant.Checked.sinteger ltype array'.Length &destination.RegisterValue
+                        else Constant.sinteger ltype array'.Length &destination.RegisterValue
+                    | RuntimeObject.Null ->
+                        raise(NullReferenceException "Cannot access array length with a null array reference")
+                    | RuntimeObject.TypeInstance(otype, _) ->
+                        invalidOp("Cannot access array length with an object reference of type " + otype.ToString())
+                | Obj_arr_get(Register array, Register index) ->
+                    arrayAccessInstruction array index <| fun array i ->
+                        let value = array.[i]
+                        let destination =
+                            { RuntimeRegister.RegisterType = failwith "TODO: What type to use to store array element?"
+                              RegisterValue =
+                                { RuntimeStruct.RawData = OffsetArray array.DataLength
+                                  References = OffsetArray array.ReferenceCount } }
+                        frame'.TemporaryRegisters.Add destination
+                        copyRuntimeValue &value &destination.RegisterValue
+                | Obj_arr_set(Register array, Register index, Register source) ->
+                    arrayAccessInstruction array index <| fun array i -> array.[i] <- source.RegisterValue
                 | Ret(LookupRegisterArray results) ->
                     if results.Length < frame'.ReturnRegisters.Length then
                         invalidOp(sprintf "Expected to return %i values but only returned %i values" frame'.ReturnRegisters.Length results.Length)
@@ -947,6 +1001,9 @@ type RuntimeField (rmodule: RuntimeModule, field: Field, size) =
     member val DeclaringType: RuntimeTypeDefinition = rmodule.InitializeType field.FieldOwner
 
     member val FieldType = rmodule.TypeSignatureAt field.FieldType
+
+    member this.AllocateValue(): RuntimeStruct =
+        { RuntimeStruct.RawData = OffsetArray this.DataSize; References = OffsetArray this.ReferencesLength }
 
     /// If the field is not marked as mutable, prevents modification of the field value outside of a constructor or type initializer.
     member this.CheckMutate(frame: RuntimeStackFrame) =
