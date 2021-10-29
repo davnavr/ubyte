@@ -27,7 +27,7 @@
     .block $LOOP_BODY {
         %t_arg = obj.arr.get $a_argv $l_index
         %t_length = obj.arr.len s32 %t_arg
-        $l_acc = add s32 $l_acc %t_length
+        $l_acc = add s32 $l_sum %t_length
         %t_one = const.s s32 1
         $l_next_index = add s32 $l_index %t_one
         br $LOOP_START
