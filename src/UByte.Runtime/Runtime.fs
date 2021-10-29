@@ -273,7 +273,7 @@ type RuntimeArray =
         let layout = stype.Layout
         RuntimeArray(layout.RawDataSize, layout.ObjectReferencesLength, length, etype)
 
-    member private this.ElementLength arr = Array.length arr / this.Length
+    member private this.ElementLength arr = if this.Length > 0 then Array.length arr / this.Length else 0
     member private this.ElementReferences i = OffsetArray<RuntimeObject>(i * this.ElementLength this.References, this.References)
 
     member this.DataLength = this.ElementLength this.Data

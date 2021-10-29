@@ -13,14 +13,14 @@
 
 .code @code_main {
     .arguments ($a_argv)
-    .locals ($l_init_zero, $l_init_index, $l_init_length, $l_index, $l_next_index, $l_acc, $l_sum)
+    .locals ($l_init_zero, $l_init_length, $l_index, $l_next_index, $l_acc, $l_sum)
     .block $ENTRY {
         $l_init_zero = const.zero s32
         $l_init_length = obj.arr.len s32 $a_argv
         br $LOOP_START
     }
     .block $LOOP_START {
-        $l_sum = phi $l_init_index when $ENTRY or $l_acc when $LOOP_BODY
+        $l_sum = phi $l_init_zero when $ENTRY or $l_acc when $LOOP_BODY
         $l_index = phi $l_init_zero when $ENTRY or $l_next_index when $LOOP_BODY
         br.eq $l_index $l_init_length then $END else $LOOP_BODY
     }
