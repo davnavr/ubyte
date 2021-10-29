@@ -750,13 +750,13 @@ let assemble declarations = // TODO: Fix, use result so at least one error objec
                             else
                                 match arguments.TryGetValue name with
                                 | true, i ->
-                                    Checked.(+) (uint32 temps.Count) i
+                                    Checked.(+) tempi i
                                     |> RegisterIndex.Index
                                     |> ValueSome
                                 | false, _ ->
                                     match locals.TryGetValue name with
                                     | true, i ->
-                                        Checked.(+) (uint32 temps.Count) i
+                                        Checked.(+) tempi i
                                         |> Checked.(+) (uint32 arguments.Count)
                                         |> RegisterIndex.Index
                                         |> ValueSome
@@ -776,6 +776,10 @@ let assemble declarations = // TODO: Fix, use result so at least one error objec
 
                         List.iter
                             (fun struct(results: ParsedRegister list, instruction: ParsedInstruction) ->
+                                match instruction blockRegisterResolver iresolver ierrors blockOffsetLookup with
+                                | ValueSome instruction' -> instrs.Add instruction'
+                                | ValueNone -> success <- false
+
                                 List.iter
                                     (function
                                     | { ParsedRegister.IsTemporary = true; ParsedRegister.Name = pos, name } ->
@@ -796,10 +800,6 @@ let assemble declarations = // TODO: Fix, use result so at least one error objec
                                             registerNotFound id
                                             success <- false)
                                     results
-
-                                match instruction blockRegisterResolver iresolver ierrors blockOffsetLookup with
-                                | ValueSome instruction' -> instrs.Add instruction'
-                                | ValueNone -> success <- false
 
                                 index <- Checked.(+) index 1)
                             body

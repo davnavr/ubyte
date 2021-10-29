@@ -190,7 +190,7 @@ type RuntimeStackFrame
     member this.CurrentBlock = blocks.[this.BlockIndex]
     member _.Previous = prev
 
-    member this.RegisterAt(RegisterIndex.Index index) = // NOTE: Factorial bug seems to be an assembler bug, code somewhere assumes there is an extra register besides the one local and one argument
+    member this.RegisterAt(RegisterIndex.Index index) =
         let tcount = uint32 this.TemporaryRegisters.Count
         if index < tcount then
             this.TemporaryRegisters.[Checked.int32 index]
@@ -673,15 +673,17 @@ module Interpreter =
         let mutable runExternalCode: (RuntimeStackFrame voption ref -> unit) voption = ValueNone
         let mutable ex = ValueNone
 
-#if DEBUG
         let invoke flags (arguments: ImmutableArray<_>) (method: RuntimeMethod) =
-#else
-        let inline invoke flags (arguments: ImmutableArray<_>) (method: RuntimeMethod) =
-#endif
             if isFlagSet CallFlags.RequiresTailCallOptimization flags then
                 raise(NotImplementedException "Tail call optimization is not yet supported")
             method.SetupStackFrame(frame, &runExternalCode)
             let frame' = frame.Value.Value
+
+            // TODO: Maybe problem is that return registers are not added to list in the previous frame?
+            match frame'.Previous with
+            | ValueSome previous -> previous.TemporaryRegisters.AddRange frame'.ReturnRegisters
+            | ValueNone -> ()
+
             let arguments' = frame'.ArgumentRegisters
             if arguments.Length <> arguments'.Length then
                 failwithf "TODO: Error for argument array lengths do not match, expected %i got %i" arguments'.Length arguments.Length
@@ -692,7 +694,11 @@ module Interpreter =
 
         let entryPointResults = invoke CallFlags.None arguments entrypoint
 
+#if DEBUG
+        let cont() =
+#else
         let inline cont() =
+#endif
             match frame.Value with
             | ValueSome frame' -> frame'.BlockIndex < frame'.Code.Length && frame'.InstructionIndex < frame'.CurrentBlock.Instructions.Length
             | ValueNone -> false
@@ -717,7 +723,13 @@ module Interpreter =
             let inline (|TypeSignature|) tindex: AnyType = frame'.CurrentMethod.Module.TypeSignatureAt tindex
             let inline (|Data|) dindex: ImmutableArray<_> = frame'.CurrentMethod.Module.DataAt dindex
             let inline (|BranchTarget|) (target: BlockOffset) = Checked.(+) frame'.BlockIndex target
-            let inline branchToTarget (BranchTarget target) = frame'.JumpTo target
+
+#if DEBUG
+            let branchToTarget (BranchTarget target) =
+#else
+            let inline branchToTarget (BranchTarget target) =
+#endif
+                frame'.JumpTo target
 
 #if DEBUG
             let inline fieldAccessInstruction field object access =
@@ -766,7 +778,13 @@ module Interpreter =
             | ValueNone -> ()
 
             try
-                match frame'.CurrentBlock.Instructions.[frame'.InstructionIndex] with
+                let instr = frame'.CurrentBlock.Instructions.[frame'.InstructionIndex]
+
+#if DEBUG && TRACE_EXECUTION
+                printfn "%O -" frame'.CurrentMethod
+                printfn "\t%A at block %i instruction %i" instr frame'.BlockIndex frame'.InstructionIndex 
+#endif
+                match instr with
                 | Phi values -> // TODO: In format, reverse order of indices so BlockOffset is first to allow usage as key in dictionary.
                     match frame'.PreviousBlockIndex with
                     | ValueSome prev ->
