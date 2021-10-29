@@ -1454,7 +1454,11 @@ type RuntimeModule (m: Module, moduleImportResolver: ModuleIdentifier -> Runtime
                 | _ -> failwith "TODO: Error for invalid number of arguments for entrypoint"
 
             let results = Interpreter.interpret arguments main
-            results.[0].RegisterValue.ReadRaw<int32> 0
+            let ecode = results.[0].RegisterValue.ReadRaw<int32> 0
+#if DEBUG && TRACE_EXECUTION
+            printfn "Exited with code %i (0x%08X)" ecode ecode
+#endif
+            ecode
         | ValueNone -> raise(MissingEntryPointException(this, "The entry point method of the module is not defined"))
 
     override this.ToString() = sprintf "(%s, v%O)" this.Name this.Version
