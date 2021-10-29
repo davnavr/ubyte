@@ -678,12 +678,6 @@ module Interpreter =
                 raise(NotImplementedException "Tail call optimization is not yet supported")
             method.SetupStackFrame(frame, &runExternalCode)
             let frame' = frame.Value.Value
-
-            // TODO: Maybe problem is that return registers are not added to list in the previous frame?
-            match frame'.Previous with
-            | ValueSome previous -> previous.TemporaryRegisters.AddRange frame'.ReturnRegisters
-            | ValueNone -> ()
-
             let arguments' = frame'.ArgumentRegisters
             if arguments.Length <> arguments'.Length then
                 failwithf "TODO: Error for argument array lengths do not match, expected %i got %i" arguments'.Length arguments.Length
