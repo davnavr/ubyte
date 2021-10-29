@@ -16,18 +16,19 @@
 }
 
 .code @code_constructor_derived {
-    .arguments (@a_this)
-    call @constructor_base () (@a_this)
-    ret
+    .arguments ($a_this)
+    .block $ENTRY {
+        call @constructor_base ($a_this)
+        ret
+    }
 }
 
 .code @code_method_derived {
-    .locals @sig_int (@l0)
-    // TODO: How to ignore argument indices?
-    .arguments (@a_this)
-
-    const.zero @l0
-    ret @l0
+    .arguments ($a_this)
+    .block $ENTRY {
+        %t0 = const.zero s32
+        ret %t0
+    }
 }
 
 .identifier @id_class_derived DerivedClass
@@ -51,17 +52,18 @@
 }
 
 .code @code_main {
-    .locals @sig_int (@l_exit)
-    .locals @sig_obj (@l_obj)
-
-    const.i32 1 @l_exit
-    obj.new @constructor_derived @l_obj ()
-    call.virt @method_base (@l_exit) (@l_obj)
-    ret @l_exit
+    .block $ENTRY {
+        %t0 = const.s s32 1
+        %t1 = obj.new @constructor_derived ()
+        %t2 = call.virt throw.nullthis @method_base %t1 ()
+        ret %t2
+    }
 }
 
 .code @code_constructor_base {
-    ret
+    .block $ENTRY {
+        ret
+    }
 }
 
 .identifier @id_class_base BaseClass

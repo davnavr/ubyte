@@ -15,10 +15,11 @@
 .signature @sig_helper method (@sig_int32) (@sig_int32)
 
 .code @code_helper {
-    .arguments (@a0)
-
-    incr @a0
-    ret @a0
+    .arguments ($a0)
+    .block $ENTRY {
+        %t_result = incr s32 $a0
+        ret %t_result
+    }
 }
 
 .type @class_helper public {

@@ -19,54 +19,56 @@
 .signature @sig_child_decrement_decrement method () (@sig_obj_child_decrement)
 
 .code @code_main {
-    .locals @sig_int (@l0, @l1)
-    .locals @sig_obj_base (@l_class_0)
-    .locals @sig_obj_child_decrement (@l_class_1)
+    .block $ENTRY {
+        %t_class_0 = obj.new @method_base_constructor ()
+        call @method_base_increment (%t_class_0)
+        %t_incr_0 = obj.fd.ld @field_base_counter %t_class_0
 
-    obj.new @method_base_constructor @l_class_0 ()
-    call @method_base_increment () (@l_class_0)
-    obj.ldfd @field_base_counter @l_class_0 @l0
-    obj.new @method_decrement_constructor @l_class_1 ()
-    call @method_decrement_decrement () (@l_class_1)
-    obj.ldfd @field_base_counter @l_class_1 @l1
-    add @l0 @l1 @l0
-    ret @l0
+        %t_class_1 = obj.new @method_decrement_constructor ()
+        call @method_decrement_decrement (%t_class_1)
+        %t_incr_1 = obj.fd.ld @field_base_counter %t_class_1
+
+        %t_incr_sum = add s32 %t_incr_0 %t_incr_1
+
+        ret %t_incr_sum
+    }
 }
 
 .code @code_base_constructor {
-    .locals @sig_int (@l_counter)
-    .arguments (@a_this)
-
-    const.zero @l_counter
-    obj.stfd @field_base_counter @a_this @l_counter
-    ret
+    .arguments ($a_this)
+    .block $ENTRY {
+        %t0 = const.zero s32
+        obj.fd.st @field_base_counter $a_this %t0
+        ret
+    }
 }
 
 .code @code_base_increment {
-    .locals @sig_int (@l_counter)
-    .arguments (@a_this)
-
-    obj.ldfd @field_base_counter @a_this @l_counter
-    incr @l_counter
-    obj.stfd @field_base_counter @a_this @l_counter
-    ret
+    .arguments ($a_this)
+    .block $ENTRY {
+        %t0 = obj.fd.ld @field_base_counter $a_this
+        %t1 = incr s32 %t0
+        obj.fd.st @field_base_counter $a_this %t1
+        ret
+    }
 }
 
 .code @code_child_constructor {
-    .arguments (@a_this)
-
-    call @method_base_constructor () (@a_this)
-    ret
+    .arguments ($a_this)
+    .block $ENTRY {
+        call @method_base_constructor ($a_this)
+        ret
+    }
 }
 
 .code @code_child_decrement {
-    .locals @sig_int (@l_counter)
-    .arguments (@a_this)
-
-    obj.ldfd @field_base_counter @a_this @l_counter
-    decr @l_counter
-    obj.stfd @field_base_counter @a_this @l_counter
-    ret
+    .arguments ($a_this)
+    .block $ENTRY {
+        %t0 = obj.fd.ld @field_base_counter $a_this
+        %t1 = decr s32 %t0
+        obj.fd.st @field_base_counter $a_this %t1
+        ret
+    }
 }
 
 .namespace @namespace_example {

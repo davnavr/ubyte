@@ -17,20 +17,20 @@
 .signature @sig_constructor method () (@sig_myclass, @sig_int)
 
 .code @code_main {
-    .locals @sig_int (@l0)
-    .locals @sig_myclass (@l1)
-
-    const.i32 21 @l0
-    obj.new @method_constructor @l1 (@l0)
-    obj.ldfd @field_value @l1 @l0
-    ret @l0
+    .block $ENTRY {
+        %t0 = const.s s32 21
+        %t1 = obj.new @method_constructor (%t0)
+        %t2 = obj.fd.ld @field_value %t1
+        ret %t2
+    }
 }
 
 .code @code_constructor {
-    .arguments (@a_this, @a_value)
-
-    obj.stfd @field_value @a_this @a_value
-    ret
+    .arguments ($a_this, $a_value)
+    .block $ENTRY {
+        obj.fd.st @field_value $a_this $a_value
+        ret
+    }
 }
 
 .namespace @namespace_example {
