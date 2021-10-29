@@ -499,7 +499,7 @@ let code: Parser<ParsedCode, _> =
         }
         |> addInstructionParser "br.true"
 
-        codeBlockName |>> fun i _ _ errors labels -> voptional {
+        lsymbol |>> fun i _ _ errors labels -> voptional {
             let! i' = lookupCodeBlock labels errors i
             return InstructionSet.Br i'
         }
