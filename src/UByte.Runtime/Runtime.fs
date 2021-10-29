@@ -462,6 +462,39 @@ module Interpreter =
                 (fun (Reinterpret.F64 i) -> Reinterpret.(|U64|) (~~~i))
                 vtype register &destination
 
+        let inline private rotop sh8 sh16 sh32 sh64 shnative vtype amount register (destination: inref<RuntimeStruct>) =
+            let amount' = NumberValue.s32 amount
+            match vtype with
+            | PrimitiveType.Bool
+            | PrimitiveType.S8
+            | PrimitiveType.U8 ->
+                destination.WriteRaw<uint8>(0, sh8 (NumberValue.u8 register) amount')
+            | PrimitiveType.Char16
+            | PrimitiveType.S16
+            | PrimitiveType.U16 ->
+                destination.WriteRaw<uint16>(0, sh16 (NumberValue.u16 register) amount')
+            | PrimitiveType.Char32
+            | PrimitiveType.S32
+            | PrimitiveType.U32 ->
+                destination.WriteRaw<uint32>(0, sh32 (NumberValue.u32 register) amount')
+            | PrimitiveType.S64
+            | PrimitiveType.U64 ->
+                destination.WriteRaw<uint64>(0, sh64 (NumberValue.u64 register) amount')
+            | PrimitiveType.SNative
+            | PrimitiveType.UNative ->
+                destination.WriteRaw<unativeint>(0, shnative (NumberValue.unative register) amount')
+            | PrimitiveType.F32
+            | PrimitiveType.F64 ->
+                raise(NotImplementedException "Integer rotation not supported for floating point values, TODO: Reinterpret float as integer")
+            | PrimitiveType.Unit ->
+                noUnitType()
+
+        let rotl vtype amount register (destination: inref<_>) =
+            rotop (<<<) (<<<) (<<<) (<<<) (<<<) vtype amount register &destination
+
+        let rotr vtype amount register (destination: inref<_>) =
+            rotop (>>>) (>>>) (>>>) (>>>) (>>>) vtype amount register &destination
+
         [<RequireQualifiedAccess>]
         module Checked =
             open Microsoft.FSharp.Core.Operators.Checked
@@ -935,6 +968,12 @@ module Interpreter =
                 | Br_true(Register condition, ttrue, tfalse) ->
                     branchToTarget (if Compare.isTrueValue condition then ttrue else tfalse)
                 | Nop -> ()
+                | Rotl(vtype, Register amount, Register value) ->
+                    let destination = createPrimitiveRegister vtype
+                    Arithmetic.rotl vtype amount value &destination.RegisterValue
+                | Rotr(vtype, Register amount, Register value) ->
+                    let destination = createPrimitiveRegister vtype
+                    Arithmetic.rotr vtype amount value &destination.RegisterValue
 
                 match runExternalCode with
                 | ValueNone -> ()
@@ -1226,7 +1265,7 @@ type RuntimeTypeDefinition (rm: RuntimeModule, index: TypeDefinitionIndex, t: Ty
     member val Name = rm.IdentifierAt t.TypeName
     member val Namespace = rm.NamespaceAt t.TypeNamespace
 
-    member _.FindMethod name = // TODO: Figure out if methods defined in inherited class(es)
+    member _.FindMethod name = // TODO: Figure out if methods defined in inherited class(es), note that this is used to resolve method references.
         let mutable result, i = ValueNone, 0
 
         while i < methodis.Length && result.IsNone do
