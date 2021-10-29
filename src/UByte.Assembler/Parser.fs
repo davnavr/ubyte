@@ -431,8 +431,8 @@ let code: Parser<ParsedCode, _> =
             pipe4
                 localCodeRegister
                 localCodeRegister
-                (whitespace >>. keyword "then" >>. whitespace >>. lsymbol)
-                (whitespace >>. keyword "else" >>. whitespace >>. lsymbol)
+                (keyword "then" >>. lsymbol)
+                (keyword "else" >>. lsymbol)
                 (fun xreg yreg btrue bfalse rlookup _ errors blocks -> voptional {
                     let! xreg' = lookupRegisterName rlookup errors xreg
                     let! yreg' = lookupRegisterName rlookup errors yreg
@@ -491,12 +491,16 @@ let code: Parser<ParsedCode, _> =
         }
         |> addInstructionParser "obj.fd.st"
 
-        pipe3 localCodeRegister lsymbol lsymbol <| fun creg btrue bfalse rlookup _ errors blocks -> voptional {
-            let! creg' = lookupRegisterName rlookup errors creg
-            let! btrue' = lookupCodeBlock blocks errors btrue
-            let! bfalse' = lookupCodeBlock blocks errors bfalse
-            return InstructionSet.Br_true(creg', btrue', bfalse')
-        }
+        pipe3
+            localCodeRegister
+            (keyword "then" >>. lsymbol)
+            (keyword "else" >>. lsymbol)
+            (fun creg btrue bfalse rlookup _ errors blocks -> voptional {
+                let! creg' = lookupRegisterName rlookup errors creg
+                let! btrue' = lookupCodeBlock blocks errors btrue
+                let! bfalse' = lookupCodeBlock blocks errors bfalse
+                return InstructionSet.Br_true(creg', btrue', bfalse')
+            })
         |> addInstructionParser "br.true"
 
         lsymbol |>> fun i _ _ errors labels -> voptional {
@@ -505,7 +509,27 @@ let code: Parser<ParsedCode, _> =
         }
         |> addInstructionParser "br"
 
-        // TODO: Have choice for parser list in parens or just one register
+        let phiSelectionPair = localCodeRegister .>> keyword "when" .>>. lsymbol
+
+        sepBy1 phiSelectionPair (keyword "or") |>> fun selections rlookup _ errors blocks -> voptional {
+            let rec inner selections (values: ImmutableArray<_>.Builder) success =
+                match selections with
+                | [] when success -> ValueSome(values.ToImmutable())
+                | [] -> ValueNone
+                | (register, block) :: remaining ->
+                    let result = voptional {
+                        let! register' = lookupRegisterName rlookup errors register
+                        let! block' = lookupCodeBlock blocks errors block
+                        values.Add(struct(register', block'))
+                        return ValueSome()
+                    }
+                    inner remaining values (success && result.IsSome)
+
+            let! selections' = inner selections (ImmutableArray.CreateBuilder()) true
+            return InstructionSet.Phi selections'
+        }
+        |> addInstructionParser "phi"
+
         manyCodeRegisters (preturn ()) |>> fun registers rlookup _ errors _ -> voptional {
             let! registers' = lookupRegisterList rlookup errors registers
             return InstructionSet.Ret registers'

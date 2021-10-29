@@ -734,7 +734,6 @@ let assemble declarations = // TODO: Fix, use result so at least one error objec
                         instrs.Clear()
                         lmapping.Clear()
                         temps.Clear()
-                        ierrors.Clear()
 
                         let mutable success, index, tempi = true, 0, 0u
 
@@ -767,7 +766,7 @@ let assemble declarations = // TODO: Fix, use result so at least one error objec
                         let blockOffsetLookup (struct(_, name) as id) =
                             match blocks.TryGetValue name with
                             | true, struct(index, _) ->
-                                Checked.(-) index blocki
+                                int64 index - int64 blocki
                                 |> Checked.int32
                                 |> ValueSome
                             | false, _ ->
@@ -863,6 +862,7 @@ let assemble declarations = // TODO: Fix, use result so at least one error objec
                             addValidationError (undefinedSymbolMessage "A data" name) pos
 
                 mapLookupValues codes <| fun _ code -> voptional {
+                    ierrors.Clear()
                     let! locals' = resolveLocalRegisters code.Locals
                     let! arguments' = resolveArgumentRegisters code.Arguments
                     let blocks = resolveCodeBlocks code.Blocks locals' arguments'
