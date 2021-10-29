@@ -279,11 +279,15 @@ type RuntimeArray =
     member this.DataLength = this.ElementLength this.Data
     member this.ReferenceCount = this.ElementLength this.References
 
+    member private this.CheckIndex i = if i >= this.Length then raise(IndexOutOfRangeException())
+
     member this.Item
         with get(index: int32): RuntimeStruct =
+            this.CheckIndex index
             { RawData = OffsetArray<byte>(index * this.DataLength, this.Data)
               References = this.ElementReferences index }
         and set index (value: RuntimeStruct) =
+            this.CheckIndex index
             value.RawData.AsSpan().CopyTo(Span(this.Data, index * this.DataLength, value.RawData.Length))
             let rdestination = Span(this.References, index * this.ReferenceCount, value.References.Length)
             value.References.AsSpan().CopyTo rdestination
