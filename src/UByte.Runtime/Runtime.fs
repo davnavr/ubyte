@@ -816,7 +816,7 @@ module Interpreter =
                     match frame'.PreviousBlockIndex with
                     | ValueSome prev ->
                         // TODO: Use for loop to avoid extra allocations, maybe even require sorting in the binary format.
-                        let struct(valuei, _) = Seq.find (fun struct(_, blocki) -> blocki = prev) values
+                        let struct(valuei, _) = Seq.find (fun struct(_, BranchTarget blocki) -> blocki = prev) values
                         frame'.TemporaryRegisters.Add(RuntimeRegister.clone(frame'.RegisterAt valuei))
                     | ValueNone ->
                         invalidOp "Usage of phi instruction is prohibited in the first block of a method"
