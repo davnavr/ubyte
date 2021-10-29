@@ -792,8 +792,7 @@ let assemble declarations = // TODO: Fix, use result so at least one error objec
                                     | { ParsedRegister.IsTemporary = false; ParsedRegister.Name = _, name as id } ->
                                         match locals.TryGetValue name with
                                         | true, i ->
-                                            // Argument registers are not used in assignment, so this will always be a local.
-                                            lmapping.Add(TemporaryIndex.Index(tempi + uint32 arguments.Count), LocalIndex.Index(uint32 i))
+                                            lmapping.Add(TemporaryIndex.Index tempi, LocalIndex.Index(uint32 i))
                                             tempi <- Checked.(+) tempi 1u
                                         | false, _ ->
                                             registerNotFound id
