@@ -888,7 +888,7 @@ module Interpreter =
                     Constant.boolean vtype true &destination.RegisterValue
                 | Const_false vtype | Const_zero vtype ->
                     let destination = createPrimitiveRegister vtype
-                    Constant.boolean vtype true &destination.RegisterValue
+                    Constant.boolean vtype false &destination.RegisterValue
                 | Obj_null -> (createReferenceRegister ReferenceType.Any).RegisterValue.WriteRef(0, RuntimeObject.Null)
                 | Const_f32 _
                 | Const_f64 _ -> failwith "TODO: Storing of constant floating point integers is not yet supported"
