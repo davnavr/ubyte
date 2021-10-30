@@ -25,10 +25,14 @@ type RuntimeStackFrame =
     member StackTrace : string
 
 [<Class>]
-type RuntimeException =
+type InterpreterExecutionException =
     inherit Exception
 
-    member CurrentFrame : RuntimeStackFrame voption
+    member SourceFrame : RuntimeStackFrame voption
+
+/// Represents an exception that originated from interpreted code.
+[<Sealed; Class>]
+type RuntimeException = inherit InterpreterExecutionException
 
 [<Sealed>]
 type RuntimeMethod =
@@ -42,19 +46,6 @@ type RuntimeMethod =
     member IsVirtual : bool
 
     override ToString: unit -> string
-
-[<Sealed; Class>]
-type InvalidConstructorException =
-    inherit RuntimeException
-
-    /// The method that is not a valid constructor.
-    member Method : RuntimeMethod
-
-[<Sealed; Class>]
-type AbstractMethodCallException =
-    inherit RuntimeException
-
-    member Method : RuntimeMethod
 
 [<Sealed>]
 type RuntimeField =
@@ -91,19 +82,19 @@ type RuntimeTypeDefinition =
 
 [<Sealed; Class>]
 type RecursiveInheritanceException =
-    inherit RuntimeException
+    inherit Exception
 
-    member Type: RuntimeTypeDefinition
+    member Type : RuntimeTypeDefinition
 
 type RuntimeMethod with member DeclaringType : RuntimeTypeDefinition
 type RuntimeField with member DeclaringType : RuntimeTypeDefinition
 
 [<Sealed; Class>]
 type TypeNotFoundException =
-    inherit RuntimeException
+    inherit Exception
 
-    member TypeNamespace: string
-    member TypeName: string
+    member TypeNamespace : string
+    member TypeName : string
 
 [<Sealed>]
 type RuntimeModule =
@@ -127,7 +118,7 @@ type RuntimeModule =
 
 [<Sealed; Class>]
 type MissingEntryPointException =
-    inherit RuntimeException
+    inherit Exception
 
     /// The module that is missing an entry point.
     member Module : RuntimeModule
@@ -141,8 +132,8 @@ type RuntimeTypeDefinition with member Module : RuntimeModule
 
 [<Sealed; Class>]
 type ModuleNotFoundException =
-    inherit RuntimeException
+    inherit Exception
 
-    member Name: Model.ModuleIdentifier
+    member Name : Model.ModuleIdentifier
 
 val initialize : program: Model.Module -> moduleImportLoader: (Model.ModuleIdentifier -> Model.Module voption) -> RuntimeModule
