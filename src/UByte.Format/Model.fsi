@@ -79,6 +79,7 @@ module IndexKinds =
     type [<Sealed; Class>] Method = inherit Kind
     type [<Sealed; Class>] Data = inherit Kind
     type [<Sealed; Class>] Code = inherit Kind
+    type [<Sealed; Class>] Block = inherit Kind
     type [<Sealed; Class>] TemporaryRegister = inherit Kind
     type [<Sealed; Class>] LocalRegister = inherit Kind
     type [<Sealed; Class>] Register = inherit Kind
@@ -128,6 +129,8 @@ type DataIndex = Index<IndexKinds.Data>
 
 /// <summary>An index into the module's method bodies. The index of the first method body is <c>0</c>.</summary>
 type CodeIndex = Index<IndexKinds.Code>
+
+type CodeBlockIndex = Index<IndexKinds.Block>
 
 type TemporaryIndex = Index<IndexKinds.TemporaryRegister>
 
@@ -278,7 +281,9 @@ module InstructionSet =
     /// </remarks>
     /// <seealso cref="T:UByte.Format.Model.InstructionSet.CallFlags" />
     [<NoComparison; NoEquality>]
-    type Instruction = // NOTE: If efficiency is needed, can omit length integers from Ret and Call instructions
+    type Instruction =
+        // NOTE: If efficiency is needed, could theoretically omit length integers from Ret and Call instructions
+        // TODO: Add FieldIndex/RegisterIndex that points to exception to throw in the event that an instruction throws an exception (e.g. add throw.ovf @my_exception_value ...)
         /// <summary>
         /// <para>
         /// <c>nop</c>
@@ -644,7 +649,16 @@ module InstructionSet =
         /// </para>
         /// </summary>
         | Obj_fd_st of field: FieldIndex * object: RegisterIndex * source: RegisterIndex
-
+        //| Obj_fd_addr
+        /// <summary>
+        /// <para>
+        /// obj.throw &lt;ex&gt;
+        /// </para>
+        /// <para>
+        /// Throws the exception stored in the <paramref name="ex"/> register.
+        /// </para>
+        /// </summary>
+        | Obj_throw of ex: RegisterIndex
         /// <summary>
         /// <para>
         /// <c>&lt;result&gt; = obj.arr.new &lt;etype&gt; &lt;length&gt;</c>
@@ -931,14 +945,32 @@ type TypeDefinition =
       VTable: vector<MethodOverride> }
 
 [<NoComparison; NoEquality>]
+type BlockExceptionHandler =
+    { /// Specifies the local register that the exception object is stored into when an exception is thrown. If omitted, the
+      /// exception object is ignored.
+      ExceptionRegister: LocalIndex voption
+      CatchBlock: CodeBlockIndex }
+
+[<Flags>]
+type CodeBlockFlags =
+    | None = 0uy
+    | ExceptionHandlerIgnoresException = 1uy
+    | ExceptionHandlerStoresException = 2uy
+    | ExceptionHandlingMask = 2uy
+
+[<NoComparison; NoEquality>]
 type CodeBlock =
-    { /// Specifies which temporary registers in the current block map to which local register. Each local register must map to
+    { /// Specifies the block that control should be transferred to if an exception is thrown inside this block.
+      ExceptionHandler: BlockExceptionHandler voption
+      /// Specifies which temporary registers in the current block map to which local register. Each local register must map to
       /// exactly one temporary register in exactly one block.
       Locals: vector<struct(TemporaryIndex * LocalIndex)>
       /// <remarks>
       /// Both the byte length and the actual number of instructions are included to simplify parsing.
       /// </remarks>
       Instructions: LengthEncoded<vector<InstructionSet.Instruction>> }
+
+    member Flags : CodeBlockFlags
 
 [<NoComparison; NoEquality>]
 type Code =

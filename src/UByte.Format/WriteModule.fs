@@ -224,6 +224,9 @@ let instruction instr dest =
         index field dest
         index object dest
         index src dest
+    | Obj_throw ex ->
+        opcode Opcode.``obj.throw`` dest
+        index ex dest
     | Obj_arr_new(etype, len) ->
         opcode Opcode.``obj.arr.new`` dest
         index etype dest
@@ -251,7 +254,17 @@ let localRegisterMapping (struct(tindex: TemporaryIndex, lindex: LocalIndex)) de
     index tindex dest
     index lindex dest
 
-let block auxbuf block dest =
+let block auxbuf (block: CodeBlock) (dest: Stream) =
+    bits1 block.Flags dest
+
+    match block.ExceptionHandler with
+    | ValueSome({ ExceptionRegister = ValueSome eindex } as eh) ->
+        index eindex dest
+        index eh.CatchBlock dest
+    | ValueSome { ExceptionRegister = ValueNone; CatchBlock = cindex } ->
+        index cindex dest
+    | ValueNone -> ()
+
     vector localRegisterMapping block.Locals dest
     lengthEncodedVector auxbuf dest block.Instructions instruction
 

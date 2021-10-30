@@ -1,0 +1,35 @@
+﻿.module Throw
+.version 69 88 78
+.format 0 0
+
+.identifier @id_namespace Example
+.identifier @id_class ExceptionThrowingExample
+.identifier @id_entry_point Main
+
+.signature @sig_int type s32
+.signature @sig_main method () ()
+
+.code @code_main {
+    .block $ENTRY {
+        %t_exn = const.s s32 5 // TODO: Throw an object instead.
+        obj.throw %t_exn
+        ret
+    }
+}
+
+.namespace @namespace_example {
+    .name @id_namespace
+}
+
+.type @class_hello public {
+    .name @id_class
+    .namespace @namespace_example
+
+    .method @method_main public {
+        .signature @sig_main
+        .name @id_entry_point
+        .body defined @code_main
+    }
+}
+
+.entrypoint @method_main

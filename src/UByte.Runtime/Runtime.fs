@@ -190,6 +190,8 @@ type RuntimeStackFrame
     member this.CurrentBlock = blocks.[this.BlockIndex]
     member _.Previous = prev
 
+    member this.CurrentExceptionHandler = this.CurrentBlock.ExceptionHandler
+
     member this.RegisterAt(RegisterIndex.Index index) =
         let tcount = uint32 this.TemporaryRegisters.Count
         if index < tcount then
@@ -222,6 +224,8 @@ type RuntimeStackFrame
         for struct(tindex, lindex) in this.CurrentBlock.Locals do
             currentLocalLookup.Add(lindex, tindex)
 
+    member _.AddExceptionRegister(index, register) = previousLocalLookup.Add(index, register)
+
     member this.StackTrace =
         let trace = System.Text.StringBuilder()
         let mutable current = ValueSome this
@@ -234,26 +238,30 @@ type RuntimeStackFrame
             if current.IsSome then trace.Append Environment.NewLine |> ignore
         trace.ToString()
 
-type RuntimeException =
+type InterpreterExecutionException =
     inherit Exception
 
     val private frame: RuntimeStackFrame voption
 
     new (frame, message, inner: Exception) = { inherit Exception(message, inner); frame = frame }
 
-    new (frame, message) = RuntimeException(frame, message, null)
+    new (frame, message) = InterpreterExecutionException(frame, message, null)
 
-    member this.CurrentFrame = this.frame
-
-type MethodInvocationResult = ImmutableArray<RuntimeRegister>
-
-type FieldAccessException (frame, message, field: RuntimeField) =
-    inherit RuntimeException(frame, message)
-
-    member _.Field = field
+    member this.SourceFrame = this.frame
 
 [<Sealed>]
-type NullReferenceFieldAccessException (frame, message, field) = inherit FieldAccessException(frame, message, field)
+type RuntimeException =
+    inherit InterpreterExecutionException
+
+    val ExceptionType: AnyType
+    val ExceptionValue: RuntimeStruct
+
+    new (frame, message, etype, evalue) =
+        { inherit InterpreterExecutionException(ValueSome frame, message)
+          ExceptionType = etype
+          ExceptionValue = evalue }
+
+type MethodInvocationResult = ImmutableArray<RuntimeRegister>
 
 [<Sealed>]
 type RuntimeArray =
@@ -310,12 +318,6 @@ type RuntimeStruct with
     member this.ReadRef index = this.References.AsSpan().[index]
 
     member this.WriteRef(index, o) = this.References.AsSpan().[index] <- o
-
-[<Sealed>]
-type MissingReturnInstructionException (frame, message) = inherit RuntimeException(frame, message)
-
-[<Sealed>]
-type InvalidComparisonException (message) = inherit RuntimeException(ValueNone, message)
 
 [<RequireQualifiedAccess>]
 module Interpreter =
@@ -735,6 +737,35 @@ module Interpreter =
             | ValueNone -> false
 
         while cont() do
+            match ex with
+            | ValueSome(e: exn) ->
+                let frame' = frame.Value.Value
+                match frame'.CurrentExceptionHandler with
+                | ValueSome({ CatchBlock = Index catch } as eh) ->
+                    frame'.JumpTo(Checked.int32 catch)
+
+                    match eh.ExceptionRegister with
+                    | ValueSome eindex ->
+                        let value =
+                            match e with
+                            | :? RuntimeException as rex ->
+                                { RuntimeRegister.RegisterType = rex.ExceptionType
+                                  RegisterValue = rex.ExceptionValue }
+                            | _ -> raise(NotImplementedException "TODO: How to let user code handle internal exception?")
+
+                        frame'.AddExceptionRegister(eindex, value)
+                    | ValueNone -> ()
+
+                    frame'.InstructionIndex <- 0
+                | ValueNone ->
+                    InterpreterExecutionException (
+                        frame.Value,
+                        "Unhandled runtime exception: " + Environment.NewLine + frame'.StackTrace,
+                        e
+                    )
+                    |> raise
+            | ValueNone -> ()
+
             let frame' = frame.Value.Value
 
 #if DEBUG
@@ -802,11 +833,6 @@ module Interpreter =
                 let register = RuntimeRegister.Object rtype
                 frame'.TemporaryRegisters.Add register
                 register
-
-            match ex with
-            | ValueSome e ->
-                raise(NotImplementedException("TODO: Implement exception handling: " + Environment.NewLine + frame'.StackTrace, e))
-            | ValueNone -> ()
 
             try
                 let instr = frame'.CurrentBlock.Instructions.[frame'.InstructionIndex]
@@ -971,6 +997,8 @@ module Interpreter =
                     branchToTarget (if Compare.isGreaterOrEqual x y then ttrue else tfalse)
                 | Br_true(Register condition, ttrue, tfalse) ->
                     branchToTarget (if Compare.isTrueValue condition then ttrue else tfalse)
+                | Obj_throw(Register e) ->
+                    ex <- ValueSome(RuntimeException(frame', "Runtime exception has been thrown", e.RegisterType, e.RegisterValue) :> exn)
                 | Nop -> ()
                 | Rotl(vtype, Register amount, Register value) ->
                     let destination = createPrimitiveRegister vtype
@@ -991,14 +1019,8 @@ module Interpreter =
 
         match frame.contents with
         | ValueNone -> entryPointResults
-        | ValueSome frame' as info ->
-            raise(MissingReturnInstructionException(info, sprintf "Reached unexpected end of code in block %i" frame'.BlockIndex))
-
-[<Sealed>]
-type InvalidConstructorException (method: RuntimeMethod, frame, message) =
-    inherit RuntimeException(frame, message)
-
-    member _.Method = method
+        | ValueSome frame' ->
+            invalidOp(sprintf "Reached unexpected end of code in block %i" frame'.BlockIndex)
 
 [<RequireQualifiedAccess>]
 module ExternalCode =
@@ -1025,12 +1047,6 @@ module ExternalCode =
         match lookup.TryGetValue(struct(library, name)) with
         | true, call' -> call'
         | false, _ -> fun _ -> failwithf "TODO: Handle external calls to %s in %s" library name
-
-[<Sealed>]
-type AbstractMethodCallException (method: RuntimeMethod, frame, message) =
-    inherit RuntimeException(frame, message)
-
-    member _.Method = method
 
 [<Sealed>]
 type RuntimeMethod (rmodule: RuntimeModule, index: MethodIndex, method: Method) =
@@ -1082,13 +1098,7 @@ type RuntimeMethod (rmodule: RuntimeModule, index: MethodIndex, method: Method) 
             frame.contents <- ValueSome(RuntimeStackFrame(frame.Value, args, code.LocalCount, returns, code.Blocks, this))
         | MethodBody.Abstract ->
             if not this.IsVirtual then failwith "TODO: Error for abstract method must be virtual"
-
-            AbstractMethodCallException (
-                this,
-                frame.contents,
-                sprintf "Cannot directly call %O, use the call.virt instruction and related instructions instead" this
-            )
-            |> raise
+            invalidOp(sprintf "Cannot directly call %O, use the call.virt instruction and related instructions instead" this)
         | MethodBody.External(library, efunction) ->
             let library' = this.Module.IdentifierAt library
             let efunction' = this.Module.IdentifierAt efunction
@@ -1142,12 +1152,7 @@ type RuntimeField (rmodule: RuntimeModule, field: Field, size) =
     /// If the field is not marked as mutable, prevents modification of the field value outside of a constructor or type initializer.
     member this.CheckMutate(frame: RuntimeStackFrame) =
         if not this.IsMutable && not frame.CurrentMethod.IsConstructor then
-            FieldAccessException (
-                ValueSome frame,
-                "Attempted to modify read-only field outside of constructor or type initializer",
-                this
-            )
-            |> raise
+            invalidOp "Attempted to modify read-only field outside of constructor or type initializer"
 
 [<IsReadOnly; Struct; NoComparison; NoEquality>]
 type RuntimeTypeLayout =
@@ -1158,7 +1163,7 @@ type RuntimeTypeLayout =
 
 [<Sealed>]
 type RecursiveInheritanceException (message, t: RuntimeTypeDefinition) =
-    inherit RuntimeException(ValueNone, message)
+    inherit Exception(message)
     member _.Type = t
 
 [<NoComparison; NoEquality>]
@@ -1312,13 +1317,13 @@ let createDefinitionOrImportLookup definedCount importCount definedInitializer i
 
 [<Sealed>]
 type MissingEntryPointException (m: RuntimeModule, message: string) =
-    inherit RuntimeException(ValueNone, message)
+    inherit Exception(message)
 
     member _.Module = m
 
 [<Sealed>]
 type TypeNotFoundException (m: RuntimeModule, typeNamespace, typeName, message: string) =
-    inherit RuntimeException(ValueNone, message)
+    inherit Exception(message)
 
     member _.TypeNamespace: string = typeNamespace
     member _.TypeName: string = typeName
@@ -1497,7 +1502,10 @@ type RuntimeModule (m: Module, moduleImportResolver: ModuleIdentifier -> Runtime
                 | _ -> failwith "TODO: Error for invalid number of arguments for entrypoint"
 
             let results = Interpreter.interpret arguments main
-            let ecode = results.[0].RegisterValue.ReadRaw<int32> 0
+            let ecode =
+                if not results.IsDefaultOrEmpty
+                then results.[0].RegisterValue.ReadRaw<int32> 0
+                else 0
 #if DEBUG && TRACE_EXECUTION
             printfn "Exited with code %i (0x%08X)" ecode ecode
 #endif
@@ -1508,7 +1516,7 @@ type RuntimeModule (m: Module, moduleImportResolver: ModuleIdentifier -> Runtime
 
 [<Sealed>]
 type ModuleNotFoundException (name: ModuleIdentifier, message) =
-    inherit RuntimeException(ValueNone, message)
+    inherit Exception(message)
 
     member _.Name = name
 

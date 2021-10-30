@@ -286,6 +286,7 @@ let instruction source =
     | Opcode.``obj.null`` -> Obj_null
     | Opcode.``obj.fd.ld`` -> instr2 Obj_fd_ld
     | Opcode.``obj.fd.st`` -> instr3 Obj_fd_st
+    | Opcode.``obj.throw`` -> Obj_throw(index source)
     | Opcode.``obj.arr.new`` -> instr2 Obj_arr_new
     | Opcode.``obj.arr.len`` -> Obj_arr_len(bits1 source, instructionPrimitiveType source, index source)
     | Opcode.``obj.arr.get`` -> instr2 Obj_arr_get
@@ -294,7 +295,16 @@ let instruction source =
     | bad -> failwithf "TODO: Unrecognized opcode 0x%08X (%A)" (uint32 bad) bad
 
 let block source =
-    { CodeBlock.Locals = vector source (fun source -> struct(index source, index source))
+    let flags = bits1 source
+    { CodeBlock.ExceptionHandler =
+        match flags &&& CodeBlockFlags.ExceptionHandlingMask with
+        | CodeBlockFlags.None -> ValueNone
+        | CodeBlockFlags.ExceptionHandlerStoresException ->
+            ValueSome { BlockExceptionHandler.ExceptionRegister = ValueSome(index source); CatchBlock = index source }
+        | CodeBlockFlags.ExceptionHandlerIgnoresException ->
+            ValueSome { BlockExceptionHandler.ExceptionRegister = ValueNone; CatchBlock = index source}
+        | bad -> failwithf "TODO: Error for invalid code block exception handling kind (0x%02X) %A" (uint8 bad) bad
+      Locals = vector source (fun source -> struct(index source, index source))
       Instructions = lengthEncodedVector source instruction }
 
 let fromBytes (source: #IByteSequence) =

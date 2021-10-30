@@ -51,9 +51,16 @@ type CodeBlockLookup = Symbol -> InstructionSet.BlockOffset voption
 type ParsedInstruction =
     RegisterLookup -> IInstructionResolver -> InstructionErrorsBuilder -> CodeBlockLookup -> InstructionSet.Instruction voption
 
-[<RequireQualifiedAccess; System.Runtime.CompilerServices.IsReadOnly; Struct; NoComparison; NoEquality>]
+[<RequireQualifiedAccess; NoComparison; NoEquality>]
+type ParsedExceptionHandler =
+    | Finally of handler: Symbol
+    | Catch of Symbol * handler: Symbol
+    | None
+
+[<RequireQualifiedAccess; NoComparison; NoEquality>]
 type ParsedBlock =
-    { Symbol: Symbol
+    { ExceptionHandler: ParsedExceptionHandler
+      Symbol: Symbol
       Instructions: struct(ParsedRegister list * ParsedInstruction) list }
 
 [<NoComparison; NoEquality>]

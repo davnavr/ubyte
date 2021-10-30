@@ -730,7 +730,14 @@ let assemble declarations = // TODO: Fix, use result so at least one error objec
                     let lmapping = ImmutableArray.CreateBuilder<struct(_ * _)>()
                     let temps = Dictionary<Name, TemporaryIndex>()
 
-                    fun body blocki (blocks: Dictionary<_, _>) (locals: Dictionary<_, _>) (arguments: Dictionary<_, _>) ->
+                    let lookupBlockName (blocks: Dictionary<_, _>) (struct(_, name) as id) =
+                        match blocks.TryGetValue name with
+                        | true, value -> ValueSome value
+                        | false, _ ->
+                            ierrors.Add(InvalidInstructionError.UndefinedBlock id)
+                            ValueNone
+
+                    fun body blocki blocks (locals: Dictionary<_, _>) (arguments: Dictionary<_, _>) eh ->
                         instrs.Clear()
                         lmapping.Clear()
                         temps.Clear()
@@ -763,14 +770,13 @@ let assemble declarations = // TODO: Fix, use result so at least one error objec
                                         registerNotFound id
                                         ValueNone
 
-                        let blockOffsetLookup (struct(_, name) as id) =
-                            match blocks.TryGetValue name with
-                            | true, struct(index, _) ->
+                        let blockOffsetLookup id =
+                            match lookupBlockName blocks id with
+                            | ValueSome(_, Index index, _) ->
                                 int64 index - int64 blocki
                                 |> Checked.int32
                                 |> ValueSome
-                            | false, _ ->
-                                ierrors.Add(InvalidInstructionError.UndefinedBlock id)
+                            | ValueNone ->
                                 ValueNone
 
                         List.iter
@@ -802,30 +808,55 @@ let assemble declarations = // TODO: Fix, use result so at least one error objec
                                 index <- Checked.(+) index 1)
                             body
 
-                        if success then
-                            { CodeBlock.Locals = lmapping.ToImmutable()
-                              Instructions = instrs.ToImmutable() }
-                            |> ValueSome
-                        else ValueNone
+                        voptional {
+                            if success then
+                                let! eh' =
+                                    match eh with
+                                    | ParsedExceptionHandler.None -> ValueSome ValueNone
+                                    | ParsedExceptionHandler.Catch((_, rname) as rid, handler) ->
+                                        voptional {
+                                            let! exreg' =
+                                                match locals.TryGetValue rname with
+                                                | true, i -> ValueSome(LocalIndex.Index i)
+                                                | false, _ ->
+                                                    registerNotFound rid
+                                                    ValueNone
+                                            let! (_, handler', _) = lookupBlockName blocks handler
+                                            return ValueSome
+                                                { BlockExceptionHandler.ExceptionRegister = ValueSome exreg'
+                                                  CatchBlock = handler' }
+                                        }
+                                    | ParsedExceptionHandler.Finally handler ->
+                                        voptional {
+                                            let! (_, handler', _) = lookupBlockName blocks handler
+                                            return ValueSome
+                                                { BlockExceptionHandler.ExceptionRegister = ValueNone
+                                                  CatchBlock = handler' }
+                                        }
+                                return
+                                    { CodeBlock.ExceptionHandler = eh'
+                                      Locals = lmapping.ToImmutable()
+                                      Instructions = instrs.ToImmutable() }
+                        }
 
                 let resolveCodeBlocks blocks locals arguments =
                     let rec resolveBlockNames blocks (lookup: Dictionary<Name, _>) success =
                         match blocks with
                         | [] when success -> ValueSome lookup
                         | [] -> ValueNone
-                        | { ParsedBlock.Symbol = struct(pos, name); ParsedBlock.Instructions = code } :: remaining ->
-                            let success' = lookup.TryAdd(name, struct(uint32 lookup.Count, code))
+                        | { ParsedBlock.Symbol = struct(pos, name) } as block :: remaining ->
+                            let success' = lookup.TryAdd(name, (block.ExceptionHandler, CodeBlockIndex.Index(uint32 lookup.Count), block.Instructions))
                             if not success' then
                                 addValidationError
                                     (sprintf "A block corresponding to the symbol $%O already exists" name)
                                     pos
                             resolveBlockNames remaining lookup success'
 
-                    let rec resolveBlockInstructions (blockIndexLookup: Dictionary<Name, struct(uint32 * _)>) =
+                    let rec resolveBlockInstructions (blockIndexLookup: Dictionary<Name, (_ * CodeBlockIndex * _)>) =
                         let mutable blocks', success = Array.zeroCreate<CodeBlock> blockIndexLookup.Count, true
 
-                        for KeyValue(_, struct(i, code)) in blockIndexLookup do
-                            match resolveCodeInstructions code i blockIndexLookup locals arguments with
+                        for KeyValue(_, (eh, Index i, code)) in blockIndexLookup do
+                            match resolveCodeInstructions code i blockIndexLookup locals arguments eh with
                             | ValueSome block -> blocks'.[Checked.int32 i] <- block
                             | ValueNone -> success <- false
 
