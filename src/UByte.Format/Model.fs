@@ -253,6 +253,7 @@ module InstructionSet =
         | Obj_null
         | Obj_fd_ld of field: FieldIndex * object: RegisterIndex
         | Obj_fd_st of field: FieldIndex * object: RegisterIndex * source: RegisterIndex
+        | Obj_throw of ex: RegisterIndex
         | Obj_arr_new of etype: TypeSignatureIndex * length: RegisterIndex
         | Obj_arr_len of ArithmeticFlags * PrimitiveType * array: RegisterIndex
         | Obj_arr_get of array: RegisterIndex * index: RegisterIndex

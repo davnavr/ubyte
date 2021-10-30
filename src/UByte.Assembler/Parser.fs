@@ -550,6 +550,12 @@ let code: Parser<ParsedCode, _> =
         }
         |> addInstructionParser "obj.arr.new"
 
+        localCodeRegister |>> fun exreg rlookup _ errors _ -> voptional {
+            let! exreg' = lookupRegisterName rlookup errors exreg
+            return InstructionSet.Obj_throw exreg'
+        }
+        |> addInstructionParser "obj.throw"
+
         pipe2 symbol symbol <| fun etype data _ resolver errors _ -> voptional {
             let! etype' = lookupTypeSignature resolver errors etype
             let! data' = lookupModuleData resolver errors data

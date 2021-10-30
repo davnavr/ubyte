@@ -224,6 +224,9 @@ let instruction instr dest =
         index field dest
         index object dest
         index src dest
+    | Obj_throw ex ->
+        opcode Opcode.``obj.throw`` dest
+        index ex dest
     | Obj_arr_new(etype, len) ->
         opcode Opcode.``obj.arr.new`` dest
         index etype dest
