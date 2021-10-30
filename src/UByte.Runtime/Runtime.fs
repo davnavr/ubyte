@@ -190,7 +190,7 @@ type RuntimeStackFrame
     member this.CurrentBlock = blocks.[this.BlockIndex]
     member _.Previous = prev
 
-    //member _.CurrentExceptionHandler
+    member this.CurrentExceptionHandler = this.CurrentBlock.ExceptionHandler
 
     member this.RegisterAt(RegisterIndex.Index index) =
         let tcount = uint32 this.TemporaryRegisters.Count
@@ -224,6 +224,8 @@ type RuntimeStackFrame
         for struct(tindex, lindex) in this.CurrentBlock.Locals do
             currentLocalLookup.Add(lindex, tindex)
 
+    member _.AddExceptionRegister(index, register) = previousLocalLookup.Add(index, register)
+
     member this.StackTrace =
         let trace = System.Text.StringBuilder()
         let mutable current = ValueSome this
@@ -251,11 +253,13 @@ type InterpreterExecutionException =
 type RuntimeException =
     inherit InterpreterExecutionException
 
-    val ExceptionValue : RuntimeStruct
+    val ExceptionType: AnyType
+    val ExceptionValue: RuntimeStruct
 
-    new (frame, message, ex) =
+    new (frame, message, etype, evalue) =
         { inherit InterpreterExecutionException(ValueSome frame, message)
-          ExceptionValue = ex }
+          ExceptionType = etype
+          ExceptionValue = evalue }
 
 type MethodInvocationResult = ImmutableArray<RuntimeRegister>
 
@@ -733,6 +737,35 @@ module Interpreter =
             | ValueNone -> false
 
         while cont() do
+            match ex with
+            | ValueSome(e: exn) ->
+                let frame' = frame.Value.Value
+                match frame'.CurrentExceptionHandler with
+                | ValueSome({ CatchBlock = Index catch } as eh) ->
+                    frame'.JumpTo(Checked.int32 catch)
+
+                    match eh.ExceptionRegister with
+                    | ValueSome eindex ->
+                        let value =
+                            match e with
+                            | :? RuntimeException as rex ->
+                                { RuntimeRegister.RegisterType = rex.ExceptionType
+                                  RegisterValue = rex.ExceptionValue }
+                            | _ -> raise(NotImplementedException "TODO: How to let user code handle internal exception?")
+
+                        frame'.AddExceptionRegister(eindex, value)
+                    | ValueNone -> ()
+
+                    frame'.InstructionIndex <- 0
+                | ValueNone ->
+                    InterpreterExecutionException (
+                        frame.Value,
+                        "Unhandled runtime exception: " + Environment.NewLine + frame'.StackTrace,
+                        e
+                    )
+                    |> raise
+            | ValueNone -> ()
+
             let frame' = frame.Value.Value
 
 #if DEBUG
@@ -800,11 +833,6 @@ module Interpreter =
                 let register = RuntimeRegister.Object rtype
                 frame'.TemporaryRegisters.Add register
                 register
-
-            match ex with
-            | ValueSome e ->
-                raise(NotImplementedException("TODO: Implement exception handling: " + Environment.NewLine + frame'.StackTrace, e))
-            | ValueNone -> ()
 
             try
                 let instr = frame'.CurrentBlock.Instructions.[frame'.InstructionIndex]
@@ -970,7 +998,7 @@ module Interpreter =
                 | Br_true(Register condition, ttrue, tfalse) ->
                     branchToTarget (if Compare.isTrueValue condition then ttrue else tfalse)
                 | Obj_throw(Register e) ->
-                    ex <- ValueSome(RuntimeException(frame', "Runtime exception has been thrown", e.RegisterValue) :> exn)
+                    ex <- ValueSome(RuntimeException(frame', "Runtime exception has been thrown", e.RegisterType, e.RegisterValue) :> exn)
                 | Nop -> ()
                 | Rotl(vtype, Register amount, Register value) ->
                     let destination = createPrimitiveRegister vtype
@@ -1019,7 +1047,6 @@ module ExternalCode =
         match lookup.TryGetValue(struct(library, name)) with
         | true, call' -> call'
         | false, _ -> fun _ -> failwithf "TODO: Handle external calls to %s in %s" library name
-
 
 [<Sealed>]
 type RuntimeMethod (rmodule: RuntimeModule, index: MethodIndex, method: Method) =
@@ -1475,7 +1502,10 @@ type RuntimeModule (m: Module, moduleImportResolver: ModuleIdentifier -> Runtime
                 | _ -> failwith "TODO: Error for invalid number of arguments for entrypoint"
 
             let results = Interpreter.interpret arguments main
-            let ecode = results.[0].RegisterValue.ReadRaw<int32> 0
+            let ecode =
+                if not results.IsDefaultOrEmpty
+                then results.[0].RegisterValue.ReadRaw<int32> 0
+                else 0
 #if DEBUG && TRACE_EXECUTION
             printfn "Exited with code %i (0x%08X)" ecode ecode
 #endif
