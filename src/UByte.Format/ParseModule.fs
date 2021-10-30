@@ -295,7 +295,12 @@ let instruction source =
     | bad -> failwithf "TODO: Unrecognized opcode 0x%08X (%A)" (uint32 bad) bad
 
 let block source =
-    { CodeBlock.Locals = vector source (fun source -> struct(index source, index source))
+    { CodeBlock.ExceptionHandler =
+        match u1 source with
+        | 0uy -> ValueNone
+        | 1uy -> ValueSome { BlockExceptionHandler.ExceptionRegister = index source; CatchBlock = index source }
+        | bad -> failwithf "TODO: Error for invalid code block flags %A" bad
+      Locals = vector source (fun source -> struct(index source, index source))
       Instructions = lengthEncodedVector source instruction }
 
 let fromBytes (source: #IByteSequence) =

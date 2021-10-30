@@ -254,7 +254,15 @@ let localRegisterMapping (struct(tindex: TemporaryIndex, lindex: LocalIndex)) de
     index tindex dest
     index lindex dest
 
-let block auxbuf block dest =
+let block auxbuf block (dest: Stream) =
+    match block.ExceptionHandler with
+    | ValueSome eh ->
+        dest.WriteByte 1uy
+        index eh.ExceptionRegister dest
+        index eh.CatchBlock dest
+    | ValueNone ->
+        dest.WriteByte 0uy
+
     vector localRegisterMapping block.Locals dest
     lengthEncodedVector auxbuf dest block.Instructions instruction
 

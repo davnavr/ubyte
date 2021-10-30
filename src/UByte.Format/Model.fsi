@@ -79,6 +79,7 @@ module IndexKinds =
     type [<Sealed; Class>] Method = inherit Kind
     type [<Sealed; Class>] Data = inherit Kind
     type [<Sealed; Class>] Code = inherit Kind
+    type [<Sealed; Class>] Block = inherit Kind
     type [<Sealed; Class>] TemporaryRegister = inherit Kind
     type [<Sealed; Class>] LocalRegister = inherit Kind
     type [<Sealed; Class>] Register = inherit Kind
@@ -128,6 +129,8 @@ type DataIndex = Index<IndexKinds.Data>
 
 /// <summary>An index into the module's method bodies. The index of the first method body is <c>0</c>.</summary>
 type CodeIndex = Index<IndexKinds.Code>
+
+type CodeBlockIndex = Index<IndexKinds.Code>
 
 type TemporaryIndex = Index<IndexKinds.TemporaryRegister>
 
@@ -942,8 +945,15 @@ type TypeDefinition =
       VTable: vector<MethodOverride> }
 
 [<NoComparison; NoEquality>]
+type BlockExceptionHandler =
+    { /// Specifies the local register that the exception object is stored into when an exception is thrown.
+      ExceptionRegister: LocalIndex
+      CatchBlock: CodeBlockIndex }
+
+[<NoComparison; NoEquality>]
 type CodeBlock =
-    { // Flags: BlockFlags // TODO: Have flags to indicate that a block starts with a 'try' or is a 'catch'/'finally'
+    { /// Specifies the block that control should be transferred to if an exception is thrown inside this block.
+      ExceptionHandler: BlockExceptionHandler voption
       /// Specifies which temporary registers in the current block map to which local register. Each local register must map to
       /// exactly one temporary register in exactly one block.
       Locals: vector<struct(TemporaryIndex * LocalIndex)>
