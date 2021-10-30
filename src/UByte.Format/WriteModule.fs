@@ -254,14 +254,16 @@ let localRegisterMapping (struct(tindex: TemporaryIndex, lindex: LocalIndex)) de
     index tindex dest
     index lindex dest
 
-let block auxbuf block (dest: Stream) =
+let block auxbuf (block: CodeBlock) (dest: Stream) =
+    bits1 block.Flags dest
+
     match block.ExceptionHandler with
-    | ValueSome eh ->
-        dest.WriteByte 1uy
-        index eh.ExceptionRegister dest
+    | ValueSome({ ExceptionRegister = ValueSome eindex } as eh) ->
+        index eindex dest
         index eh.CatchBlock dest
-    | ValueNone ->
-        dest.WriteByte 0uy
+    | ValueSome { ExceptionRegister = ValueNone; CatchBlock = cindex } ->
+        index cindex dest
+    | ValueNone -> ()
 
     vector localRegisterMapping block.Locals dest
     lengthEncodedVector auxbuf dest block.Instructions instruction

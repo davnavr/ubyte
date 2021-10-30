@@ -946,9 +946,17 @@ type TypeDefinition =
 
 [<NoComparison; NoEquality>]
 type BlockExceptionHandler =
-    { /// Specifies the local register that the exception object is stored into when an exception is thrown.
+    { /// Specifies the local register that the exception object is stored into when an exception is thrown. If omitted, the
+      /// exception object is ignored.
       ExceptionRegister: LocalIndex voption
       CatchBlock: CodeBlockIndex }
+
+[<Flags>]
+type CodeBlockFlags =
+    | None = 0uy
+    | ExceptionHandlerIgnoresException = 1uy
+    | ExceptionHandlerStoresException = 2uy
+    | ExceptionHandlingMask = 2uy
 
 [<NoComparison; NoEquality>]
 type CodeBlock =
@@ -962,7 +970,7 @@ type CodeBlock =
       /// </remarks>
       Instructions: LengthEncoded<vector<InstructionSet.Instruction>> }
 
-    //member Flags : 
+    member Flags : CodeBlockFlags
 
 [<NoComparison; NoEquality>]
 type Code =

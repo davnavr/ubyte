@@ -87,6 +87,7 @@ module IndexKinds =
     type [<Sealed; Class>] Field = inherit Kind
     type [<Sealed; Class>] Data = inherit Kind
     type [<Sealed; Class>] Code = inherit Kind
+    type [<Sealed; Class>] Block = inherit Kind
     type [<Sealed; Class>] TemporaryRegister = inherit Kind
     type [<Sealed; Class>] LocalRegister = inherit Kind
     type [<Sealed; Class>] Register = inherit Kind
@@ -104,6 +105,7 @@ type TypeDefinitionIndex = Index<IndexKinds.TypeDefinition>
 type MethodIndex = Index<IndexKinds.Method>
 type FieldIndex = Index<IndexKinds.Field>
 type CodeIndex = Index<IndexKinds.Code>
+type CodeBlockIndex = Index<IndexKinds.Block>
 type RegisterIndex = Index<IndexKinds.Register>
 type TemporaryIndex = Index<IndexKinds.TemporaryRegister>
 type LocalIndex = Index<IndexKinds.LocalRegister>
@@ -430,9 +432,26 @@ type RegisterFlags =
 [<Struct>]
 type RegisterType = { RegisterType: TypeSignatureIndex; RegisterFlags: RegisterFlags }
 
+type BlockExceptionHandler =
+    { ExceptionRegister: LocalIndex voption
+      CatchBlock: CodeBlockIndex }
+
+type CodeBlockFlags =
+    | None = 0uy
+    | ExceptionHandlerIgnoresException = 1uy
+    | ExceptionHandlerStoresException = 2uy
+    | ExceptionHandlingMask = 2uy
+
 type CodeBlock =
-    { Locals: vector<struct(TemporaryIndex * LocalIndex)>
+    { ExceptionHandler: BlockExceptionHandler voption
+      Locals: vector<struct(TemporaryIndex * LocalIndex)>
       Instructions: LengthEncoded<vector<InstructionSet.Instruction>> }
+
+    member this.Flags =
+        match this.ExceptionHandler with
+        | ValueSome { ExceptionRegister = ValueSome _ } -> CodeBlockFlags.ExceptionHandlerStoresException
+        | ValueSome { ExceptionRegister = ValueNone } -> CodeBlockFlags.ExceptionHandlerIgnoresException
+        | ValueNone -> CodeBlockFlags.None
 
 type Code = { LocalCount: uvarint; Blocks: vector<CodeBlock> }
 
