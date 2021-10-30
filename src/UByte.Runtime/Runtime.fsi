@@ -3,7 +3,6 @@ module UByte.Interpreter.Runtime
 
 open System
 open System.Collections.Immutable
-open System.Runtime.CompilerServices
 
 open UByte.Format
 
@@ -18,14 +17,12 @@ type RuntimeRegister with
 [<Sealed>]
 type RuntimeStackFrame =
     member ArgumentRegisters : ImmutableArray<RuntimeRegister>
-    member LocalRegisters : ImmutableArray<RuntimeRegister>
     /// Contains the registers that the return values will be stored to.
     member ReturnRegisters : ImmutableArray<RuntimeRegister>
     member Previous : RuntimeStackFrame voption
+    member BlockIndex : int32 with get
     member InstructionIndex : int32 with get
     member StackTrace : string
-
-    member RegisterAt : Model.RegisterIndex -> RuntimeRegister
 
 [<Class>]
 type RuntimeException =
@@ -68,18 +65,11 @@ type RuntimeField =
 [<RequireQualifiedAccess>]
 module Interpreter =
     /// <summary>Interprets a method.</summary>
-    /// <param name="returns">
-    /// An array of registers that will contain the return values after the <paramref name="entrypoint"/> method is interpreted.
-    /// </param>
     /// <param name="arguments">
     /// An array of registers containing the arguments to pass to the <paramref name="entrypoint"/> method.
     /// </param>
     /// <param name="entrypoint">The method to call and interpret.</param>
-    val interpret :
-        returns: ImmutableArray<RuntimeRegister> ->
-        arguments: ImmutableArray<RuntimeRegister> ->
-        entrypoint: RuntimeMethod ->
-        unit
+    val interpret : arguments: ImmutableArray<RuntimeRegister> -> entrypoint: RuntimeMethod -> ImmutableArray<RuntimeRegister>
 
 type RuntimeStackFrame with member CurrentMethod : RuntimeMethod
 

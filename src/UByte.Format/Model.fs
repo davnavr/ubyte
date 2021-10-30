@@ -87,6 +87,8 @@ module IndexKinds =
     type [<Sealed; Class>] Field = inherit Kind
     type [<Sealed; Class>] Data = inherit Kind
     type [<Sealed; Class>] Code = inherit Kind
+    type [<Sealed; Class>] TemporaryRegister = inherit Kind
+    type [<Sealed; Class>] LocalRegister = inherit Kind
     type [<Sealed; Class>] Register = inherit Kind
 
 [<Struct; StructuralComparison; StructuralEquality>]
@@ -103,112 +105,159 @@ type MethodIndex = Index<IndexKinds.Method>
 type FieldIndex = Index<IndexKinds.Field>
 type CodeIndex = Index<IndexKinds.Code>
 type RegisterIndex = Index<IndexKinds.Register>
+type TemporaryIndex = Index<IndexKinds.TemporaryRegister>
+type LocalIndex = Index<IndexKinds.LocalRegister>
 type DataIndex = Index<IndexKinds.Data>
 
+[<RequireQualifiedAccess>]
+type PrimitiveType =
+    | Bool
+    | U8
+    | S8
+    | U16
+    | S16
+    | U32
+    | S32
+    | U64
+    | S64
+    | UNative
+    | SNative
+    | Char16
+    | Char32
+    | F32
+    | F64
+    | Unit
+
 module InstructionSet =
-    type InstructionOffset = varint
+    type BlockOffset = varint
 
     type Opcode =
         | nop = 0u
         | ret = 1u
-        | call = 5u
-        | ``call.virt`` = 6u
-        | ``reg.copy`` = 0x17u
+        | phi = 2u
+        | ``select`` = 3u
+        | call = 4u
+        | ``call.virt`` = 5u
+        | ``call.indr`` = 6u
+        | ``global.ld`` = 0x1Du
+        | ``global.st`` = 0x1Eu
+        | ``global.addr`` = 0x1Fu
         | add = 0x20u
         | sub = 0x21u
         | mul = 0x22u
         | div = 0x23u
-        | incr = 0x2Cu
-        | ``incr.ovf`` = 0x2Du
-        | decr = 0x2Eu
-        | ``decr.ovf`` = 0x2Fu
-        | ``const.i32`` = 0x30u
-        | ``const.i64`` = 0x31u
-        | ``const.f32`` = 0x32u
-        | ``const.f64`` = 0x33u
-        | ``const.true`` = 0x34u
-        | ``const.zero`` = 0x35u
-        | ``const.false`` = 0x35u
-        | ``and`` = 0x40u
-        | ``or`` = 0x41u
-        | ``not`` = 0x42u
-        | ``xor`` = 0x43u
-        | rem = 0x44u
-        | rotl = 0x4Cu
-        | rotr = 0x4Du
-        | br = 0x60u
-        | ``br.eq`` = 0x61u
-        | ``br.ne`` = 0x62u
-        | ``br.lt`` = 0x63u
-        | ``br.gt`` = 0x64u
-        | ``br.le`` = 0x65u
-        | ``br.ge`` = 0x66u
-        | ``br.true`` = 0x67u
-        | ``br.false`` = 0x68u
+        | incr = 0x24u
+        | decr = 0x25u
+        | ``and`` = 0x26u
+        | ``or`` = 0x27u
+        | ``not`` = 0x28u
+        | ``xor`` = 0x29u
+        | rem = 0x30u
+        //| = 0x31 TODO: Have operation that stores both division result AND remainder.
+        // TODO: Have oepration for shifting integer bits left and right
+        //| = 0x32u
+        //| = 0x33u
+        | rotl = 0x34u
+        | rotr = 0x35u
+        | ``const.s`` = 0x40u
+        | ``const.u`` = 0x41u
+        | ``const.f32`` = 0x42u
+        | ``const.f64`` = 0x43u
+        | ``const.true`` = 0x44u
+        | ``const.zero`` = 0x45u
+        | ``const.false`` = 0x45u
+        // TODO: Have conversion operators (int to float, float to int, etc.), with ArithmeticFlags for overflow checks.
+        //|  = 46u
+        //|  = 47u
+        //|  = 48u
+        //|  = 49u
+        //|  = 4Au
+        //|  = 4Bu
+        //|  = 4Cu
+        //|  = 4Du
+        //|  = 4Eu
+        //|  = 4Fu
+        | br = 0x50u
+        | ``br.eq`` = 0x51u
+        | ``br.ne`` = 0x52u
+        | ``br.lt`` = 0x53u
+        | ``br.gt`` = 0x54u
+        | ``br.le`` = 0x55u
+        | ``br.ge`` = 0x56u
+        | ``br.true`` = 0x57u
+
         | ``obj.new`` = 0x70u
         | ``obj.null`` = 0x71u
-        | ``obj.ldfd`` = 0x72u
-        | ``obj.stfd`` = 0x73u
-        | ``obj.throw`` = 0x74u
+        | ``obj.fd.ld`` = 0x72u
+        | ``obj.fd.st`` = 0x73u
+        | ``obj.fd.addr`` = 0x74u
+        | ``obj.throw`` = 0x75u
+
         | ``obj.arr.new`` = 0x7Au
         | ``obj.arr.len`` = 0x7Bu
         | ``obj.arr.get`` = 0x7Cu
+        //| ``obj.arr.addr`` = 0x7Du
         | ``obj.arr.set`` = 0x7Eu
-        | ``obj.arr.const`` = 0x80u
-        | ``call.ret`` = 0x90u
-        | ``call.virt.ret`` = 0x91u
-        | ``add.ovf`` = 0xA0u
-        | ``sub.ovf`` = 0xA1u
-        | ``mul.ovf`` = 0xA2u
+        | ``obj.arr.const`` = 0x7Fu
+
+    [<Flags>]
+    type ArithmeticFlags =
+        | None = 0uy
+        | ThrowOnOverflow = 1uy
+        | ThrowOnDivideByZero = 1uy
+        | ValidMask = 1uy
+
+    [<Flags>]
+    type CallFlags =
+        | None = 0uy
+        | NoTailCallOptimization = 1uy
+        | RequiresTailCallOptimization = 0b0000_0010uy
+        | ThrowOnNullThis = 0b1000_0000uy
 
     type Instruction =
         | Nop
         | Ret of results: vector<RegisterIndex>
-        | Call of method: MethodIndex * arguments: ImmutableArray<RegisterIndex> * results: vector<RegisterIndex>
-        | Call_virt of method: MethodIndex * arguments: vector<RegisterIndex> * results: vector<RegisterIndex>
-        | Reg_copy of source: RegisterIndex * destination: RegisterIndex
-        | Add of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
-        | Sub of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
-        | Mul of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
-        | Div of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
-        | Incr of RegisterIndex
-        | Incr_ovf of RegisterIndex
-        | Decr of RegisterIndex
-        | Decr_ovf of RegisterIndex
-        | Const_i32 of value: int32 * destination: RegisterIndex
-        | Const_true of RegisterIndex
-        | Const_false of RegisterIndex
-        | Const_zero of RegisterIndex
-        | And of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
-        | Or of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
-        | Not of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
-        | Xor of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
-        | Rem of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
-        | Rotl of amount: RegisterIndex * RegisterIndex
-        | Rotr of amount: RegisterIndex * RegisterIndex
-        | Br of target: InstructionOffset
-        | Br_eq of x: RegisterIndex * y: RegisterIndex * target: InstructionOffset
-        | Br_ne of x: RegisterIndex * y: RegisterIndex * target: InstructionOffset
-        | Br_lt of x: RegisterIndex * y: RegisterIndex * target: InstructionOffset
-        | Br_gt of x: RegisterIndex * y: RegisterIndex * target: InstructionOffset
-        | Br_le of x: RegisterIndex * y: RegisterIndex * target: InstructionOffset
-        | Br_ge of x: RegisterIndex * y: RegisterIndex * target: InstructionOffset
-        | Br_true of x: RegisterIndex * target: InstructionOffset
-        | Br_false of x: RegisterIndex * target: InstructionOffset
-        | Obj_new of constructor: MethodIndex * arguments: vector<RegisterIndex> * result: RegisterIndex
-        | Obj_null of destination: RegisterIndex
-        | Obj_ldfd of field: FieldIndex * object: RegisterIndex * destination: RegisterIndex
-        | Obj_stfd of field: FieldIndex * object: RegisterIndex * source: RegisterIndex
-        | Obj_arr_new of etype: TypeSignatureIndex * length: RegisterIndex * result: RegisterIndex
-        | Obj_arr_len of array: RegisterIndex * result: RegisterIndex
-        | Obj_arr_get of array: RegisterIndex * index: RegisterIndex * result: RegisterIndex
+        | Phi of vector<struct(RegisterIndex * BlockOffset)>
+        | Select of condition: RegisterIndex * vtrue: RegisterIndex * vfalse: RegisterIndex
+        | Call of CallFlags * method: MethodIndex * arguments: vector<RegisterIndex>
+        | Call_virt of CallFlags * method: MethodIndex * this: RegisterIndex * arguments: vector<RegisterIndex>
+        | Add of ArithmeticFlags * PrimitiveType * x: RegisterIndex * y: RegisterIndex
+        | Sub of ArithmeticFlags * PrimitiveType * x: RegisterIndex * y: RegisterIndex
+        | Mul of ArithmeticFlags * PrimitiveType * x: RegisterIndex * y: RegisterIndex
+        | Div of ArithmeticFlags * PrimitiveType * x: RegisterIndex * y: RegisterIndex
+        | Incr of ArithmeticFlags * PrimitiveType * RegisterIndex
+        | Decr of ArithmeticFlags * PrimitiveType * RegisterIndex
+        | And of PrimitiveType * x: RegisterIndex * y: RegisterIndex
+        | Or of PrimitiveType * x: RegisterIndex * y: RegisterIndex
+        | Not of PrimitiveType * RegisterIndex
+        | Xor of PrimitiveType * x: RegisterIndex * y: RegisterIndex
+        | Rem of ArithmeticFlags * PrimitiveType * x: RegisterIndex * y: RegisterIndex
+        | Rotl of PrimitiveType * amount: RegisterIndex * i: RegisterIndex
+        | Rotr of PrimitiveType * amount: RegisterIndex * i: RegisterIndex
+        | Const_s of PrimitiveType * value: varint
+        | Const_u of PrimitiveType * value: uvarint
+        | Const_f32 of value: single
+        | Const_f64 of value: double
+        | Const_true of PrimitiveType
+        | Const_false of PrimitiveType
+        | Const_zero of PrimitiveType
+        | Br of target: BlockOffset
+        | Br_eq of x: RegisterIndex * y: RegisterIndex * btrue: BlockOffset * bfalse: BlockOffset
+        | Br_ne of x: RegisterIndex * y: RegisterIndex * btrue: BlockOffset * bfalse: BlockOffset
+        | Br_lt of x: RegisterIndex * y: RegisterIndex * btrue: BlockOffset * bfalse: BlockOffset
+        | Br_gt of x: RegisterIndex * y: RegisterIndex * btrue: BlockOffset * bfalse: BlockOffset
+        | Br_le of x: RegisterIndex * y: RegisterIndex * btrue: BlockOffset * bfalse: BlockOffset
+        | Br_ge of x: RegisterIndex * y: RegisterIndex * btrue: BlockOffset * bfalse: BlockOffset
+        | Br_true of condition: RegisterIndex * btrue: BlockOffset * bfalse: BlockOffset
+        | Obj_new of constructor: MethodIndex * arguments: vector<RegisterIndex>
+        | Obj_null
+        | Obj_fd_ld of field: FieldIndex * object: RegisterIndex
+        | Obj_fd_st of field: FieldIndex * object: RegisterIndex * source: RegisterIndex
+        | Obj_arr_new of etype: TypeSignatureIndex * length: RegisterIndex
+        | Obj_arr_len of ArithmeticFlags * PrimitiveType * array: RegisterIndex
+        | Obj_arr_get of array: RegisterIndex * index: RegisterIndex
         | Obj_arr_set of array: RegisterIndex * index: RegisterIndex * source: RegisterIndex
-        | Obj_arr_const of etype: TypeSignatureIndex * data: DataIndex * result: RegisterIndex
-        | Call_ret of method: MethodIndex * arguments: vector<RegisterIndex> * results: vector<RegisterIndex>
-        | Call_virt_ret of method: MethodIndex * arguments: vector<RegisterIndex> * results: vector<RegisterIndex>
-        | Add_ovf of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
-        | Sub_ovf of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
-        | Mul_ovf of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
+        | Obj_arr_const of etype: TypeSignatureIndex * data: DataIndex
 
 [<RequireQualifiedAccess>]
 type IdentifierSection =
@@ -252,25 +301,6 @@ module Tag =
         | F32 = 0xF4uy
         | F64 = 0xF8uy
 
-[<RequireQualifiedAccess; NoComparison; StructuralEquality>]
-type PrimitiveType =
-    | Bool
-    | U8
-    | S8
-    | U16
-    | S16
-    | U32
-    | S32
-    | U64
-    | S64
-    | UNative
-    | SNative
-    | Char16
-    | Char32
-    | F32
-    | F64
-    | Unit
-
 [<RequireQualifiedAccess>]
 type ValueType =
     | Primitive of PrimitiveType
@@ -284,17 +314,15 @@ type ReferenceType =
     | Any
     | Vector of ReferenceOrValueType
 
-and [<RequireQualifiedAccess; NoComparison; StructuralEquality>] ReferenceOrValueType =
+and [<RequireQualifiedAccess>] ReferenceOrValueType =
     | Reference of ReferenceType
     | Value of ValueType
 
-[<NoComparison; StructuralEquality>]
 type AnyType =
     | ValueType of ValueType
     | ReferenceType of ReferenceType
     | SafePointer of ReferenceOrValueType
 
-[<NoComparison; StructuralEquality>]
 type MethodSignature = { ReturnTypes: vector<TypeSignatureIndex>; ParameterTypes: vector<TypeSignatureIndex> }
 
 type FieldImport = { FieldOwner: TypeDefinitionIndex; FieldName: IdentifierIndex; FieldType: TypeSignatureIndex }
@@ -401,14 +429,11 @@ type RegisterFlags =
 [<Struct>]
 type RegisterType = { RegisterType: TypeSignatureIndex; RegisterFlags: RegisterFlags }
 
-type Code =
-    { RegisterTypes: vector<struct(uvarint * RegisterType)>
+type CodeBlock =
+    { Locals: vector<struct(TemporaryIndex * LocalIndex)>
       Instructions: LengthEncoded<vector<InstructionSet.Instruction>> }
 
-    member this.RegisterCount =
-        let mutable count = 0u
-        for struct(count', _) in this.RegisterTypes do count <- count + count'
-        count
+type Code = { LocalCount: uvarint; Blocks: vector<CodeBlock> }
 
 type Debug = unit
 

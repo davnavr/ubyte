@@ -12,22 +12,29 @@
 .signature @sig_main method (@sig_int32) (@sig_argv)
 
 .code @code_main {
-    .locals @sig_int32 (@l_index, @l_length, @l_acc, @l_sum)
-    .locals @sig_string32 (@l_arg)
-    .arguments (@a_argv)
-
-    // Sums the lengths of all argument strings
-    const.i32 0 @l_index
-    obj.arr.len @a_argv @l_length
-    START:
-    br.eq @l_index @l_length END
-    obj.arr.get @a_argv @l_index @l_arg
-    obj.arr.len @l_arg @l_acc
-    add @l_sum @l_acc @l_sum
-    incr @l_index
-    br START
-    END:
-    ret @l_sum
+    .arguments ($a_argv)
+    .locals ($l_init_zero, $l_init_length, $l_index, $l_next_index, $l_acc, $l_sum)
+    .block $ENTRY {
+        $l_init_zero = const.zero s32
+        $l_init_length = obj.arr.len s32 $a_argv
+        br $LOOP_START
+    }
+    .block $LOOP_START {
+        $l_sum = phi $l_init_zero when $ENTRY or $l_acc when $LOOP_BODY
+        $l_index = phi $l_init_zero when $ENTRY or $l_next_index when $LOOP_BODY
+        br.eq $l_index $l_init_length then $END else $LOOP_BODY
+    }
+    .block $LOOP_BODY {
+        %t_arg = obj.arr.get $a_argv $l_index
+        %t_length = obj.arr.len s32 %t_arg
+        $l_acc = add s32 $l_sum %t_length
+        %t_one = const.s s32 1
+        $l_next_index = add s32 $l_index %t_one
+        br $LOOP_START
+    }
+    .block $END {
+        ret $l_sum
+    }
 }
 
 .namespace @namespace {

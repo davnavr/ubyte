@@ -4,6 +4,7 @@
 
   <PropertyGroup>
     <InterpreterExecutable>$(RootDirectory)\src\runmdl\runmdl.fsproj</InterpreterExecutable>
+    <ScriptHelpersPath>$(MSBuildThisFileDirectory)\Runtime.psm1</ScriptHelpersPath>
     <OutputDirectory Condition="'$(OutputDirectory)'==''">$(MSBuildProjectDirectory)\out\</OutputDirectory>
   </PropertyGroup>
 
@@ -45,11 +46,17 @@ param (
   [string[]]$ApplicationArguments
 )
 
-$arguments = @("run", "--project", "$(InterpreterExecutable)", "--", "--import-directory", "$(OutputDirectory)", "--program", "%(Compile.OutputPath)")
-if ($LaunchInterpreterDebugger) { $arguments += "--launch-interpreter-debugger" }
-if ($ApplicationArguments.Length -ge 0) { $arguments += "--" }
-$arguments += $ApplicationArguments
-& "dotnet" $arguments
+Import-Module "$(ScriptHelpersPath)" -Scope Local
+
+$params = @{
+    Interpreter = [IO.FileInfo]"$(InterpreterExecutable)"
+    Module = [IO.FileInfo]"%(Compile.OutputPath)"
+    ImportedDirectories = @([IO.DirectoryInfo]"$(OutputDirectory)")
+    LaunchInterpreterDebugger = $LaunchInterpreterDebugger
+    ApplicationArguments = $ApplicationArguments
+}
+
+Invoke-Interpreter @params
 ]]>
       </ScriptContents>
     </PropertyGroup>

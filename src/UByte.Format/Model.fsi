@@ -79,6 +79,8 @@ module IndexKinds =
     type [<Sealed; Class>] Method = inherit Kind
     type [<Sealed; Class>] Data = inherit Kind
     type [<Sealed; Class>] Code = inherit Kind
+    type [<Sealed; Class>] TemporaryRegister = inherit Kind
+    type [<Sealed; Class>] LocalRegister = inherit Kind
     type [<Sealed; Class>] Register = inherit Kind
 
 [<IsReadOnly; Struct; StructuralComparison; StructuralEquality>]
@@ -127,309 +129,571 @@ type DataIndex = Index<IndexKinds.Data>
 /// <summary>An index into the module's method bodies. The index of the first method body is <c>0</c>.</summary>
 type CodeIndex = Index<IndexKinds.Code>
 
+type TemporaryIndex = Index<IndexKinds.TemporaryRegister>
+
+type LocalIndex = Index<IndexKinds.LocalRegister>
+
 /// <summary>
-/// An index to a register. The index of the first register not representing a method parameter is equal to the number
-/// of method parameters. The index of the first method parameter, if any are defined, is <c>0</c>.
+/// An index to a register. The mapping of indices to registers is as follows: temporary registers, argument registers,
+/// local registers.
 /// </summary>
 type RegisterIndex = Index<IndexKinds.Register>
 
+[<RequireQualifiedAccess; NoComparison; StructuralEquality>]
+type PrimitiveType =
+    | Bool
+    | U8
+    | S8
+    | U16
+    | S16
+    | U32
+    | S32
+    | U64
+    | S64
+    | UNative
+    | SNative
+    | Char16
+    | Char32
+    | F32
+    | F64
+    | Unit
+
+    interface IEquatable<PrimitiveType>
+
 module InstructionSet =
     /// <summary>
-    /// Specifies the target of a branch instruction, points to the instruction that will be executed next if the branch is
-    /// taken. <c>0</c> refers to the current branch instruction.
+    /// Specifies the target of a branch instruction, points to the block containing the instructions that will be executed next
+    /// if the target branch is taken. <c>0</c> refers to the current block.
     /// </summary>
-    type InstructionOffset = varint
+    type BlockOffset = varint
 
-    /// Opcodes are represented as variable-length encoded unsigned integers.
+    /// Opcodes are represented as variable-length unsigned integers.
     type Opcode =
         | nop = 0u
         | ret = 1u
-        | call = 5u
-        | ``call.virt`` = 6u
-        // ``call. = 7u
-        | ``reg.copy`` = 0x17u
-        //| ``global.ld`` = 0x19u
-        //| ``global.st`` = 0x20u
+        | phi = 2u
+        | ``select`` = 3u
+        | call = 4u
+        | ``call.virt`` = 5u
+        | ``call.indr`` = 6u
+        | ``global.ld`` = 0x1Du
+        | ``global.st`` = 0x1Eu
+        | ``global.addr`` = 0x1Fu
         | add = 0x20u
         | sub = 0x21u
         | mul = 0x22u
         | div = 0x23u
-        //|  = 27u
-        //|  = 28u
-        //|  = 29u
-        //|  = 2Au
-        //|  = 2Bu
-        | incr = 0x2Cu
-        | ``incr.ovf`` = 0x2Du
-        | decr = 0x2Eu
-        | ``decr.ovf`` = 0x2Fu
-        | ``const.i32`` = 0x30u
-        | ``const.i64`` = 0x31u
-        | ``const.f32`` = 0x32u
-        | ``const.f64`` = 0x33u
-        | ``const.true`` = 0x34u
-        | ``const.zero`` = 0x35u
-        | ``const.false`` = 0x35u
-        //|  = 36u
-        //|  = 37u
-        //|  = 38u
-        //|  = 39u
-        //|  = 3Au
-        //|  = 3Bu
-        //|  = 3Cu
-        //|  = 3Du
-        //|  = 3Eu
-        //|  = 3Fu
-        | ``and`` = 0x40u
-        | ``or`` = 0x41u
-        | ``not`` = 0x42u
-        | ``xor`` = 0x43u
-        | rem = 0x44u
-        // TODO: Have operation that stores both division result AND remainder.
-        //| = 0x45u
-        //| = 0x46u
-        //| = 0x47u
+        | incr = 0x24u
+        | decr = 0x25u
+        | ``and`` = 0x26u
+        | ``or`` = 0x27u
+        | ``not`` = 0x28u
+        | ``xor`` = 0x29u
+        | rem = 0x30u
+        //| = 0x31 TODO: Have operation that stores both division result AND remainder.
         // TODO: Have oepration for shifting integer bits left and right
-        //| = 0x48u
-        //| = 0x49u
-        //| = 0x4Au
-        //| = 0x4Bu
-        // TODO: Have conversion operators (int to float, float to int, etc.) that differ from reg.copy, and variants with overflow checks
-        | rotl = 0x4Cu
-        | rotr = 0x4Du
-        | br = 0x60u
-        | ``br.eq`` = 0x61u
-        | ``br.ne`` = 0x62u
-        | ``br.lt`` = 0x63u
-        | ``br.gt`` = 0x64u
-        | ``br.le`` = 0x65u
-        | ``br.ge`` = 0x66u
-        | ``br.true`` = 0x67u
-        | ``br.false`` = 0x68u
+        //| = 0x32u
+        //| = 0x33u
+        | rotl = 0x34u
+        | rotr = 0x35u
+        | ``const.s`` = 0x40u
+        | ``const.u`` = 0x41u
+        | ``const.f32`` = 0x42u
+        | ``const.f64`` = 0x43u
+        | ``const.true`` = 0x44u
+        | ``const.zero`` = 0x45u
+        | ``const.false`` = 0x45u
+        // TODO: Have conversion operators (int to float, float to int, etc.), with ArithmeticFlags for overflow checks.
+        //|  = 46u
+        //|  = 47u
+        //|  = 48u
+        //|  = 49u
+        //|  = 4Au
+        //|  = 4Bu
+        //|  = 4Cu
+        //|  = 4Du
+        //|  = 4Eu
+        //|  = 4Fu
+        | br = 0x50u
+        | ``br.eq`` = 0x51u
+        | ``br.ne`` = 0x52u
+        | ``br.lt`` = 0x53u
+        | ``br.gt`` = 0x54u
+        | ``br.le`` = 0x55u
+        | ``br.ge`` = 0x56u
+        | ``br.true`` = 0x57u
+
         | ``obj.new`` = 0x70u
         | ``obj.null`` = 0x71u
-        | ``obj.ldfd`` = 0x72u
-        | ``obj.stfd`` = 0x73u
-        | ``obj.throw`` = 0x74u
+        | ``obj.fd.ld`` = 0x72u
+        | ``obj.fd.st`` = 0x73u
+        | ``obj.fd.addr`` = 0x74u
+        | ``obj.throw`` = 0x75u
 
         | ``obj.arr.new`` = 0x7Au
         | ``obj.arr.len`` = 0x7Bu
         | ``obj.arr.get`` = 0x7Cu
         //| ``obj.arr.addr`` = 0x7Du
         | ``obj.arr.set`` = 0x7Eu
-        | ``obj.arr.const`` = 0x80u
-        | ``call.ret`` = 0x90u
-        | ``call.virt.ret`` = 0x91u
-        | ``add.ovf`` = 0xA0u
-        | ``sub.ovf`` = 0xA1u
-        | ``mul.ovf`` = 0xA2u
+        | ``obj.arr.const`` = 0x7Fu
+
+    [<Flags>]
+    type ArithmeticFlags =
+        | None = 0uy
+        | ThrowOnOverflow = 1uy
+        /// <summary>
+        /// Applicable only to the <c>div</c> and <c>rem</c> instructions, indicates that an exception should be thrown if the
+        /// denominator is zero.
+        /// </summary>
+        | ThrowOnDivideByZero = 1uy
+        | ValidMask = 1uy
+
+    [<Flags>]
+    type CallFlags =
+        | None = 0uy
+        | NoTailCallOptimization = 1uy
+        /// Indicates that tail call optimization must occur, and that the call instruction must immediately precede a <c>ret</c>
+        /// instruction that returns all of the values returned by the called method.
+        | RequiresTailCallOptimization = 0b0000_0010uy
+        /// <summary>
+        /// Applicable only to the <c>call.virt</c> instruction, indicates that exception should be thrown if the <c>this</c>
+        /// object reference is <see langword="null"/>.
+        /// </summary>
+        | ThrowOnNullThis = 0b1000_0000uy
 
     /// <remarks>
+    /// <para>
     /// Instructions that store integer constants into a register <c>const.</c> are followed by the integer constants in the
     /// endianness specified in the module header.
+    /// </para>
+    /// <para>
+    /// For instructions that take a vector of registers, such as <c>ret</c> or <c>call</c>, the length of the vector is
+    /// included as usual to simplify parsing.
+    /// </para>
+    /// <para>
+    /// For instructions that call another method, such as <c>call</c> or <c>call.virt</c>, the number of registers used as
+    /// arguments must exactly match the number of arguments specified by the signature of the method. Additionally, the number
+    /// of temporary registers introduced is equal to the number of return values.
+    /// </para>
     /// </remarks>
+    /// <seealso cref="T:UByte.Format.Model.InstructionSet.CallFlags" />
     [<NoComparison; NoEquality>]
-    type Instruction = // TODO: If efficiency is needed, can omit length integers from Ret and Call instructions
+    type Instruction = // NOTE: If efficiency is needed, can omit length integers from Ret and Call instructions
+        /// <summary>
+        /// <para>
+        /// <c>nop</c>
+        /// </para>
+        /// <para>
+        /// Does absolutely nothing.
+        /// </para>
+        /// </summary>
         | Nop
+        /// <summary>
+        /// <para>
+        /// <c>ret (&lt;values&gt;)</c>
+        /// </para>
+        /// <para>
+        /// Returns the values in the specified registers and transfers control back to the calling method, must be the last
+        /// instruction in a block.
+        /// </para>
+        /// </summary>
+        | Ret of results: vector<RegisterIndex> // TODO: How to ignore some return values? Maybe treat index 0 as ignore?
+        /// <summary>
+        /// <para>
+        /// <c>&lt;result&gt; = phi &lt;register0&gt; when &lt;block0&gt; or &lt;register1&gt; when &lt;block1&gt; or ...</c>
+        /// </para>
+        /// <para>
+        /// Returns the value contained in the corresponding register depending on the previous block that was executed.
+        /// </para>
+        /// </summary>
+        | Phi of vector<struct(RegisterIndex * BlockOffset)>
+        /// <summary>
+        /// <para>
+        /// <c>&lt;result&gt; = select &lt;condition&gt; then &lt;vtrue&gt; else &lt;vfalse&gt; </c>
+        /// </para>
+        /// <para>
+        /// Returns the value in the <paramref name="vtrue"/> register if the value in the <paramref name="condition"/> register
+        /// is <see langword="true"/>; otherwise, returns the value in the <paramref name="vfalse"/> register.
+        /// </para>
+        /// </summary>
+        | Select of condition: RegisterIndex * vtrue: RegisterIndex * vfalse: RegisterIndex
+        /// <summary>
+        /// <para>
+        /// <c>(&lt;result0&gt;, &lt;result1&gt;, ...) = call [tail.prohibited | tail.required] &lt;method&gt; (&lt;argument0&gt;, &lt;argument1&gt;, ...)</c>
+        /// </para>
+        /// <para>
+        /// Calls the specified <paramref name="method"/> with the specified <paramref name="arguments"/>.
+        /// </para>
+        /// </summary>
+        | Call of CallFlags * method: MethodIndex * arguments: vector<RegisterIndex> //* results: vector<uvarint>
+        /// <summary>
+        /// <para>
+        /// <c>(&lt;result0&gt;, &lt;result1&gt;, ...) = call.virt [tail.prohibited | tail.required] [throw.nullthis] &lt;method&gt; &lt;this&gt; (&lt;argument1&gt;, &lt;argument2&gt;, ...)</c>
+        /// </para>
+        /// <para>
+        /// Calls an instance <paramref name="method"/> based on the type of the <paramref name="this"/> object
+        /// reference.
+        /// </para>
+        /// </summary>
+        | Call_virt of CallFlags * method: MethodIndex * this: RegisterIndex * arguments: vector<RegisterIndex>
+        //| Call_indr of CallFlags * method: RegisterIndex * arguments: vector<RegisterIndex>
+        //| Global_ld
+        //| Global_st
+        /// <summary>
+        /// <para>
+        /// <c>&lt;result&gt; = add [throw.ovf] &lt;numeric type&gt; &lt;x&gt; &lt;y&gt;</c>
+        /// </para>
+        /// <para>
+        /// Computes the sum of the values in registers <paramref name="x"/> and <paramref name="y"/> converted to the specified
+        /// numeric type. and returns the sum.
+        /// </para>
+        /// </summary>
+        | Add of ArithmeticFlags * PrimitiveType * x: RegisterIndex * y: RegisterIndex
+        /// <summary>
+        /// <para>
+        /// <c>&lt;result&gt; = sub [throw.ovf] &lt;numeric type&gt; &lt;x&gt; &lt;y&gt;</c>
+        /// </para>
+        /// <para>
+        /// Converts the values in the <paramref name="x"/> and <paramref name="y"/> registers to the specified numeric type,
+        /// subtracts the value in register <paramref name="y"/> from the value in register <paramref name="x"/>, returns the
+        /// difference.
+        /// </para>
+        /// </summary>
+        | Sub of ArithmeticFlags * PrimitiveType * x: RegisterIndex * y: RegisterIndex
+        /// <summary>
+        /// <para>
+        /// <c>&lt;result&gt; = mul [throw.ovf] &lt;numeric type&gt; &lt;x&gt; &lt;y&gt;</c>
+        /// </para>
+        /// <para>
+        /// Computes the product of the values in registers <paramref name="x"/> and <paramref name="y"/> converted to the
+        /// specified numeric type, and returns the product.
+        /// </para>
+        /// </summary>
+        | Mul of ArithmeticFlags * PrimitiveType * x: RegisterIndex * y: RegisterIndex
+        /// <summary>
+        /// <para>
+        /// <c>&lt;result&gt; = div [throw.div0] &lt;numeric type&gt; &lt;x&gt; &lt;y&gt;</c>
+        /// </para>
+        /// <para>
+        /// Converts the values in the <paramref name="x"/> and <paramref name="y"/> registers to the specified numeric type,
+        /// divides the value in register <paramref name="x"/> by the value in register <paramref name="y"/>, and returns the result.
+        /// </para>
+        /// </summary>
+        | Div of ArithmeticFlags * PrimitiveType * x: RegisterIndex * y: RegisterIndex
+        /// <summary>
+        /// <para>
+        /// <c>&lt;result&gt; = incr [throw.ovf] &lt;numeric type&gt; &lt;value&gt;</c>
+        /// </para>
+        /// <para>
+        /// Converts the value stored in the register to the specified numeric type, and returns the value plus one.
+        /// </para>
+        /// </summary>
+        | Incr of ArithmeticFlags * PrimitiveType * RegisterIndex
+        /// <summary>
+        /// <para>
+        /// <c>&lt;result&gt; = decr [throw.ovf] &lt;numeric type&gt; &lt;value&gt;</c>
+        /// </para>
+        /// <para>
+        /// Converts the value stored in the register to the specified numeric type, and returns the value minus one.
+        /// </para>
+        /// </summary>
+        | Decr of ArithmeticFlags * PrimitiveType * RegisterIndex
+        /// <summary>
+        /// <para>
+        /// <c>&lt;result&gt; = and &lt;integer type&gt; &lt;x&gt; &lt;y&gt;</c>
+        /// </para>
+        /// <para>
+        /// Converts the values in the <paramref name="x"/> and <paramref name="y"/> registers to the specified integer type,
+        /// computes the bitwise <c>AND</c>, and returns the result.
+        /// </para>
+        /// </summary>
+        | And of PrimitiveType * x: RegisterIndex * y: RegisterIndex
+        /// <summary>
+        /// <para>
+        /// <c>&lt;result&gt; = or &lt;integer type&gt; &lt;x&gt; &lt;y&gt;</c>
+        /// </para>
+        /// <para>
+        /// Converts the values in the <paramref name="x"/> and <paramref name="y"/> registers to the specified integer type,
+        /// computes the bitwise <c>OR</c>, and returns the result.
+        /// </para>
+        /// </summary>
+        | Or of PrimitiveType * x: RegisterIndex * y: RegisterIndex
+        /// <summary>
+        /// <para>
+        /// <c>&lt;result&gt; = not &lt;integer type&gt; &lt;value&gt;</c>
+        /// </para>
+        /// <para>
+        /// Converts the value in the register to the specified integer type, computes the bitwise <c>NOT</c>, and returns the
+        /// result.
+        /// </para>
+        /// </summary>
+        | Not of PrimitiveType * RegisterIndex
+        /// <summary>
+        /// <para>
+        /// <c>&lt;result&gt; = xor &lt;integer type&gt; &lt;x&gt; &lt;y&gt;</c>
+        /// </para>
+        /// <para>
+        /// Converts the values in the <paramref name="x"/> and <paramref name="y"/> registers to the specified integer type,
+        /// computes the bitwise <c>XOR</c>, and returns the result.
+        /// </para>
+        /// </summary>
+        | Xor of PrimitiveType * x: RegisterIndex * y: RegisterIndex
+        /// <summary>
+        /// <para>
+        /// <c>&lt;result&gt; = rem [throw.div0] &lt;numeric type&gt; &lt;x&gt; &lt;y&gt;</c>
+        /// </para>
+        /// <para>
+        /// Converts the values in the <paramref name="x"/> and <paramref name="y"/> registers to the specified integer type,
+        /// divides the value in register <paramref name="x"/> by the value in register <paramref name="y"/>, and returns the
+        /// remainder.
+        /// </para>
+        /// </summary>
+        | Rem of ArithmeticFlags * PrimitiveType * x: RegisterIndex * y: RegisterIndex
+
+        /// <summary>
+        /// <para>
+        /// <c>&lt;result&gt; = rotl &lt;numeric type&gt; &lt;value&gt;</c>
+        /// </para>
+        /// <para>
+        /// Converts the in the <paramref name="i"/> register to the specified integer type, and shifts the value left by the
+        /// specified integer <paramref name="amount"/>
+        /// </para>
+        /// </summary>
+        | Rotl of PrimitiveType * amount: RegisterIndex * i: RegisterIndex
+        /// <summary>
+        /// <para>
+        /// <c>&lt;result&gt; = rotr &lt;integer type&gt; &lt;value&gt;</c>
+        /// </para>
+        /// <para>
+        /// Converts the value in the <paramref name="i"/> register to the specified integer type, and shifts the value right by
+        /// the specified integer <paramref name="amount"/>.
+        /// </para>
+        /// </summary>
+        | Rotr of PrimitiveType * amount: RegisterIndex * i: RegisterIndex
+
+        /// <summary>
+        /// <para>
+        /// <c>&lt;result&gt; = const.s &lt;numeric type&gt; &lt;value&gt;</c>
+        /// </para>
+        /// <para>
+        /// Returns a signed integer of the specified numeric type.
+        /// </para>
+        /// </summary>
         /// <remarks>
-        /// To simplify parsing, the number of registers containing the values to return is included as part of the instruction.
+        /// The integer is stored as a variable-width signed integer.
         /// </remarks>
-        | Ret of results: vector<RegisterIndex>
-
+        | Const_s of PrimitiveType * value: varint
         /// <summary>
-        /// Calls the specified <paramref name="method"/> supplying the specified <paramref name="arguments"/> and storing the
-        /// return values into the <paramref name="results"/> registers. For non-static methods, the <c>this</c> pointer is
-        /// register <c>0</c>.
+        /// <para>
+        /// <c>&lt;result&gt; = const.u &lt;numeric type&gt; &lt;value&gt;</c>
+        /// </para>
+        /// <para>
+        /// Returns an unsigned integer of the specified numeric type.
+        /// </para>
         /// </summary>
         /// <remarks>
-        /// To simplify parsing, the number of argument registers is included as part of the instruction.
+        /// The integer is stored as a variable-width unsigned integer.
         /// </remarks>
-        | Call of method: MethodIndex * arguments: vector<RegisterIndex> * results: vector<RegisterIndex> // TODO: How to ignore some return values? Maybe treat index 0 as ignore?
-        | Call_virt of method: MethodIndex * arguments: vector<RegisterIndex> * results: vector<RegisterIndex>
+        | Const_u of PrimitiveType * value: uvarint
+        | Const_f32 of value: single
+        | Const_f64 of value: double
+        /// <summary>
+        /// <para>
+        /// <c>&lt;result&gt; = const.true &lt;numeric type&gt;</c>
+        /// </para>
+        /// <para>
+        /// Returns a <see langword="true"/> value or the integer <c>1</c> as the specified numeric type.
+        /// </para>
+        /// </summary>
+        | Const_true of PrimitiveType
+        /// <summary>
+        /// <para>
+        /// <c>&lt;result&gt; = const.false &lt;numeric type&gt;</c>
+        /// </para>
+        /// <para>
+        /// An alias for <c>const.zero</c>, returns a <see langword="false"/> value or the integer <c>0</c> as the specified
+        /// numeric type.
+        /// </para>
+        /// </summary>
+        | Const_false of PrimitiveType
+        /// <summary>
+        /// <para>
+        /// <c>&lt;result&gt; = const.zero &lt;numeric type&gt;</c>
+        /// </para>
+        /// <para>
+        /// Returns a value of <c>0</c> as the specified numeric type.
+        /// </para>
+        /// </summary>
+        | Const_zero of PrimitiveType
 
         /// <summary>
-        /// Copies the value stored in the <paramref name="source"/> register to the <paramref name="destination"/> register.
+        /// <para>
+        /// <c>br &lt;target&gt;</c>
+        /// </para>
+        /// <para>
+        /// Performs an unconditional branch to the block specified by the <paramref name="target"/> offset.
+        /// </para>
         /// </summary>
-        | Reg_copy of source: RegisterIndex * destination: RegisterIndex
-
-        // Arithmetic
+        | Br of target: BlockOffset
         /// <summary>
-        /// Computes the sum of the values in registers <paramref name="x"/> and <paramref name="y"/> without an overflow check,
-        /// and stores the sum in the <paramref name="result"/> register.
+        /// <para>
+        /// <c>br.eq &lt;x&gt; &lt;y&gt; then &lt;btrue&gt; else &lt;bfalse&gt;</c>
+        /// </para>
+        /// <para>
+        /// Branches to a block depending on if the value in register <paramref name="x"/> is equal to the value in register
+        /// <paramref name="y"/>.
+        /// </para>
         /// </summary>
-        | Add of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
+        | Br_eq of x: RegisterIndex * y: RegisterIndex * btrue: BlockOffset * bfalse: BlockOffset
         /// <summary>
-        /// Subtracts the value in register <paramref name="y"/> from the value in register <paramref name="x"/> without an
-        /// overflow check, and stores the difference in the <paramref name="result"/> register.
+        /// <para>
+        /// <c>br.ne &lt;x&gt; &lt;y&gt; then &lt;btrue&gt; else &lt;bfalse&gt;</c>
+        /// </para>
+        /// <para>
+        /// Branches to a block depending on if the value in register <paramref name="x"/> is not equal to the value in register
+        /// <paramref name="y"/>.
+        /// </para>
         /// </summary>
-        | Sub of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
+        | Br_ne of x: RegisterIndex * y: RegisterIndex * btrue: BlockOffset * bfalse: BlockOffset
         /// <summary>
-        /// Computes the product of the values in registers <paramref name="x"/> and <paramref name="y"/> without an overflow
-        /// check, and stores the product in the <paramref name="result"/> register.
+        /// <para>
+        /// <c>br.lt &lt;x&gt; &lt;y&gt; then &lt;btrue&gt; else &lt;bfalse&gt;</c>
+        /// </para>
+        /// <para>
+        /// Branches to a block depending on if the value in register <paramref name="x"/> is less than the value in register
+        /// <paramref name="y"/>.
+        /// </para>
         /// </summary>
-        | Mul of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
+        | Br_lt of x: RegisterIndex * y: RegisterIndex * btrue: BlockOffset * bfalse: BlockOffset
         /// <summary>
-        /// Divides the value in register <paramref name="x"/> by the value in register <paramref name="y"/>, and stores the
-        /// result in the <paramref name="result"/> register.
+        /// <para>
+        /// <c>br.gt &lt;x&gt; &lt;y&gt; then &lt;btrue&gt; else &lt;bfalse&gt;</c>
+        /// </para>
+        /// <para>
+        /// Branches to a block depending on if the value in register <paramref name="x"/> is greater than the value in register
+        /// <paramref name="y"/>.
+        /// </para>
         /// </summary>
-        | Div of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
-
+        | Br_gt of x: RegisterIndex * y: RegisterIndex * btrue: BlockOffset * bfalse: BlockOffset
         /// <summary>
-        /// Increments the value stored in the register by one, without an overflow check.
+        /// <para>
+        /// <c>br.le &lt;x&gt; &lt;y&gt; then &lt;btrue&gt; else &lt;bfalse&gt;</c>
+        /// </para>
+        /// <para>
+        /// Branches to a block depending on if the value in register <paramref name="x"/> is less than or equal to the value in
+        /// register <paramref name="y"/>.
+        /// </para>
         /// </summary>
-        | Incr of RegisterIndex
-        | Incr_ovf of RegisterIndex
-
+        | Br_le of x: RegisterIndex * y: RegisterIndex * btrue: BlockOffset * bfalse: BlockOffset
         /// <summary>
-        /// Decrements the value stored in the register by one, without an overflow check.
+        /// <para>
+        /// <c>br.ge &lt;x&gt; &lt;y&gt; then &lt;btrue&gt; else &lt;bfalse&gt;</c>
+        /// </para>
+        /// <para>
+        /// Branches to a block depending on if the value in the <paramref name="x"/> register is greater than or equal to the
+        /// value in the <paramref name="y"/> register.
+        /// </para>
         /// </summary>
-        | Decr of RegisterIndex
-        | Decr_ovf of RegisterIndex
-
+        | Br_ge of x: RegisterIndex * y: RegisterIndex * btrue: BlockOffset * bfalse: BlockOffset
         /// <summary>
-        /// Stores a signed or unsigned 32-bit integer <paramref name="value"/> into the specified <paramref name="destination"/>
-        /// register.
+        /// <para>
+        /// <c>br.true &lt;condition&gt; then &lt;btrue&gt; else &lt;bfalse&gt;</c>
+        /// </para>
+        /// <para>
+        /// If the value in the <paramref name="condition"/> register is <see langword="true"/>, branches to the block specifie
+        /// by the <paramref name="btrue"/> offset; otherwise, branches to the block specified by the <paramref name="bfalse"/>
+        /// offset.
+        /// </para>
         /// </summary>
-        /// <remarks>
-        /// The integer is stored in the four bytes after the opcode, stored in the endianness as specified by the module header.
-        /// </remarks>
-        | Const_i32 of value: int32 * destination: RegisterIndex
-
-        /// <summary>
-        /// Stores a <see langword="true"/> value or the integer <c>1</c> into the specified register.
-        /// </summary>
-        | Const_true of RegisterIndex
-        /// <summary>
-        /// An alias for <c>const.zero</c>. stores a <see langword="false"/> value or the integer <c>0</c> into the specified
-        /// register.
-        /// </summary>
-        | Const_false of RegisterIndex
-        /// <summary>
-        /// An alias for <c>const.false</c>, stores a value of <c>0</c> into the specified register.
-        /// </summary>
-        | Const_zero of RegisterIndex
-
-        /// <summary>
-        /// Computes the bitwise <c>AND</c> of the values stored in registers <paramref name="x"/> and <paramref name="y"/> and
-        /// stores the result in the <paramref name="result"/> register.
-        /// </summary>
-        | And of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
-        /// <summary>
-        /// Computes the bitwise <c>OR</c> of the values stored in registers <paramref name="x"/> and <paramref name="y"/> and
-        /// stores the result in the <paramref name="result"/> register.
-        /// </summary>
-        | Or of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
-        /// <summary>
-        /// Computes the bitwise <c>NOT</c> of the values stored in registers <paramref name="x"/> and <paramref name="y"/> and
-        /// stores the result in the <paramref name="result"/> register.
-        /// </summary>
-        | Not of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
-        /// <summary>
-        /// Computes the bitwise <c>XOR</c> of the values stored in registers <paramref name="x"/> and <paramref name="y"/> and
-        /// stores the result in the <paramref name="result"/> register.
-        /// </summary>
-        | Xor of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
-        /// <summary>
-        /// Divides the value in register <paramref name="x"/> by the value in register <paramref name="y"/>, and stores the
-        /// remainder in the <paramref name="result"/> register.
-        /// </summary>
-        | Rem of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
-
-        | Rotl of amount: RegisterIndex * RegisterIndex
-        | Rotr of amount: RegisterIndex * RegisterIndex
+        | Br_true of condition: RegisterIndex * btrue: BlockOffset * bfalse: BlockOffset
 
         /// <summary>
-        /// Performs an unconditional branch to the instruction specified by the <paramref name="target"/> offset.
+        /// <para>
+        /// <c>&lt;result&gt; = obj.new &lt;constructor&gt; (&lt;arguments&gt;)</c>
+        /// </para>
+        /// <para>
+        /// Allocates a new object, calls the specified <paramref name="constructor"/> with the specified
+        /// <paramref name="arguments"/>, and returns an object reference to the object.
+        /// </para>
         /// </summary>
-        | Br of target: InstructionOffset
+        | Obj_new of constructor: MethodIndex * arguments: vector<RegisterIndex>
         /// <summary>
-        /// If the value in register <paramref name="x"/> is equal to the value in register <paramref name="y"/>, branches to the
-        /// instruction specified by the <paramref name="target"/> offset.
+        /// <para>
+        /// <c>&lt;result&gt; = obj.null</c>
+        /// </para>
+        /// <para>
+        /// Returns a <see langword="null"/> object reference.
+        /// </para>
         /// </summary>
-        | Br_eq of x: RegisterIndex * y: RegisterIndex * target: InstructionOffset
+        | Obj_null
         /// <summary>
-        /// If the value in register <paramref name="x"/> is not equal to the value in register <paramref name="y"/>, branches to
-        /// the instruction specified by the <paramref name="target"/> offset.
+        /// <para>
+        /// <c>&lt;result&gt; = obj.fd.ld &lt;field&gt; &lt;object&gt;</c>
+        /// </para>
+        /// <para>
+        /// Returns the value of an object's field.
+        /// </para>
         /// </summary>
-        | Br_ne of x: RegisterIndex * y: RegisterIndex * target: InstructionOffset
+        | Obj_fd_ld of field: FieldIndex * object: RegisterIndex
         /// <summary>
-        /// If the value in register <paramref name="x"/> is less than the value in register <paramref name="y"/>, branches to
-        /// the instruction specified by the <paramref name="target"/> offset.
-        /// </summary>
-        | Br_lt of x: RegisterIndex * y: RegisterIndex * target: InstructionOffset
-        /// <summary>
-        /// If the value in register <paramref name="x"/> is greater than the value in register <paramref name="y"/>, branches to
-        /// the instruction specified by the <paramref name="target"/> offset.
-        /// </summary>
-        | Br_gt of x: RegisterIndex * y: RegisterIndex * target: InstructionOffset
-        /// <summary>
-        /// If the value in register <paramref name="x"/> is less than or equal to the value in register <paramref name="y"/>,
-        /// branches to the instruction specified by the <paramref name="target"/> offset.
-        /// </summary>
-        | Br_le of x: RegisterIndex * y: RegisterIndex * target: InstructionOffset
-        /// <summary>
-        /// If the value in register <paramref name="x"/> is greater than or equal to the value in register <paramref name="y"/>,
-        /// branches to the instruction specified by the <paramref name="target"/> offset.
-        /// </summary>
-        | Br_ge of x: RegisterIndex * y: RegisterIndex * target: InstructionOffset
-        /// <summary>
-        /// If the value in register <paramref name="x"/> is not equal to <c>0</c>, branches to the instruction specified by the
-        /// <paramref name="target"/> offset.
-        /// </summary>
-        | Br_true of x: RegisterIndex * target: InstructionOffset
-        /// <summary>
-        /// If the value in register <paramref name="x"/> is equal to <c>0</c>, branches to the instruction specified by the
-        /// <paramref name="target"/> offset.
-        /// </summary>
-        | Br_false of x: RegisterIndex * target: InstructionOffset
-        //| Br_zero
-
-        /// <summary>
-        /// Allocates a new object and calls the specified <paramref name="constructor"/> with the specified
-        /// <paramref name="arguments"/> and stores an object reference to the object into the <paramref name="result"/>
-        /// register.
-        /// </summary>
-        | Obj_new of constructor: MethodIndex * arguments: vector<RegisterIndex> * result: RegisterIndex
-        /// <summary>
-        /// Stores a <see langword="null"/> object reference into the specified <paramref name="destination"/> register.
-        /// </summary>
-        | Obj_null of destination: RegisterIndex
-        /// <summary>
-        /// Copies the value of an object's field into the <paramref name="destination"/> register.
-        /// </summary>
-        | Obj_ldfd of field: FieldIndex * object: RegisterIndex * destination: RegisterIndex
-        /// <summary>
+        /// <para>
+        /// <c>obj.fd.st &lt;field&gt; &lt;object&gt; &lt;source&gt;</c>
+        /// </para>
+        /// <para>
         /// Copies the value from the <paramref name="source"/> register into the field of the specified object.
+        /// </para>
         /// </summary>
-        | Obj_stfd of field: FieldIndex * object: RegisterIndex * source: RegisterIndex
+        | Obj_fd_st of field: FieldIndex * object: RegisterIndex * source: RegisterIndex
 
         /// <summary>
-        /// Allocates a new vector containing elements of the specified type with the specified <paramref name="length"/> and
-        /// stores an object reference to the vector into the <paramref name="result"/> register.
+        /// <para>
+        /// <c>&lt;result&gt; = obj.arr.new &lt;etype&gt; &lt;length&gt;</c>
+        /// </para>
+        /// <para>
+        /// Allocates a new array containing elements of the specified type with the specified <paramref name="length"/>, and
+        /// returns an object reference to the array.
+        /// </para>
         /// </summary>
-        | Obj_arr_new of etype: TypeSignatureIndex * length: RegisterIndex * result: RegisterIndex
+        | Obj_arr_new of etype: TypeSignatureIndex * length: RegisterIndex
         /// <summary>
-        /// Stores the length of the specified <paramref name="array"/> into the <paramref name="result"/> register.
+        /// <para>
+        /// <c>&lt;result&gt; = obj.arr.len [throw.ovf] &lt;numeric type&gt; &lt;array&gt;</c>
+        /// </para>
+        /// <para>
+        /// Returns the length of the specified <paramref name="array"/>, as a number of the specified type.
+        /// </para>
         /// </summary>
-        | Obj_arr_len of array: RegisterIndex * result: RegisterIndex
-        | Obj_arr_get of array: RegisterIndex * index: RegisterIndex * result: RegisterIndex
-
+        | Obj_arr_len of ArithmeticFlags * PrimitiveType * array: RegisterIndex
+        /// <summary>
+        /// <para>
+        /// <c>&lt;result&gt; = obj.arr.get &lt;array&gt; &lt;index&gt;</c>
+        /// </para>
+        /// <para>
+        /// Returns the item at the specified <paramref name="index"/> in the specified <paramref name="array"/>.
+        /// </para>
+        /// </summary>
+        | Obj_arr_get of array: RegisterIndex * index: RegisterIndex
+        //| Obj_arr_addr of array: RegisterIndex * index: RegisterIndex
+        /// <summary>
+        /// <para>
+        /// <c>obj.arr.set &lt;array&gt; &lt;index&gt; &lt;source&gt;</c>
+        /// </para>
+        /// <para>
+        /// Copies the value in the <paramref name="source"/> register into the specified <paramref name="array"/> at the
+        /// specified <paramref name="index"/>.
+        /// </para>
+        /// </summary>
         | Obj_arr_set of array: RegisterIndex * index: RegisterIndex * source: RegisterIndex
         /// <summary>
-        /// Allocates a new vector containing elements of the specified type from the specified module <paramref name="data"/>
-        /// and stores an object reference to the vector into the <paramref name="result"/> register.
+        /// <para>
+        /// <c>&lt;result&gt; = obj.arr.const &lt;etype&gt; &lt;data&gt;</c>
+        /// </para>
+        /// <para>
+        /// Allocates a new array containing elements of the specified type from the specified module <paramref name="data"/>,
+        /// and returns an object reference to the array.
+        /// </para>
         /// </summary>
-        | Obj_arr_const of etype: TypeSignatureIndex * data: DataIndex * result: RegisterIndex
-
-        | Call_ret of method: MethodIndex * arguments: vector<RegisterIndex> * results: vector<RegisterIndex>
-        | Call_virt_ret of method: MethodIndex * arguments: vector<RegisterIndex> * results: vector<RegisterIndex>
-        | Add_ovf of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
-        /// <summary>
-        /// Subtracts the value in register <paramref name="y"/> from the value in register <paramref name="x"/> with an
-        /// overflow check, and stores the difference in the <paramref name="result"/> register.
-        /// </summary>
-        | Sub_ovf of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
-        | Mul_ovf of x: RegisterIndex * y: RegisterIndex * result: RegisterIndex
+        | Obj_arr_const of etype: TypeSignatureIndex * data: DataIndex
 
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
 type IdentifierSection = // TODO: Rename to something else
@@ -480,27 +744,6 @@ module Tag =
         | RefDefinedType = 0xDEuy
         | F32 = 0xF4uy
         | F64 = 0xF8uy
-
-[<RequireQualifiedAccess; NoComparison; StructuralEquality>]
-type PrimitiveType =
-    | Bool
-    | U8
-    | S8
-    | U16
-    | S16
-    | U32
-    | S32
-    | U64
-    | S64
-    | UNative
-    | SNative
-    | Char16
-    | Char32
-    | F32
-    | F64
-    | Unit
-
-    interface IEquatable<PrimitiveType>
 
 [<RequireQualifiedAccess; NoComparison; StructuralEquality>]
 type ValueType =
@@ -687,26 +930,21 @@ type TypeDefinition =
       //Initializers: vector<InitializerIndex voption>
       VTable: vector<MethodOverride> }
 
-[<Flags>]
-type RegisterFlags =
-    | None = 0uy
-    | ValidMask = 0b0000_0000uy
-
-[<IsReadOnly; Struct; NoComparison; NoEquality>]
-type RegisterType =
-    { RegisterType: TypeSignatureIndex
-      RegisterFlags: RegisterFlags }
+[<NoComparison; NoEquality>]
+type CodeBlock =
+    { /// Specifies which temporary registers in the current block map to which local register. Each local register must map to
+      /// exactly one temporary register in exactly one block.
+      Locals: vector<struct(TemporaryIndex * LocalIndex)>
+      /// <remarks>
+      /// Both the byte length and the actual number of instructions are included to simplify parsing.
+      /// </remarks>
+      Instructions: LengthEncoded<vector<InstructionSet.Instruction>> }
 
 [<NoComparison; NoEquality>]
 type Code =
-    { /// The types and special flags for the registers of the method. A length precedes each register type and flag byte to
-      /// allow easy duplication
-      RegisterTypes: vector<struct(uvarint * RegisterType)>
-      /// The instructions that make up the method body. Both the byte length and the actual number of instructions are included
-      /// to simplify parsing.
-      Instructions: LengthEncoded<vector<InstructionSet.Instruction>> }
-
-    member RegisterCount : uvarint
+    { /// Indicates the total number of local registers.
+      LocalCount: uvarint
+      Blocks: vector<CodeBlock> }
 
 type Debug = unit
 
