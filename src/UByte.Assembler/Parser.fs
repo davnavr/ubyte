@@ -224,12 +224,16 @@ type CodeBlockLookup = Symbol -> InstructionSet.BlockOffset voption
 type ParsedInstruction =
     RegisterLookup -> IInstructionResolver -> InstructionErrorsBuilder -> CodeBlockLookup -> InstructionSet.Instruction voption
 
-[<Struct>]
+[<RequireQualifiedAccess>]
+type ParsedExceptionHandler = | Finally of handler: Symbol | Catch of Symbol * handler: Symbol | None
+
 type ParsedBlock =
-    { Symbol: Symbol
+    { ExceptionHandler: ParsedExceptionHandler
+      Symbol: Symbol
       Instructions: struct(ParsedRegister list * ParsedInstruction) list }
 
 type ParsedCode = { Locals: Symbol list; Arguments: Symbol voption list; Blocks: ParsedBlock list }
+
 
 let code: Parser<ParsedCode, _> =
     let lsymbol = nsymbol '$'
@@ -311,7 +315,6 @@ let code: Parser<ParsedCode, _> =
         i
 
     let codeInstructionName = many1Chars (choice [ asciiLetter; digit; pchar '.' ])
-    let codeBlockName = pipe2 getPosition (codeInstructionName |>> Name.ofStr) (fun pos name -> struct(pos, name))
 
     let instruction: Parser<ParsedInstruction, _> =
         let unknown pos name: Parser<ParsedInstruction, _> =
@@ -583,9 +586,16 @@ let code: Parser<ParsedCode, _> =
             |> many
             |> block
 
-        period >>.
-        keyword "block" >>.
-        pipe2 (nsymbol '$') instr (fun name instrs -> { ParsedBlock.Symbol = name; Instructions = instrs })
+        let exhandler = choice [
+            keyword "catches" >>. lsymbol .>> keyword "with" .>>. lsymbol |>> ParsedExceptionHandler.Catch
+            keyword "finally" >>. lsymbol |>> ParsedExceptionHandler.Finally // TODO: Pick better keyword for finally clause.
+            preturn ParsedExceptionHandler.None
+        ]
+
+        pipe3 (period >>. keyword "block" >>. nsymbol '$') exhandler instr <| fun name eh instrs ->
+            { ParsedBlock.ExceptionHandler = eh
+              Symbol = name
+              Instructions = instrs }
 
     pipe3
         (manyLocalRegisters "arguments" (optsymbol '$'))

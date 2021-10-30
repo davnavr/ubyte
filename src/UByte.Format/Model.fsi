@@ -130,7 +130,7 @@ type DataIndex = Index<IndexKinds.Data>
 /// <summary>An index into the module's method bodies. The index of the first method body is <c>0</c>.</summary>
 type CodeIndex = Index<IndexKinds.Code>
 
-type CodeBlockIndex = Index<IndexKinds.Code>
+type CodeBlockIndex = Index<IndexKinds.Block>
 
 type TemporaryIndex = Index<IndexKinds.TemporaryRegister>
 
@@ -947,7 +947,7 @@ type TypeDefinition =
 [<NoComparison; NoEquality>]
 type BlockExceptionHandler =
     { /// Specifies the local register that the exception object is stored into when an exception is thrown.
-      ExceptionRegister: LocalIndex
+      ExceptionRegister: LocalIndex voption
       CatchBlock: CodeBlockIndex }
 
 [<NoComparison; NoEquality>]
@@ -961,6 +961,8 @@ type CodeBlock =
       /// Both the byte length and the actual number of instructions are included to simplify parsing.
       /// </remarks>
       Instructions: LengthEncoded<vector<InstructionSet.Instruction>> }
+
+    //member Flags : 
 
 [<NoComparison; NoEquality>]
 type Code =
