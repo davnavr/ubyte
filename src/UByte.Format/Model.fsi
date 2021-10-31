@@ -159,7 +159,7 @@ type PrimitiveType =
     | Char32
     | F32
     | F64
-    | Unit
+    | Unit // TODO: Remove unit type, it should be in a standard library instead.
 
     interface IEquatable<PrimitiveType>
 
@@ -226,6 +226,13 @@ module InstructionSet =
         | ``br.ge`` = 0x56u
         | ``br.true`` = 0x57u
 
+        | ``mem.init.obj`` = 0x6Au
+        | ``mem.init`` = 0x6Bu
+        | ``mem.st`` = 0x6Cu
+        | ``mem.cpy.obj`` = 0x6Du
+        | ``mem.cpy`` = 0x6Eu
+        | ``mem.ld`` = 0x6Fu
+
         | ``obj.new`` = 0x70u
         | ``obj.null`` = 0x71u
         | ``obj.fd.ld`` = 0x72u
@@ -236,9 +243,12 @@ module InstructionSet =
         | ``obj.arr.new`` = 0x7Au
         | ``obj.arr.len`` = 0x7Bu
         | ``obj.arr.get`` = 0x7Cu
-        //| ``obj.arr.addr`` = 0x7Du
+        | ``obj.arr.addr`` = 0x7Du
         | ``obj.arr.set`` = 0x7Eu
         | ``obj.arr.const`` = 0x7Fu
+
+        | alloca = 0xAAu
+        | ``alloca.obj`` = 0xABu
 
     [<Flags>]
     type ArithmeticFlags =
