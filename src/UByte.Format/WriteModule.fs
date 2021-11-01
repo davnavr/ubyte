@@ -210,6 +210,37 @@ let instruction instr dest =
         index cond dest
         boffset btrue
         boffset bfalse
+    | Mem_init(flags, count, ty, addr, value) ->
+        opcode Opcode.``mem.init`` dest
+        bits1 flags dest
+        index count dest
+        index ty dest
+        index addr dest
+        index value dest
+    | Mem_st(flags, addr, ty, value) ->
+        opcode Opcode.``mem.st`` dest
+        bits1 flags dest
+        index addr dest
+        index ty dest
+        index value dest
+    | Mem_cpy(flags, count, ty, sreg, dreg) ->
+        opcode Opcode.``mem.init`` dest
+        bits1 flags dest
+        index count dest
+        index ty dest
+        index sreg dest
+        index dreg dest
+    | Mem_ld(flags, ty, addr) ->
+        opcode Opcode.``mem.ld`` dest
+        bits1 flags dest
+        index ty dest
+        index addr dest
+    | Mem_init_const(flags, ty, addr, data) ->
+        opcode Opcode.``mem.init.const`` dest
+        bits1 flags dest
+        index ty dest
+        index addr dest
+        index data dest
     | Obj_new(ctor, args) ->
         opcode Opcode.``obj.new`` dest
         index ctor dest
@@ -224,6 +255,11 @@ let instruction instr dest =
         index field dest
         index object dest
         index src dest
+    | Obj_fd_addr(flags, field, object) ->
+        opcode Opcode.``obj.fd.addr`` dest
+        bits1 flags dest
+        index field dest
+        index object dest
     | Obj_throw ex ->
         opcode Opcode.``obj.throw`` dest
         index ex dest
@@ -245,10 +281,25 @@ let instruction instr dest =
         index array dest
         index i dest
         index src dest
+    | Obj_arr_addr(flags, array, i) ->
+        opcode Opcode.``obj.arr.addr`` dest
+        bits1 flags dest
+        index array dest
+        index i dest
     | Obj_arr_const(etype, data) ->
         opcode Opcode.``obj.arr.const`` dest
         index etype dest
         index data dest
+    | Alloca(flags, count, ty) ->
+        opcode Opcode.alloca dest
+        bits1 flags dest
+        index count dest
+        index ty dest
+    | Alloca_obj(flags, ctor, args) ->
+        opcode Opcode.``alloca.obj`` dest
+        bits1 flags dest
+        index ctor dest
+        vector index args dest
 
 let localRegisterMapping (struct(tindex: TemporaryIndex, lindex: LocalIndex)) dest =
     index tindex dest
