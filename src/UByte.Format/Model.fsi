@@ -284,7 +284,7 @@ module InstructionSet =
         | None = 0uy
         | ThrowOnInvalidAccess = 1uy
         | AllowUnaligned = 2uy
-        | ValidMask = 2uy
+        | RawAccessValidMask = 2uy
 
     /// <remarks>
     /// <para>

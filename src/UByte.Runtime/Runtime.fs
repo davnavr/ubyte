@@ -303,16 +303,13 @@ type RuntimeArray =
             let rdestination = Span(this.References, index * this.ReferenceCount, value.References.Length)
             value.References.AsSpan().CopyTo rdestination
 
-[<IsReadOnly; Struct; RequireQualifiedAccess; NoComparison; NoEquality>]
-type RuntimeUnsafePointer = { Value: RuntimeStruct }
-
 [<RequireQualifiedAccess; NoComparison; ReferenceEquality>]
 type RuntimeObject =
     | Null
     /// Represents a class instance or a boxed value type.
     | TypeInstance of otype: RuntimeTypeDefinition * fields: RuntimeStruct
     | Array of RuntimeArray
-    | UnsafePointer of RuntimeUnsafePointer
+    | UnsafePointer of RuntimeStruct
 
 type RuntimeStruct with
     member this.ReadRaw<'T when 'T : struct and 'T :> System.ValueType and 'T : (new: unit -> 'T)> (index: int32): 'T =
@@ -719,8 +716,8 @@ module Interpreter =
             failwithf "TODO: Bad allocation flags %A" flags
         flags
 
-    let private (|ValidMemoryAccessFlags|) (flags: MemoryAccessFlags) =
-        if flags &&& (~~~MemoryAccessFlags.ValidMask) <> MemoryAccessFlags.None then
+    let private (|ValidMemoryAccessFlags|) mask (flags: MemoryAccessFlags) =
+        if flags &&& (~~~mask) <> MemoryAccessFlags.None then
             failwithf "TODO: Bad memory access flags %A" flags
         flags
 
@@ -757,6 +754,13 @@ module Interpreter =
             let struct(prevDataIndex, prevReferenceIndex) = lengths.Pop()
             datai <- prevDataIndex
             refi <- prevReferenceIndex
+
+    [<RequireQualifiedAccess>]
+    module private MemoryOperations =
+        let access address accessor =
+            match address.RegisterValue.ReadRef 0 with
+            | RuntimeObject.UnsafePointer memory -> accessor memory
+            | _ -> invalidOp "Expected address register to contain a pointer"
 
     let [<Literal>] private maxStackDataLength = 0xFFFFF
 
@@ -1067,7 +1071,25 @@ module Interpreter =
                     branchToTarget (if Compare.isTrueValue condition then ttrue else tfalse)
                 | Obj_throw(Register e) ->
                     ex <- ValueSome(RuntimeException(frame', "Runtime exception has been thrown", e.RegisterType, e.RegisterValue) :> exn)
-                | Alloca(ValidAllocationFlags flags, Register count, TypeSignature t) ->
+                | Mem_st(ValidMemoryAccessFlags MemoryAccessFlags.RawAccessValidMask flags, Register address, TypeSignature t, Register value) -> // TODO: Throw exception on invalid access (store)
+                    MemoryOperations.access address <| fun ptr -> copyRuntimeValue &value.RegisterValue &ptr
+                | Mem_ld(ValidMemoryAccessFlags MemoryAccessFlags.RawAccessValidMask flags, TypeSignature t, Register address) -> // TODO: Throw exception on invalid access (load)
+                    let struct(dlen, rlen) = frame'.CurrentModule.CalculateTypeSize t
+                    let destination =
+                        { RuntimeRegister.RegisterValue =
+                            { RuntimeStruct.RawData = OffsetArray dlen
+                              References = OffsetArray rlen }
+                          RegisterType = t }
+                    MemoryOperations.access address <| fun ptr ->
+                        ptr.RawData.AsSpan().Slice(0, dlen).CopyTo(destination.RegisterValue.RawData.AsSpan())
+                        ptr.References.AsSpan().Slice(0, rlen).CopyTo(destination.RegisterValue.References.AsSpan())
+                | Mem_cpy(ValidMemoryAccessFlags MemoryAccessFlags.RawAccessValidMask flags, Register count, TypeSignature t, Register source, Register destination) ->
+                    let struct(dlen, rlen) = frame'.CurrentModule.CalculateTypeSize t
+                    let count' = NumberValue.s32 count
+                    MemoryOperations.access source <| fun src -> MemoryOperations.access destination <| fun dest ->
+                        src.RawData.AsSpan().Slice(0, dlen * count').CopyTo(dest.RawData.AsSpan())
+                        src.References.AsSpan().Slice(0, rlen * count').CopyTo(dest.References.AsSpan())
+                | Alloca(ValidAllocationFlags flags, Register count, TypeSignature t) -> // TODO: Have alloca-like instructions return a boolean indicating success instead.
                     let count' = NumberValue.s32 count
                     let struct(dlen, rlen) = frame'.CurrentModule.CalculateTypeSize t
                     let success, allocated = values.TryAlloc(Checked.(*) dlen count', Checked.(*) rlen count')
@@ -1075,15 +1097,20 @@ module Interpreter =
                         frame'.TemporaryRegisters.Add
                             { RuntimeRegister.RegisterValue =
                                 { RuntimeStruct.RawData = OffsetArray.Empty
-                                  References =
-                                    RuntimeObject.UnsafePointer { RuntimeUnsafePointer.Value = allocated }
-                                    |> Array.singleton
-                                    |> OffsetArray }
+                                  References = OffsetArray(Array.singleton(RuntimeObject.UnsafePointer allocated)) }
                               RegisterType = t }
                     elif isFlagSet AllocationFlags.ThrowOnFailure flags then
                         invalidOp "Failed to allocate on stack, maximum capacity exceeded"
                     else
                         raise(NotImplementedException "How to handle failing stack allocations without exceptions? Return an empty zero array?")
+                | Alloca_obj _ ->
+                    raise(NotImplementedException "TODO: Allocate memory then call constructor")
+                | Mem_init(ValidMemoryAccessFlags MemoryAccessFlags.RawAccessValidMask flags, Register count, TypeSignature t, Register address, Register value) ->
+                    raise(NotImplementedException "TODO: Is type needed for mem.init? Could just use type in value register.")
+                | Mem_init_const(ValidMemoryAccessFlags MemoryAccessFlags.RawAccessValidMask flags, TypeSignature t, Register address, Data data) -> // TODO: Is type not needed for mem.init.const?
+                    MemoryOperations.access address <| fun ptr ->
+                        // TODO: Check flags to see if exn should be thrown on invalid access
+                        data.AsSpan().CopyTo(ptr.RawData.AsSpan())
                 | Nop -> ()
                 | Rotl(vtype, Register amount, Register value) ->
                     let destination = createPrimitiveRegister vtype

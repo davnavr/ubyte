@@ -218,7 +218,7 @@ module InstructionSet =
         | ThrowOnInvalidAccess = 1uy
         /// <summary>Applicable to <c>mem.ld</c>, <c>mem.st</c>, <c>mem.init</c>, and <c>mem.init.const</c> only.</summary>
         | AllowUnaligned = 2uy
-        | ValidMask = 2uy
+        | RawAccessValidMask = 2uy
 
     type Instruction =
         | Nop
