@@ -303,10 +303,8 @@ type RuntimeArray =
             let rdestination = Span(this.References, index * this.ReferenceCount, value.References.Length)
             value.References.AsSpan().CopyTo rdestination
 
-[<RequireQualifiedAccess; NoComparison; ReferenceEquality>]
-type RuntimeUnsafePointer =
-    | Raw of unativeint
-    | ToStruct of RuntimeStruct
+[<IsReadOnly; Struct; RequireQualifiedAccess; NoComparison; NoEquality>]
+type RuntimeUnsafePointer = { Value: RuntimeStruct }
 
 [<RequireQualifiedAccess; NoComparison; ReferenceEquality>]
 type RuntimeObject =
@@ -1078,8 +1076,7 @@ module Interpreter =
                             { RuntimeRegister.RegisterValue =
                                 { RuntimeStruct.RawData = OffsetArray.Empty
                                   References =
-                                    RuntimeUnsafePointer.ToStruct allocated
-                                    |> RuntimeObject.UnsafePointer
+                                    RuntimeObject.UnsafePointer { RuntimeUnsafePointer.Value = allocated }
                                     |> Array.singleton
                                     |> OffsetArray }
                               RegisterType = t }
