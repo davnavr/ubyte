@@ -354,6 +354,7 @@ let fromBytes (source: #IByteSequence) =
                 | Tag.Type.Bool -> primitive PrimitiveType.Bool
                 | Tag.Type.Char16 -> primitive PrimitiveType.Char16
                 | Tag.Type.Char32 -> primitive PrimitiveType.Char32
+                | Tag.Type.UnsafePointer -> parsedValueType (bits1 tsig) (ValueType.UnsafePointer >> success) continuation
                 | bad -> continuation bad
 
             // Explicit instantiation gets around "less generic" errors with mutually recursive functions.
