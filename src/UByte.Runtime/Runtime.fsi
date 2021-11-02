@@ -116,6 +116,8 @@ type RuntimeModule =
 
     override ToString: unit -> string
 
+type RuntimeStackFrame with member CurrentModule : RuntimeModule
+
 [<Sealed; Class>]
 type MissingEntryPointException =
     inherit Exception

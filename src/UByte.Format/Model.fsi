@@ -277,12 +277,14 @@ module InstructionSet =
     type AllocationFlags =
         | None = 0uy
         | ThrowOnFailure = 1uy
+        | ValidMask = 1uy
 
     [<Flags>]
     type MemoryAccessFlags =
         | None = 0uy
         | ThrowOnInvalidAccess = 1uy
         | AllowUnaligned = 2uy
+        | ValidMask = 2uy
 
     /// <remarks>
     /// <para>

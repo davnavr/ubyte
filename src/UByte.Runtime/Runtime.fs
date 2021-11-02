@@ -51,6 +51,8 @@ type OffsetArray<'T> =
         this.CopyTo other
         other
 
+    static member Empty = OffsetArray<'T>(Array.Empty())
+
 [<Struct>]
 type RuntimeStruct = { RawData: OffsetArray<byte>; References: OffsetArray<RuntimeObject> }
 
@@ -187,6 +189,7 @@ type RuntimeStackFrame
     member _.ReturnRegisters = returns
     member _.Code = blocks
     member _.CurrentMethod = method
+    member _.CurrentModule = method.Module
     member this.CurrentBlock = blocks.[this.BlockIndex]
     member _.Previous = prev
 
@@ -301,11 +304,17 @@ type RuntimeArray =
             value.References.AsSpan().CopyTo rdestination
 
 [<RequireQualifiedAccess; NoComparison; ReferenceEquality>]
+type RuntimeUnsafePointer =
+    | Raw of unativeint
+    | ToStruct of RuntimeStruct
+
+[<RequireQualifiedAccess; NoComparison; ReferenceEquality>]
 type RuntimeObject =
     | Null
     /// Represents a class instance or a boxed value type.
     | TypeInstance of otype: RuntimeTypeDefinition * fields: RuntimeStruct
     | Array of RuntimeArray
+    | UnsafePointer of RuntimeUnsafePointer
 
 type RuntimeStruct with
     member this.ReadRaw<'T when 'T : struct and 'T :> System.ValueType and 'T : (new: unit -> 'T)> (index: int32): 'T =
@@ -707,6 +716,16 @@ module Interpreter =
             failwithf "TODO: Bad arithmetic flags %A" flags
         flags
 
+    let private (|ValidAllocationFlags|) (flags: AllocationFlags) =
+        if flags &&& (~~~AllocationFlags.ValidMask) <> AllocationFlags.None then
+            failwithf "TODO: Bad allocation flags %A" flags
+        flags
+
+    let private (|ValidMemoryAccessFlags|) (flags: MemoryAccessFlags) =
+        if flags &&& (~~~MemoryAccessFlags.ValidMask) <> MemoryAccessFlags.None then
+            failwithf "TODO: Bad memory access flags %A" flags
+        flags
+
     [<Sealed>]
     type private RuntimeValueStack (dataBytesLength, objectReferenceCount) =
         let data = lazy Array.zeroCreate<byte> dataBytesLength
@@ -776,7 +795,7 @@ module Interpreter =
 
         while cont() do
             match ex with
-            | ValueSome(e: exn) ->
+            | ValueSome(e: exn) -> // TODO: Don't forget to call PopAllocations if moving to a previous frame
                 let frame' = frame.Value.Value
                 match frame'.CurrentExceptionHandler with
                 | ValueSome({ CatchBlock = Index catch } as eh) ->
@@ -818,10 +837,12 @@ module Interpreter =
                 for i = 0 to registers.Length - 1 do registers.[i] <- frame'.RegisterAt indices.[i]
                 Unsafe.As<RuntimeRegister[], ImmutableArray<RuntimeRegister>> &registers
 
-            let inline (|Method|) mindex: RuntimeMethod = frame'.CurrentMethod.Module.InitializeMethod mindex
-            let inline (|Field|) findex: RuntimeField = frame'.CurrentMethod.Module.InitializeField findex
-            let inline (|TypeSignature|) tindex: AnyType = frame'.CurrentMethod.Module.TypeSignatureAt tindex
-            let inline (|Data|) dindex: ImmutableArray<_> = frame'.CurrentMethod.Module.DataAt dindex
+            let inline (|Method|) mindex: RuntimeMethod = frame'.CurrentModule.InitializeMethod mindex
+            let inline (|Field|) findex: RuntimeField = frame'.CurrentModule.InitializeField findex
+            let inline (|DeclaringType|) m: RuntimeTypeDefinition = (^Member : (member DeclaringType : RuntimeTypeDefinition) m)
+            let inline (|TypeSignature|) tindex: AnyType = frame'.CurrentModule.TypeSignatureAt tindex
+            let inline (|TypeLayout|) (t: RuntimeTypeDefinition) = t.Layout
+            let inline (|Data|) dindex: ImmutableArray<_> = frame'.CurrentModule.DataAt dindex
             let inline (|BranchTarget|) (target: BlockOffset) = Checked.(+) frame'.BlockIndex target
 
 #if DEBUG
@@ -837,10 +858,12 @@ module Interpreter =
             let fieldAccessInstruction field object access =
 #endif
                 if object.RegisterValue.References.Length = 0 then
-                    failwith "TODO: How to handle field access for struct?"
+                    raise(NotImplementedException "TODO: How to handle field access for struct?")
                 match object.RegisterValue.ReadRef 0 with
-                | RuntimeObject.TypeInstance(otype, data) ->
-                    let struct(dindex, rindex) = otype.Layout.FieldIndices.[field]
+                | RuntimeObject.UnsafePointer _ ->
+                    raise(NotImplementedException "TODO: How to handle field access using unsafe pointers?")
+                | RuntimeObject.TypeInstance(TypeLayout layout, data) ->
+                    let struct(dindex, rindex) = layout.FieldIndices.[field]
                     access
                         { RuntimeStruct.RawData = OffsetArray(data.RawData.AsSpan().Slice(dindex, field.DataSize).ToArray())
                           References = OffsetArray(data.References.AsSpan().Slice(rindex, field.ReferencesLength).ToArray()) }
@@ -858,7 +881,9 @@ module Interpreter =
                 match array.RegisterValue.ReadRef 0 with
                 | RuntimeObject.Array array' -> access array' index'
                 | RuntimeObject.TypeInstance(otype, _) ->
-                    invalidOp("Cannot access array item with an object reference of type " + otype.ToString())
+                    invalidOp("Cannot access array element with an object reference of type " + otype.ToString())
+                | RuntimeObject.UnsafePointer _ ->
+                    invalidOp "Cannot access array element with an unsafe pointer"
                 | RuntimeObject.Null ->
                     raise(NullReferenceException "Cannot access an array element with a null array reference")
 
@@ -963,14 +988,18 @@ module Interpreter =
                         invalidOp "Calling virtual method without checking for null object reference is not supported"
 
                     match this.RegisterValue.ReadRef 0 with
+                    | RuntimeObject.TypeInstance(otype, _) -> 
+                        frame'.TemporaryRegisters.AddRange(invoke flags (arguments.Insert(0, this)) otype.VTable.[method])
                     | RuntimeObject.Null ->
                         "Cannot call virtual method with null object reference since the type containing the method to call " +
                         "cannot be deduced"
                         |> invalidOp
-                    | RuntimeObject.TypeInstance(otype, _) -> 
-                        frame'.TemporaryRegisters.AddRange(invoke flags (arguments.Insert(0, this)) otype.VTable.[method])
                     | RuntimeObject.Array _ ->
                         invalidOp "Cannot call virtual method with an array object reference"
+                    | RuntimeObject.UnsafePointer _ ->
+                        "Cannot call virual method with unsafe pointer since the type containing the method to call cannot be " +
+                        "deduced, use a safe pointer to ensure type information is included"
+                        |> invalidOp
                 | Obj_new(Method constructor, LookupRegisterArray arguments) ->
                     let o = RuntimeObject.TypeInstance(constructor.DeclaringType, constructor.DeclaringType.InitializeObjectFields())
                     let destination = createReferenceRegister(ReferenceType.Defined constructor.DeclaringType.Index) // TODO: Cache the ReferenceType in RuntimeTypeDefinition.
@@ -1004,6 +1033,8 @@ module Interpreter =
                         raise(NullReferenceException "Cannot access array length with a null array reference")
                     | RuntimeObject.TypeInstance(otype, _) ->
                         invalidOp("Cannot access array length with an object reference of type " + otype.ToString())
+                    | RuntimeObject.UnsafePointer _ ->
+                        invalidOp "Cannot determine array length using an unsafe pointer"
                 | Obj_arr_get(Register array, Register index) ->
                     arrayAccessInstruction array index <| fun array i ->
                         let value = array.[i]
@@ -1038,6 +1069,24 @@ module Interpreter =
                     branchToTarget (if Compare.isTrueValue condition then ttrue else tfalse)
                 | Obj_throw(Register e) ->
                     ex <- ValueSome(RuntimeException(frame', "Runtime exception has been thrown", e.RegisterType, e.RegisterValue) :> exn)
+                | Alloca(ValidAllocationFlags flags, Register count, TypeSignature t) ->
+                    let count' = NumberValue.s32 count
+                    let struct(dlen, rlen) = frame'.CurrentModule.CalculateTypeSize t
+                    let success, allocated = values.TryAlloc(Checked.(*) dlen count', Checked.(*) rlen count')
+                    if success then
+                        frame'.TemporaryRegisters.Add
+                            { RuntimeRegister.RegisterValue =
+                                { RuntimeStruct.RawData = OffsetArray.Empty
+                                  References =
+                                    RuntimeUnsafePointer.ToStruct allocated
+                                    |> RuntimeObject.UnsafePointer
+                                    |> Array.singleton
+                                    |> OffsetArray }
+                              RegisterType = t }
+                    elif isFlagSet AllocationFlags.ThrowOnFailure flags then
+                        invalidOp "Failed to allocate on stack, maximum capacity exceeded"
+                    else
+                        raise(NotImplementedException "How to handle failing stack allocations without exceptions? Return an empty zero array?")
                 | Nop -> ()
                 | Rotl(vtype, Register amount, Register value) ->
                     let destination = createPrimitiveRegister vtype
@@ -1474,7 +1523,7 @@ type RuntimeModule (m: Module, moduleImportResolver: ModuleIdentifier -> Runtime
         | ValueType vt ->
             match vt with
             | ValueType.Primitive prim -> struct(primitiveTypeSize prim, 0)
-            | ValueType.UnsafePointer _ -> struct(sizeof<unativeint>, 0)
+            | ValueType.UnsafePointer _ -> struct(0, 1)
             | ValueType.Defined _ -> failwith "TODO: Struct fields are currently not yet supported"
         | ReferenceType _ ->
             struct(0, 1)
