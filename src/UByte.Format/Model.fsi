@@ -720,7 +720,7 @@ module InstructionSet =
         | Obj_fd_st of field: FieldIndex * object: RegisterIndex * source: RegisterIndex
         /// <summary>
         /// <para>
-        /// <c>&lt;result&gt; = obj.fd.addr [throw.fail] &lt;field&gt; &lt;object&gt;</c>
+        /// <c>&lt;result&gt; = obj.fd.addr [throw.oob] &lt;field&gt; &lt;object&gt;</c>
         /// </para>
         /// <para>
         /// Returns a pointer to the field of the specified object.

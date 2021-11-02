@@ -215,7 +215,7 @@ module InstructionSet =
     type MemoryAccessFlags =
         | None = 0uy
         | ThrowOnInvalidAccess = 1uy
-        /// <summary>Applicable to <c>mem.ld</c>, <c>mem.st</c> and <c>mem.init</c> only.</summary>
+        /// <summary>Applicable to <c>mem.ld</c>, <c>mem.st</c>, <c>mem.init</c>, and <c>mem.init.const</c> only.</summary>
         | AllowUnaligned = 2uy
 
     type Instruction =
