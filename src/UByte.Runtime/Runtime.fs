@@ -707,14 +707,52 @@ module Interpreter =
             failwithf "TODO: Bad arithmetic flags %A" flags
         flags
 
+    [<Sealed>]
+    type private RuntimeValueStack (dataBytesLength, objectReferenceCount) =
+        let data = lazy Array.zeroCreate<byte> dataBytesLength
+
+        let refs =
+            lazy
+                let allocated = Array.zeroCreate<RuntimeObject> objectReferenceCount
+                Span(allocated).Fill(RuntimeObject.Null)
+                allocated
+
+        let mutable datai, refi = 0, 0
+
+        let lengths = Stack<struct(int * int)>()
+
+        member _.TryAlloc(bytes, references, value: outref<_>) =
+            if datai + bytes < data.Value.Length && refi + references < refs.Value.Length then
+                let dstart = datai
+                let rstart = refi
+                datai <- Checked.(+) datai bytes
+                refi <- Checked.(+) refi references
+                value <-
+                    { RuntimeStruct.RawData = OffsetArray(dstart, data.Value)
+                      References = OffsetArray(rstart, refs.Value) }
+                true
+            else
+                false
+
+        member _.PushAllocations() = lengths.Push((datai, refi))
+
+        member _.PopAllocations() =
+            let struct(prevDataIndex, prevReferenceIndex) = lengths.Pop()
+            datai <- prevDataIndex
+            refi <- prevReferenceIndex
+
+    let [<Literal>] private maxStackDataLength = 0xFFFFF
+
     let interpret arguments (entrypoint: RuntimeMethod) =
         let frame: RuntimeStackFrame voption ref = ref ValueNone
+        let mutable values = RuntimeValueStack(maxStackDataLength, maxStackDataLength / 8)
         let mutable runExternalCode: (RuntimeStackFrame voption ref -> unit) voption = ValueNone
         let mutable ex = ValueNone
 
         let invoke flags (arguments: ImmutableArray<_>) (method: RuntimeMethod) =
             if isFlagSet CallFlags.RequiresTailCallOptimization flags then
                 raise(NotImplementedException "Tail call optimization is not yet supported")
+            values.PushAllocations()
             method.SetupStackFrame(frame, &runExternalCode)
             let frame' = frame.Value.Value
             let arguments' = frame'.ArgumentRegisters
@@ -983,6 +1021,7 @@ module Interpreter =
                         invalidOp(sprintf "Expected to return %i values but only returned %i values" frame'.ReturnRegisters.Length results.Length)
                     copyRegisterValues results frame'.ReturnRegisters
                     frame.Value <- frame'.Previous
+                    values.PopAllocations()
                 | Br target -> branchToTarget target
                 | Br_eq(Register x, Register y, ttrue, tfalse)
                 | Br_ne(Register x, Register y, tfalse, ttrue) ->
