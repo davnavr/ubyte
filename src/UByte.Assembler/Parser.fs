@@ -20,13 +20,14 @@ let bropen = skipChar '{'
 let brclose = skipChar '}'
 let comma = skipChar ','
 let sbopen = skipChar '['
+let asterisk = skipChar '*'
 
 let commaSepInsideParens inner =
     between (whitespace >>. propen .>> whitespace) (prclose .>> whitespace) (sepBy (whitespace >>. inner) comma)
 
 let separator = choice [
     notEmpty whitespace
-    followedByL (choice [ bropen; brclose; propen; prclose; comma; sbopen ]) "opening or closing"
+    followedByL (choice [ bropen; brclose; propen; prclose; comma; sbopen; asterisk ]) "punctuation"
 ]
 
 let keyword word = whitespace >>. skipString word .>> separator
@@ -153,7 +154,7 @@ let typesig: Parser<ParsedTypeSignature, _> =
             ]
             "value type"
         |> withTypeModifiers [
-            skipChar '*' >>% Result.map ValueType.UnsafePointer
+            asterisk >>% Result.map ValueType.UnsafePointer
         ]
 
     let treference =

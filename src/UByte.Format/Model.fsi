@@ -665,7 +665,7 @@ module InstructionSet =
         | Mem_cpy of MemoryAccessFlags * count: RegisterIndex * TypeSignatureIndex * source: RegisterIndex * destination: RegisterIndex
         /// <summary>
         /// <para>
-        /// <c>mem.ld [unaligned] [throw.invalid] &lt;type&gt; from &lt;address&gt;</c>
+        /// <c>&lt;result&gt; = mem.ld [unaligned] [throw.invalid] &lt;type&gt; from &lt;address&gt;</c>
         /// </para>
         /// <para>
         /// Loads a value of the specified type from the memory address specified by the <paramref name="address"/> register.
