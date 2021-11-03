@@ -1014,6 +1014,14 @@ module Interpreter =
                     fieldAccessInstruction field object <| fun value -> copyRuntimeValue &value &destination.RegisterValue
                 | Obj_fd_st(Field field, Register object, Register source) ->
                     fieldAccessInstruction field object <| fun value -> copyRuntimeValue &source.RegisterValue &value
+                | Obj_fd_addr(ValidMemoryAccessFlags MemoryAccessFlags.ElementAccessValidMask flags, Field field, Register object) ->
+                    // TODO: If object register does not contain the field, throw exception if exn flag is set.
+                    fieldAccessInstruction field object <| fun value ->
+                        { RuntimeRegister.RegisterType = AnyType.ReferenceType ReferenceType.Any
+                          RegisterValue =
+                            { RuntimeStruct.RawData = OffsetArray.Empty
+                              References = OffsetArray(Array.singleton(RuntimeObject.UnsafePointer value)) } }
+                        |> frame'.TemporaryRegisters.Add
                 | Obj_arr_new(TypeSignature etype, Register length) ->
                     let struct(dsize, rlen) = frame'.CurrentMethod.Module.CalculateTypeSize etype
                     let array = RuntimeArray(dsize, rlen, NumberValue.s32 length, etype)
@@ -1049,6 +1057,15 @@ module Interpreter =
                         copyRuntimeValue &value &destination.RegisterValue
                 | Obj_arr_set(Register array, Register index, Register source) ->
                     arrayAccessInstruction array index <| fun array i -> array.[i] <- source.RegisterValue
+                | Obj_arr_addr(ValidMemoryAccessFlags MemoryAccessFlags.ElementAccessValidMask flags, Register array, Register index) ->
+                    arrayAccessInstruction array index <| fun array i ->
+                        // TODO: What type to use for pointer to array element? array.ElementType may be a reference type but ValueType.UnsafePointer only applies to ValueTypes.
+                        // TODO: If array index is out of bounds and exn flag is set, throw exception.
+                        { RuntimeRegister.RegisterType = AnyType.ReferenceType ReferenceType.Any
+                          RegisterValue =
+                            { RuntimeStruct.RawData = OffsetArray.Empty
+                              References = OffsetArray(Array.singleton(RuntimeObject.UnsafePointer array.[i])) } }
+                        |> frame'.TemporaryRegisters.Add
                 | Ret(LookupRegisterArray results) ->
                     if results.Length < frame'.ReturnRegisters.Length then
                         invalidOp(sprintf "Expected to return %i values but only returned %i values" frame'.ReturnRegisters.Length results.Length)
