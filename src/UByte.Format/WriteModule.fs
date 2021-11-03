@@ -109,7 +109,6 @@ let primitiveType prim (dest: Stream) =
     | PrimitiveType.Char16 -> Tag.Type.Char16
     | PrimitiveType.Char32 -> Tag.Type.Char32
     | PrimitiveType.Bool -> Tag.Type.Bool
-    | PrimitiveType.Unit -> Tag.Type.Unit
     |> uint8
     |> dest.WriteByte
 

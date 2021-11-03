@@ -209,7 +209,6 @@ module Constant =
 
 let rec parsedPrimitiveType tag success continuation =
     match tag with
-    | Tag.Type.Unit -> success PrimitiveType.Unit
     | Tag.Type.S8 -> success PrimitiveType.S8
     | Tag.Type.S16 -> success PrimitiveType.S16
     | Tag.Type.S32 -> success PrimitiveType.S32
@@ -340,7 +339,6 @@ let fromBytes (source: #IByteSequence) =
                 let inline primitive t = success (ValueType.Primitive t)
             
                 match tag with // TODO: Avoid code duplication with parsedPrimitiveType
-                | Tag.Type.Unit -> primitive PrimitiveType.Unit
                 | Tag.Type.S8 -> primitive PrimitiveType.S8
                 | Tag.Type.S16 -> primitive PrimitiveType.S16
                 | Tag.Type.S32 -> primitive PrimitiveType.S32

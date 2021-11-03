@@ -159,7 +159,6 @@ type PrimitiveType =
     | Char32
     | F32
     | F64
-    | Unit // TODO: Remove unit type, it should be in a standard library instead.
 
     interface IEquatable<PrimitiveType>
 
@@ -841,7 +840,6 @@ module Tag =
         //| Explicit = 2uy
 
     type Type =
-        | Unit = 0uy
         | S8 = 1uy
         | S16 = 2uy
         | S32 = 4uy

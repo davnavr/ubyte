@@ -27,7 +27,6 @@ let primitiveTypeSize ptype =
     | PrimitiveType.F64 -> 8
     | PrimitiveType.UNative
     | PrimitiveType.SNative -> sizeof<unativeint>
-    | PrimitiveType.Unit -> 0
 
 [<Struct>]
 type OffsetArray<'T> =
@@ -99,7 +98,6 @@ type RuntimeRegister =
             | PrimitiveType.SNative -> sprintf "%in" (this.RegisterValue.ReadRaw<nativeint> 0)
             | PrimitiveType.F32 -> sprintf "%A" (this.RegisterValue.ReadRaw<single> 0)
             | PrimitiveType.F64 -> string(this.RegisterValue.ReadRaw<double> 0)
-            | PrimitiveType.Unit -> "()"
         | ReferenceType rtype ->
             match this.RegisterValue.ReadRef 0, rtype with
             | RuntimeObject.Null, _ -> "null"
@@ -349,7 +347,6 @@ module Interpreter =
             | PrimitiveType.F64 -> value.ReadRaw<double> 0 |> f64
             | PrimitiveType.UNative -> value.ReadRaw<unativeint> 0 |> unative
             | PrimitiveType.SNative -> value.ReadRaw<nativeint> 0 |> snative
-            | PrimitiveType.Unit -> Unchecked.defaultof<_>
 
         let u8 register = number register id uint8 uint8 uint8 uint8 uint8 uint8 uint8 uint8 uint8 uint8 uint8
         let s8 register = number register int8 id int8 int8 int8 int8 int8 int8 int8 int8 int8 int8
@@ -374,7 +371,7 @@ module Interpreter =
     /// Contains functions for performing arithmetic on the values stored in registers.
     [<RequireQualifiedAccess>]
     module private Arithmetic =
-        let private noUnitType() = raise(InvalidOperationException "Cannot use Unit type in an arithmetic operation")
+        let private noReferenceType() = invalidOp "Cannot use reference type in an arithmetic operation"
 
         // Performs an operation on two integers and stores a result value, with no overflow checks.
         let inline private binop opu8 ops8 opu16 ops16 opu32 ops32 opu64 ops64 opunative opsnative opf32 opf64 vtype xreg yreg (destination: inref<RuntimeStruct>) =
@@ -396,7 +393,6 @@ module Interpreter =
                 destination.WriteRaw<nativeint>(0, opsnative (NumberValue.snative xreg) (NumberValue.snative yreg))
             | PrimitiveType.F32 -> destination.WriteRaw<single>(0, opf32 (NumberValue.f32 xreg) (NumberValue.f32 yreg))
             | PrimitiveType.F64 -> destination.WriteRaw<double>(0, opf64 (NumberValue.f64 xreg) (NumberValue.f64 yreg))
-            | PrimitiveType.Unit -> noUnitType()
 
         let inline private unop opu8 ops8 opu16 ops16 opu32 ops32 opu64 ops64 opunative opsnative opf32 opf64 vtype register (destination: inref<RuntimeStruct>) =
             let value = &register.RegisterValue
@@ -416,7 +412,6 @@ module Interpreter =
             | PrimitiveType.UNative -> destination.WriteRaw<unativeint>(0, opunative(value.ReadRaw<unativeint> 0))
             | PrimitiveType.F32 -> destination.WriteRaw<single>(0, opf32(value.ReadRaw<single> 0))
             | PrimitiveType.F64 -> destination.WriteRaw<double>(0, opf64(value.ReadRaw<double> 0))
-            | PrimitiveType.Unit -> noUnitType()
 
         let add vtype xreg yreg (destination: inref<_>) =
             binop (+) (+) (+) (+) (+) (+) (+) (+) (+) (+) (+) (+) vtype xreg yreg &destination
@@ -494,8 +489,6 @@ module Interpreter =
             | PrimitiveType.F32
             | PrimitiveType.F64 ->
                 raise(NotImplementedException "Integer rotation not supported for floating point values, TODO: Reinterpret float as integer")
-            | PrimitiveType.Unit ->
-                noUnitType()
 
         let rotl vtype amount register (destination: inref<_>) =
             rotop (<<<) (<<<) (<<<) (<<<) (<<<) vtype amount register &destination
@@ -630,9 +623,6 @@ module Interpreter =
                 u8 (xreg.RegisterValue.ReadRaw<uint8> 0) (NumberValue.u8 yreg)
             | _, AnyType.ValueType(ValueType.Primitive(PrimitiveType.U8 | PrimitiveType.Bool)) ->
                 u8 (NumberValue.u8 xreg) (yreg.RegisterValue.ReadRaw<uint8> 0)
-            | AnyType.ValueType(ValueType.Primitive PrimitiveType.Unit), _
-            | _, AnyType.ValueType(ValueType.Primitive PrimitiveType.Unit) ->
-                true
 
         let isTrueValue register =
             let rvalue = &register.RegisterValue
@@ -672,7 +662,6 @@ module Interpreter =
             | PrimitiveType.F64 -> destination.WriteRaw<double>(0, f64 value)
             | PrimitiveType.UNative -> destination.WriteRaw<unativeint>(0, unative value)
             | PrimitiveType.SNative -> destination.WriteRaw<nativeint>(0, snative value)
-            | PrimitiveType.Unit -> ()
 
         let uinteger vtype (value: uint32) (destination: inref<_>) =
             number uint8 int8 uint16 int16 uint32 int32 uint64 int64 unativeint nativeint float32 float vtype value &destination
@@ -702,7 +691,6 @@ module Interpreter =
                 destination.WriteRaw<unativeint>(0, if value then 1un else 0un)
             | PrimitiveType.F32 | PrimitiveType.F64 ->
                 noBooleanFloat()
-            | PrimitiveType.Unit -> ()
 
     let private (|ValidArithmeticFlags|) (flags: ArithmeticFlags) =
         if flags &&& (~~~ArithmeticFlags.ValidMask) <> ArithmeticFlags.None then

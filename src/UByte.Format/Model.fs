@@ -128,7 +128,6 @@ type PrimitiveType =
     | Char32
     | F32
     | F64
-    | Unit
 
 module InstructionSet =
     type BlockOffset = varint
@@ -292,7 +291,6 @@ module Tag =
         | Sequential = 1uy
 
     type Type =
-        | Unit = 0uy
         | S8 = 1uy
         | S16 = 2uy
         | S32 = 4uy
