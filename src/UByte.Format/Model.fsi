@@ -510,7 +510,7 @@ module InstructionSet =
         /// <remarks>
         /// The integer is stored as a variable-width signed integer.
         /// </remarks>
-        | Const_s of PrimitiveType * value: varint
+        | Const_s of PrimitiveType * value: varint //////////////////////// TODO: Have a const.i instruction instead for all integer constants.
         /// <summary>
         /// <para>
         /// <c>&lt;result&gt; = const.u &lt;numeric type&gt; &lt;value&gt;</c>

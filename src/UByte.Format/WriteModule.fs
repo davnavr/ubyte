@@ -223,7 +223,7 @@ let instruction instr dest =
         index ty dest
         index addr dest
     | Mem_cpy(flags, count, ty, sreg, dreg) ->
-        opcode Opcode.``mem.init`` dest
+        opcode Opcode.``mem.cpy`` dest
         bits1 flags dest
         index count dest
         index ty dest
