@@ -27,7 +27,6 @@ let primitiveTypeSize ptype =
     | PrimitiveType.F64 -> 8
     | PrimitiveType.UNative
     | PrimitiveType.SNative -> sizeof<unativeint>
-    | PrimitiveType.Unit -> 0
 
 [<Struct>]
 type OffsetArray<'T> =
@@ -51,6 +50,8 @@ type OffsetArray<'T> =
         this.CopyTo other
         other
 
+    static member Empty = OffsetArray<'T>(Array.Empty())
+
 [<Struct>]
 type RuntimeStruct = { RawData: OffsetArray<byte>; References: OffsetArray<RuntimeObject> }
 
@@ -69,8 +70,6 @@ module private RuntimeStruct =
     let copyRuntimeValue (source: inref<RuntimeStruct>) (destination: inref<RuntimeStruct>) =
         if source.RawData.Length > destination.RawData.Length then invalidDataLength "bytes"
         if source.References.Length > destination.References.Length then invalidDataLength "references"
-        if destination.RawData.Length > source.RawData.Length then source.RawData.AsSpan().Clear()
-        if destination.References.Length > source.References.Length then source.RawData.AsSpan().Clear()
         source.RawData.CopyTo destination.RawData
         source.References.CopyTo destination.References
 
@@ -99,7 +98,6 @@ type RuntimeRegister =
             | PrimitiveType.SNative -> sprintf "%in" (this.RegisterValue.ReadRaw<nativeint> 0)
             | PrimitiveType.F32 -> sprintf "%A" (this.RegisterValue.ReadRaw<single> 0)
             | PrimitiveType.F64 -> string(this.RegisterValue.ReadRaw<double> 0)
-            | PrimitiveType.Unit -> "()"
         | ReferenceType rtype ->
             match this.RegisterValue.ReadRef 0, rtype with
             | RuntimeObject.Null, _ -> "null"
@@ -187,6 +185,7 @@ type RuntimeStackFrame
     member _.ReturnRegisters = returns
     member _.Code = blocks
     member _.CurrentMethod = method
+    member _.CurrentModule = method.Module
     member this.CurrentBlock = blocks.[this.BlockIndex]
     member _.Previous = prev
 
@@ -306,14 +305,15 @@ type RuntimeObject =
     /// Represents a class instance or a boxed value type.
     | TypeInstance of otype: RuntimeTypeDefinition * fields: RuntimeStruct
     | Array of RuntimeArray
+    | UnsafePointer of RuntimeStruct
 
 type RuntimeStruct with
-    member this.ReadRaw<'T when 'T : struct and 'T :> System.ValueType and 'T : (new: unit -> 'T)> (index: int32): 'T =
-        MemoryMarshal.Read<'T>(Span.op_Implicit(this.RawData.AsSpan()).Slice(index))
+    member this.ReadRaw<'T when 'T : struct and 'T :> System.ValueType and 'T : (new: unit -> 'T)> (offset: int32): 'T =
+        MemoryMarshal.Read<'T>(Span.op_Implicit(this.RawData.AsSpan()).Slice(offset))
 
-    member this.WriteRaw<'T when 'T : struct and 'T :> System.ValueType and 'T : (new: unit -> 'T)>(index, value: 'T) =
+    member this.WriteRaw<'T when 'T : struct and 'T :> System.ValueType and 'T : (new: unit -> 'T)>(offset, value: 'T) =
         let mutable value = value
-        MemoryMarshal.Write<'T>(this.RawData.AsSpan().Slice(index), &value)
+        MemoryMarshal.Write<'T>(this.RawData.AsSpan().Slice(offset), &value)
 
     member this.ReadRef index = this.References.AsSpan().[index]
 
@@ -347,7 +347,6 @@ module Interpreter =
             | PrimitiveType.F64 -> value.ReadRaw<double> 0 |> f64
             | PrimitiveType.UNative -> value.ReadRaw<unativeint> 0 |> unative
             | PrimitiveType.SNative -> value.ReadRaw<nativeint> 0 |> snative
-            | PrimitiveType.Unit -> Unchecked.defaultof<_>
 
         let u8 register = number register id uint8 uint8 uint8 uint8 uint8 uint8 uint8 uint8 uint8 uint8 uint8
         let s8 register = number register int8 id int8 int8 int8 int8 int8 int8 int8 int8 int8 int8
@@ -372,7 +371,7 @@ module Interpreter =
     /// Contains functions for performing arithmetic on the values stored in registers.
     [<RequireQualifiedAccess>]
     module private Arithmetic =
-        let private noUnitType() = raise(InvalidOperationException "Cannot use Unit type in an arithmetic operation")
+        let private noReferenceType() = invalidOp "Cannot use reference type in an arithmetic operation"
 
         // Performs an operation on two integers and stores a result value, with no overflow checks.
         let inline private binop opu8 ops8 opu16 ops16 opu32 ops32 opu64 ops64 opunative opsnative opf32 opf64 vtype xreg yreg (destination: inref<RuntimeStruct>) =
@@ -394,7 +393,6 @@ module Interpreter =
                 destination.WriteRaw<nativeint>(0, opsnative (NumberValue.snative xreg) (NumberValue.snative yreg))
             | PrimitiveType.F32 -> destination.WriteRaw<single>(0, opf32 (NumberValue.f32 xreg) (NumberValue.f32 yreg))
             | PrimitiveType.F64 -> destination.WriteRaw<double>(0, opf64 (NumberValue.f64 xreg) (NumberValue.f64 yreg))
-            | PrimitiveType.Unit -> noUnitType()
 
         let inline private unop opu8 ops8 opu16 ops16 opu32 ops32 opu64 ops64 opunative opsnative opf32 opf64 vtype register (destination: inref<RuntimeStruct>) =
             let value = &register.RegisterValue
@@ -414,7 +412,6 @@ module Interpreter =
             | PrimitiveType.UNative -> destination.WriteRaw<unativeint>(0, opunative(value.ReadRaw<unativeint> 0))
             | PrimitiveType.F32 -> destination.WriteRaw<single>(0, opf32(value.ReadRaw<single> 0))
             | PrimitiveType.F64 -> destination.WriteRaw<double>(0, opf64(value.ReadRaw<double> 0))
-            | PrimitiveType.Unit -> noUnitType()
 
         let add vtype xreg yreg (destination: inref<_>) =
             binop (+) (+) (+) (+) (+) (+) (+) (+) (+) (+) (+) (+) vtype xreg yreg &destination
@@ -492,8 +489,6 @@ module Interpreter =
             | PrimitiveType.F32
             | PrimitiveType.F64 ->
                 raise(NotImplementedException "Integer rotation not supported for floating point values, TODO: Reinterpret float as integer")
-            | PrimitiveType.Unit ->
-                noUnitType()
 
         let rotl vtype amount register (destination: inref<_>) =
             rotop (<<<) (<<<) (<<<) (<<<) (<<<) vtype amount register &destination
@@ -628,9 +623,6 @@ module Interpreter =
                 u8 (xreg.RegisterValue.ReadRaw<uint8> 0) (NumberValue.u8 yreg)
             | _, AnyType.ValueType(ValueType.Primitive(PrimitiveType.U8 | PrimitiveType.Bool)) ->
                 u8 (NumberValue.u8 xreg) (yreg.RegisterValue.ReadRaw<uint8> 0)
-            | AnyType.ValueType(ValueType.Primitive PrimitiveType.Unit), _
-            | _, AnyType.ValueType(ValueType.Primitive PrimitiveType.Unit) ->
-                true
 
         let isTrueValue register =
             let rvalue = &register.RegisterValue
@@ -670,7 +662,6 @@ module Interpreter =
             | PrimitiveType.F64 -> destination.WriteRaw<double>(0, f64 value)
             | PrimitiveType.UNative -> destination.WriteRaw<unativeint>(0, unative value)
             | PrimitiveType.SNative -> destination.WriteRaw<nativeint>(0, snative value)
-            | PrimitiveType.Unit -> ()
 
         let uinteger vtype (value: uint32) (destination: inref<_>) =
             number uint8 int8 uint16 int16 uint32 int32 uint64 int64 unativeint nativeint float32 float vtype value &destination
@@ -700,21 +691,75 @@ module Interpreter =
                 destination.WriteRaw<unativeint>(0, if value then 1un else 0un)
             | PrimitiveType.F32 | PrimitiveType.F64 ->
                 noBooleanFloat()
-            | PrimitiveType.Unit -> ()
 
     let private (|ValidArithmeticFlags|) (flags: ArithmeticFlags) =
         if flags &&& (~~~ArithmeticFlags.ValidMask) <> ArithmeticFlags.None then
             failwithf "TODO: Bad arithmetic flags %A" flags
         flags
 
+    let private (|ValidAllocationFlags|) (flags: AllocationFlags) =
+        if flags &&& (~~~AllocationFlags.ValidMask) <> AllocationFlags.None then
+            failwithf "TODO: Bad allocation flags %A" flags
+        flags
+
+    let private (|ValidMemoryAccessFlags|) mask (flags: MemoryAccessFlags) =
+        if flags &&& (~~~mask) <> MemoryAccessFlags.None then
+            failwithf "TODO: Bad memory access flags %A" flags
+        flags
+
+    [<Sealed>]
+    type private RuntimeValueStack (dataBytesLength, objectReferenceCount) =
+        let data = lazy Array.zeroCreate<byte> dataBytesLength
+
+        let refs =
+            lazy
+                let allocated = Array.zeroCreate<RuntimeObject> objectReferenceCount
+                Span(allocated).Fill(RuntimeObject.Null)
+                allocated
+
+        let mutable datai, refi = 0, 0
+
+        let lengths = Stack<struct(int * int)>()
+
+        member _.TryAlloc(bytes, references, value: outref<_>) =
+            if datai + bytes < data.Value.Length && refi + references < refs.Value.Length then
+                let dstart = datai
+                let rstart = refi
+                datai <- Checked.(+) datai bytes
+                refi <- Checked.(+) refi references
+                value <-
+                    { RuntimeStruct.RawData = OffsetArray(dstart, data.Value)
+                      References = OffsetArray(rstart, refs.Value) }
+                true
+            else
+                false
+
+        member _.PushAllocations() = lengths.Push((datai, refi))
+
+        member _.PopAllocations() =
+            let struct(prevDataIndex, prevReferenceIndex) = lengths.Pop()
+            datai <- prevDataIndex
+            refi <- prevReferenceIndex
+
+    [<RequireQualifiedAccess>]
+    module private MemoryOperations =
+        let access address accessor =
+            match address.RegisterValue.ReadRef 0 with
+            | RuntimeObject.UnsafePointer memory -> accessor memory
+            | _ -> invalidOp "Expected address register to contain a pointer"
+
+    let [<Literal>] private MaxStackDataLength = 0xFFFFF
+
     let interpret arguments (entrypoint: RuntimeMethod) =
         let frame: RuntimeStackFrame voption ref = ref ValueNone
+        let values = RuntimeValueStack(MaxStackDataLength, MaxStackDataLength / 8)
         let mutable runExternalCode: (RuntimeStackFrame voption ref -> unit) voption = ValueNone
         let mutable ex = ValueNone
 
         let invoke flags (arguments: ImmutableArray<_>) (method: RuntimeMethod) =
             if isFlagSet CallFlags.RequiresTailCallOptimization flags then
                 raise(NotImplementedException "Tail call optimization is not yet supported")
+            values.PushAllocations()
             method.SetupStackFrame(frame, &runExternalCode)
             let frame' = frame.Value.Value
             let arguments' = frame'.ArgumentRegisters
@@ -738,7 +783,7 @@ module Interpreter =
 
         while cont() do
             match ex with
-            | ValueSome(e: exn) ->
+            | ValueSome(e: exn) -> // TODO: Don't forget to call PopAllocations if moving to a previous frame
                 let frame' = frame.Value.Value
                 match frame'.CurrentExceptionHandler with
                 | ValueSome({ CatchBlock = Index catch } as eh) ->
@@ -780,10 +825,12 @@ module Interpreter =
                 for i = 0 to registers.Length - 1 do registers.[i] <- frame'.RegisterAt indices.[i]
                 Unsafe.As<RuntimeRegister[], ImmutableArray<RuntimeRegister>> &registers
 
-            let inline (|Method|) mindex: RuntimeMethod = frame'.CurrentMethod.Module.InitializeMethod mindex
-            let inline (|Field|) findex: RuntimeField = frame'.CurrentMethod.Module.InitializeField findex
-            let inline (|TypeSignature|) tindex: AnyType = frame'.CurrentMethod.Module.TypeSignatureAt tindex
-            let inline (|Data|) dindex: ImmutableArray<_> = frame'.CurrentMethod.Module.DataAt dindex
+            let inline (|Method|) mindex: RuntimeMethod = frame'.CurrentModule.InitializeMethod mindex
+            let inline (|Field|) findex: RuntimeField = frame'.CurrentModule.InitializeField findex
+            let inline (|DeclaringType|) m: RuntimeTypeDefinition = (^Member : (member DeclaringType : RuntimeTypeDefinition) m)
+            let inline (|TypeSignature|) tindex: AnyType = frame'.CurrentModule.TypeSignatureAt tindex
+            let inline (|TypeLayout|) (t: RuntimeTypeDefinition) = t.Layout
+            let inline (|Data|) dindex: ImmutableArray<_> = frame'.CurrentModule.DataAt dindex
             let inline (|BranchTarget|) (target: BlockOffset) = Checked.(+) frame'.BlockIndex target
 
 #if DEBUG
@@ -799,10 +846,12 @@ module Interpreter =
             let fieldAccessInstruction field object access =
 #endif
                 if object.RegisterValue.References.Length = 0 then
-                    failwith "TODO: How to handle field access for struct?"
+                    raise(NotImplementedException "TODO: How to handle field access for struct?")
                 match object.RegisterValue.ReadRef 0 with
-                | RuntimeObject.TypeInstance(otype, data) ->
-                    let struct(dindex, rindex) = otype.Layout.FieldIndices.[field]
+                | RuntimeObject.UnsafePointer _ ->
+                    raise(NotImplementedException "TODO: How to handle field access using unsafe pointers?")
+                | RuntimeObject.TypeInstance(TypeLayout layout, data) ->
+                    let struct(dindex, rindex) = layout.FieldIndices.[field]
                     access
                         { RuntimeStruct.RawData = OffsetArray(data.RawData.AsSpan().Slice(dindex, field.DataSize).ToArray())
                           References = OffsetArray(data.References.AsSpan().Slice(rindex, field.ReferencesLength).ToArray()) }
@@ -820,7 +869,9 @@ module Interpreter =
                 match array.RegisterValue.ReadRef 0 with
                 | RuntimeObject.Array array' -> access array' index'
                 | RuntimeObject.TypeInstance(otype, _) ->
-                    invalidOp("Cannot access array item with an object reference of type " + otype.ToString())
+                    invalidOp("Cannot access array element with an object reference of type " + otype.ToString())
+                | RuntimeObject.UnsafePointer _ ->
+                    invalidOp "Cannot access array element with an unsafe pointer"
                 | RuntimeObject.Null ->
                     raise(NullReferenceException "Cannot access an array element with a null array reference")
 
@@ -925,14 +976,18 @@ module Interpreter =
                         invalidOp "Calling virtual method without checking for null object reference is not supported"
 
                     match this.RegisterValue.ReadRef 0 with
+                    | RuntimeObject.TypeInstance(otype, _) -> 
+                        frame'.TemporaryRegisters.AddRange(invoke flags (arguments.Insert(0, this)) otype.VTable.[method])
                     | RuntimeObject.Null ->
                         "Cannot call virtual method with null object reference since the type containing the method to call " +
                         "cannot be deduced"
                         |> invalidOp
-                    | RuntimeObject.TypeInstance(otype, _) -> 
-                        frame'.TemporaryRegisters.AddRange(invoke flags (arguments.Insert(0, this)) otype.VTable.[method])
                     | RuntimeObject.Array _ ->
                         invalidOp "Cannot call virtual method with an array object reference"
+                    | RuntimeObject.UnsafePointer _ ->
+                        "Cannot call virual method with unsafe pointer since the type containing the method to call cannot be " +
+                        "deduced, use a safe pointer to ensure type information is included"
+                        |> invalidOp
                 | Obj_new(Method constructor, LookupRegisterArray arguments) ->
                     let o = RuntimeObject.TypeInstance(constructor.DeclaringType, constructor.DeclaringType.InitializeObjectFields())
                     let destination = createReferenceRegister(ReferenceType.Defined constructor.DeclaringType.Index) // TODO: Cache the ReferenceType in RuntimeTypeDefinition.
@@ -945,6 +1000,14 @@ module Interpreter =
                     fieldAccessInstruction field object <| fun value -> copyRuntimeValue &value &destination.RegisterValue
                 | Obj_fd_st(Field field, Register object, Register source) ->
                     fieldAccessInstruction field object <| fun value -> copyRuntimeValue &source.RegisterValue &value
+                | Obj_fd_addr(ValidMemoryAccessFlags MemoryAccessFlags.ElementAccessValidMask flags, Field field, Register object) ->
+                    // TODO: If object register does not contain the field, throw exception if exn flag is set.
+                    fieldAccessInstruction field object <| fun value ->
+                        { RuntimeRegister.RegisterType = AnyType.ReferenceType ReferenceType.Any
+                          RegisterValue =
+                            { RuntimeStruct.RawData = OffsetArray.Empty
+                              References = OffsetArray(Array.singleton(RuntimeObject.UnsafePointer value)) } }
+                        |> frame'.TemporaryRegisters.Add
                 | Obj_arr_new(TypeSignature etype, Register length) ->
                     let struct(dsize, rlen) = frame'.CurrentMethod.Module.CalculateTypeSize etype
                     let array = RuntimeArray(dsize, rlen, NumberValue.s32 length, etype)
@@ -966,6 +1029,8 @@ module Interpreter =
                         raise(NullReferenceException "Cannot access array length with a null array reference")
                     | RuntimeObject.TypeInstance(otype, _) ->
                         invalidOp("Cannot access array length with an object reference of type " + otype.ToString())
+                    | RuntimeObject.UnsafePointer _ ->
+                        invalidOp "Cannot determine array length using an unsafe pointer"
                 | Obj_arr_get(Register array, Register index) ->
                     arrayAccessInstruction array index <| fun array i ->
                         let value = array.[i]
@@ -978,11 +1043,21 @@ module Interpreter =
                         copyRuntimeValue &value &destination.RegisterValue
                 | Obj_arr_set(Register array, Register index, Register source) ->
                     arrayAccessInstruction array index <| fun array i -> array.[i] <- source.RegisterValue
+                | Obj_arr_addr(ValidMemoryAccessFlags MemoryAccessFlags.ElementAccessValidMask flags, Register array, Register index) ->
+                    arrayAccessInstruction array index <| fun array i ->
+                        // TODO: What type to use for pointer to array element? array.ElementType may be a reference type but ValueType.UnsafePointer only applies to ValueTypes.
+                        // TODO: If array index is out of bounds and exn flag is set, throw exception.
+                        { RuntimeRegister.RegisterType = AnyType.ReferenceType ReferenceType.Any
+                          RegisterValue =
+                            { RuntimeStruct.RawData = OffsetArray.Empty
+                              References = OffsetArray(Array.singleton(RuntimeObject.UnsafePointer array.[i])) } }
+                        |> frame'.TemporaryRegisters.Add
                 | Ret(LookupRegisterArray results) ->
                     if results.Length < frame'.ReturnRegisters.Length then
                         invalidOp(sprintf "Expected to return %i values but only returned %i values" frame'.ReturnRegisters.Length results.Length)
                     copyRegisterValues results frame'.ReturnRegisters
                     frame.Value <- frame'.Previous
+                    values.PopAllocations()
                 | Br target -> branchToTarget target
                 | Br_eq(Register x, Register y, ttrue, tfalse)
                 | Br_ne(Register x, Register y, tfalse, ttrue) ->
@@ -999,6 +1074,46 @@ module Interpreter =
                     branchToTarget (if Compare.isTrueValue condition then ttrue else tfalse)
                 | Obj_throw(Register e) ->
                     ex <- ValueSome(RuntimeException(frame', "Runtime exception has been thrown", e.RegisterType, e.RegisterValue) :> exn)
+                | Mem_st(ValidMemoryAccessFlags MemoryAccessFlags.RawAccessValidMask flags, Register value, TypeSignature t, Register address) -> // TODO: Throw exception on invalid access (store)
+                    MemoryOperations.access address <| fun ptr -> copyRuntimeValue &value.RegisterValue &ptr
+                | Mem_ld(ValidMemoryAccessFlags MemoryAccessFlags.RawAccessValidMask flags, TypeSignature t, Register address) -> // TODO: Throw exception on invalid access (load)
+                    let struct(dlen, rlen) = frame'.CurrentModule.CalculateTypeSize t
+                    let destination =
+                        { RuntimeRegister.RegisterValue =
+                            { RuntimeStruct.RawData = OffsetArray dlen
+                              References = OffsetArray rlen }
+                          RegisterType = t }
+                    MemoryOperations.access address <| fun ptr ->
+                        ptr.RawData.AsSpan().Slice(0, dlen).CopyTo(destination.RegisterValue.RawData.AsSpan())
+                        ptr.References.AsSpan().Slice(0, rlen).CopyTo(destination.RegisterValue.References.AsSpan())
+                | Mem_cpy(ValidMemoryAccessFlags MemoryAccessFlags.RawAccessValidMask flags, Register count, TypeSignature t, Register source, Register destination) ->
+                    let struct(dlen, rlen) = frame'.CurrentModule.CalculateTypeSize t
+                    let count' = NumberValue.s32 count
+                    MemoryOperations.access source <| fun src -> MemoryOperations.access destination <| fun dest ->
+                        src.RawData.AsSpan().Slice(0, dlen * count').CopyTo(dest.RawData.AsSpan())
+                        src.References.AsSpan().Slice(0, rlen * count').CopyTo(dest.References.AsSpan())
+                | Alloca(ValidAllocationFlags flags, Register count, TypeSignature t) -> // TODO: Have alloca-like instructions return a boolean indicating success instead.
+                    let count' = NumberValue.s32 count
+                    let struct(dlen, rlen) = frame'.CurrentModule.CalculateTypeSize t
+                    let success, allocated = values.TryAlloc(Checked.(*) dlen count', Checked.(*) rlen count')
+                    if success then
+                        frame'.TemporaryRegisters.Add
+                            { RuntimeRegister.RegisterValue =
+                                { RuntimeStruct.RawData = OffsetArray.Empty
+                                  References = OffsetArray(Array.singleton(RuntimeObject.UnsafePointer allocated)) }
+                              RegisterType = t }
+                    elif isFlagSet AllocationFlags.ThrowOnFailure flags then
+                        invalidOp "Failed to allocate on stack, maximum capacity exceeded"
+                    else
+                        raise(NotImplementedException "How to handle failing stack allocations without exceptions? Return an empty zero array?")
+                | Alloca_obj _ ->
+                    raise(NotImplementedException "TODO: Allocate memory then call constructor")
+                | Mem_init(ValidMemoryAccessFlags MemoryAccessFlags.RawAccessValidMask flags, Register count, TypeSignature t, Register address, Register value) ->
+                    raise(NotImplementedException "TODO: Is type needed for mem.init? Could just use type in value register.")
+                | Mem_init_const(ValidMemoryAccessFlags MemoryAccessFlags.RawAccessValidMask flags, TypeSignature t, Register address, Data data) -> // TODO: Is type not needed for mem.init.const?
+                    MemoryOperations.access address <| fun ptr ->
+                        // TODO: Check flags to see if exn should be thrown on invalid access
+                        data.AsSpan().CopyTo(ptr.RawData.AsSpan())
                 | Nop -> ()
                 | Rotl(vtype, Register amount, Register value) ->
                     let destination = createPrimitiveRegister vtype
@@ -1011,11 +1126,17 @@ module Interpreter =
                 | ValueNone -> ()
                 | ValueSome run ->
                     run frame
-                    runExternalCode <- ValueNone
+                    runExternalCode <- ValueNone // TODO: Avoid code duplication with ret.
+                    values.PopAllocations()
+
+                // Incrementing here means index points to instruction that caused the exception in the stack frame.
+                frame'.InstructionIndex <- Checked.(+) frame'.InstructionIndex 1
             with
             | e -> ex <- ValueSome e
 
-            frame'.InstructionIndex <- Checked.(+) frame'.InstructionIndex 1
+        match ex with
+        | ValueSome e -> raise e
+        | ValueNone -> ()
 
         match frame.contents with
         | ValueNone -> entryPointResults
@@ -1031,14 +1152,23 @@ module ExternalCode =
 
     let private println (frame: RuntimeStackFrame) =
         match frame.ArgumentRegisters.[0].RegisterValue.ReadRef 0 with
-        | RuntimeObject.Null -> stdout.WriteLine()
+        | RuntimeObject.Null -> ()
         | RuntimeObject.Array chars ->
             for i = 0 to chars.Length - 1 do
                 let c = chars.[i].ReadRaw<System.Text.Rune> 0
                 stdout.Write(c.ToString())
-            stdout.WriteLine()
+        | RuntimeObject.UnsafePointer data ->
+            let mutable finished, i = false, 0
+            while not finished do
+                let c = data.ReadRaw<System.Text.Rune> i
+                if c.Value <> 0 then
+                    stdout.Write(c.ToString())
+                    i <- Checked.(+) i 4
+                else finished <- true
         | _ ->
             failwith "TODO: How to print some other thing"
+
+        stdout.WriteLine()
 
     do lookup.[(InternalCall, "testhelperprintln")] <- println
     do lookup.[(InternalCall, "break")] <- fun _ -> System.Diagnostics.Debugger.Launch() |> ignore
@@ -1435,7 +1565,7 @@ type RuntimeModule (m: Module, moduleImportResolver: ModuleIdentifier -> Runtime
         | ValueType vt ->
             match vt with
             | ValueType.Primitive prim -> struct(primitiveTypeSize prim, 0)
-            | ValueType.UnsafePointer _ -> struct(sizeof<unativeint>, 0)
+            | ValueType.UnsafePointer _ -> struct(0, 1)
             | ValueType.Defined _ -> failwith "TODO: Struct fields are currently not yet supported"
         | ReferenceType _ ->
             struct(0, 1)

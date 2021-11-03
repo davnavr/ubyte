@@ -20,13 +20,14 @@ let bropen = skipChar '{'
 let brclose = skipChar '}'
 let comma = skipChar ','
 let sbopen = skipChar '['
+let asterisk = skipChar '*'
 
 let commaSepInsideParens inner =
     between (whitespace >>. propen .>> whitespace) (prclose .>> whitespace) (sepBy (whitespace >>. inner) comma)
 
 let separator = choice [
     notEmpty whitespace
-    followedByL (choice [ bropen; brclose; propen; prclose; comma; sbopen ]) "opening or closing"
+    followedByL (choice [ bropen; brclose; propen; prclose; comma; sbopen; asterisk ]) "punctuation"
 ]
 
 let keyword word = whitespace >>. skipString word .>> separator
@@ -153,7 +154,7 @@ let typesig: Parser<ParsedTypeSignature, _> =
             ]
             "value type"
         |> withTypeModifiers [
-            skipChar '*' >>% Result.map ValueType.UnsafePointer
+            asterisk >>% Result.map ValueType.UnsafePointer
         ]
 
     let treference =
@@ -506,6 +507,78 @@ let code: Parser<ParsedCode, _> =
             })
         |> addInstructionParser "br.true"
 
+        let readWriteMemoryAccessFlags = optattributes [
+            "throw.invalid", InstructionSet.MemoryAccessFlags.ThrowOnInvalidAccess
+            "unaligned", InstructionSet.MemoryAccessFlags.AllowUnaligned
+        ]
+
+        pipe5
+            readWriteMemoryAccessFlags
+            localCodeRegister
+            symbol
+            (keyword "at" >>. localCodeRegister)
+            (keyword "with" >>. localCodeRegister)
+            (fun flags creg tindex areg vreg rlookup resolver errors _ -> voptional {
+                let! creg' = lookupRegisterName rlookup errors creg
+                let! tindex' = lookupTypeSignature resolver errors tindex
+                let! areg' = lookupRegisterName rlookup errors areg
+                let! vreg' = lookupRegisterName rlookup errors vreg
+                return InstructionSet.Mem_init(flags, creg', tindex', areg', vreg')
+            })
+        |> addInstructionParser "mem.init"
+
+        pipe4
+            readWriteMemoryAccessFlags
+            localCodeRegister
+            symbol
+            (keyword "into" >>. localCodeRegister)
+            (fun flags areg tindex vreg rlookup resolver errors _ -> voptional {
+                let! areg' = lookupRegisterName rlookup errors areg
+                let! tindex' = lookupTypeSignature resolver errors tindex
+                let! vreg' = lookupRegisterName rlookup errors vreg
+                return InstructionSet.Mem_st(flags, areg', tindex', vreg')
+            })
+        |> addInstructionParser "mem.st"
+
+        pipe5
+            readWriteMemoryAccessFlags
+            localCodeRegister
+            symbol
+            (keyword "from" >>. localCodeRegister)
+            (keyword "to" >>. localCodeRegister)
+            (fun flags creg tindex sreg dreg rlookup resolver errors _ -> voptional {
+                let! creg' = lookupRegisterName rlookup errors creg
+                let! tindex' = lookupTypeSignature resolver errors tindex
+                let! sreg' = lookupRegisterName rlookup errors sreg
+                let! dreg' = lookupRegisterName rlookup errors dreg
+                return InstructionSet.Mem_cpy(flags, creg', tindex', sreg', dreg')
+            })
+        |> addInstructionParser "mem.cpy"
+
+        pipe3
+            readWriteMemoryAccessFlags
+            symbol
+            (keyword "from" >>. localCodeRegister)
+            (fun flags tindex areg rlookup resolver errors _ -> voptional {
+                let! tindex' = lookupTypeSignature resolver errors tindex
+                let! areg' = lookupRegisterName rlookup errors areg
+                return InstructionSet.Mem_ld(flags, tindex', areg')
+            })
+        |> addInstructionParser "mem.ld"
+
+        pipe4
+            readWriteMemoryAccessFlags
+            symbol
+            (keyword "at" >>. localCodeRegister)
+            (keyword "with" >>. symbol)
+            (fun flags tindex areg dindex rlookup resolver errors _ -> voptional {
+                let! tindex' = lookupTypeSignature resolver errors tindex
+                let! areg' = lookupRegisterName rlookup errors areg
+                let! dindex' = lookupModuleData resolver errors dindex
+                return InstructionSet.Mem_init_const(flags, tindex', areg', dindex')
+            })
+        |> addInstructionParser "mem.init.const"
+
         lsymbol |>> fun i _ _ errors labels -> voptional {
             let! i' = lookupCodeBlock labels errors i
             return InstructionSet.Br i'
@@ -565,6 +638,42 @@ let code: Parser<ParsedCode, _> =
             return InstructionSet.Obj_arr_const(etype', data')
         }
         |> addInstructionParser "obj.arr.const"
+
+        let basicMemoryAccessFlags = optattributes [
+            "throw.oob", InstructionSet.MemoryAccessFlags.ThrowOnInvalidAccess
+        ]
+
+        pipe3 basicMemoryAccessFlags localCodeRegister localCodeRegister <| fun flags areg ireg rlookup _ errors _ -> voptional {
+            let! areg' = lookupRegisterName rlookup errors areg
+            let! ireg' = lookupRegisterName rlookup errors ireg
+            return InstructionSet.Obj_arr_addr(flags, areg', ireg')
+        }
+        |> addInstructionParser "obj.arr.addr"
+
+        pipe3 basicMemoryAccessFlags symbol localCodeRegister <| fun flags field oreg rlookup resolver errors _ -> voptional {
+            let! fieldi = lookupFieldName resolver errors field
+            let! oreg' = lookupRegisterName rlookup errors oreg
+            return InstructionSet.Obj_fd_addr(flags, fieldi, oreg')
+        }
+        |> addInstructionParser "obj.fd.addr"
+
+        let memoryAllocationFlags = optattributes [
+            "throw.fail", InstructionSet.AllocationFlags.ThrowOnFailure
+        ]
+
+        pipe3 memoryAllocationFlags localCodeRegister symbol <| fun flags creg ty rlookup resolver errors _ -> voptional {
+            let! creg' = lookupRegisterName rlookup errors creg
+            let! tindex = lookupTypeSignature resolver errors ty
+            return InstructionSet.Alloca(flags, creg', tindex)
+        }
+        |> addInstructionParser "alloca"
+
+        pipe3 memoryAllocationFlags symbol codeRegisterList <| fun flags ctor args rlookup resolver errors _ -> voptional {
+            let! ctor' = lookupMethodName resolver errors ctor
+            let! args' = lookupRegisterList rlookup errors args
+            return InstructionSet.Alloca_obj(flags, ctor', args')
+        }
+        |> addInstructionParser "alloca.obj"
 
         getPosition .>>. codeInstructionName .>> whitespace >>= fun (pos, name) ->
             match instructions.TryGetValue name with

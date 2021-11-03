@@ -209,7 +209,6 @@ module Constant =
 
 let rec parsedPrimitiveType tag success continuation =
     match tag with
-    | Tag.Type.Unit -> success PrimitiveType.Unit
     | Tag.Type.S8 -> success PrimitiveType.S8
     | Tag.Type.S16 -> success PrimitiveType.S16
     | Tag.Type.S32 -> success PrimitiveType.S32
@@ -282,16 +281,25 @@ let instruction source =
     | Opcode.``br.le`` -> branchComparisonInstruction Br_le
     | Opcode.``br.ge`` -> branchComparisonInstruction Br_ge
     | Opcode.``br.true`` -> Br_true(index source, boffset(), boffset())
+    | Opcode.``mem.init`` -> Mem_init(bits1 source, index source, index source, index source, index source)
+    | Opcode.``mem.st`` -> Mem_st(bits1 source, index source, index source, index source)
+    | Opcode.``mem.cpy`` -> Mem_cpy(bits1 source, index source, index source, index source, index source)
+    | Opcode.``mem.ld`` -> Mem_ld(bits1 source, index source, index source)
+    | Opcode.``mem.init.const`` -> Mem_init_const(bits1 source, index source, index source, index source)
     | Opcode.``obj.new`` -> Obj_new(index source, vector source index)
     | Opcode.``obj.null`` -> Obj_null
     | Opcode.``obj.fd.ld`` -> instr2 Obj_fd_ld
     | Opcode.``obj.fd.st`` -> instr3 Obj_fd_st
+    | Opcode.``obj.fd.addr`` -> Obj_fd_addr(bits1 source, index source, index source)
     | Opcode.``obj.throw`` -> Obj_throw(index source)
     | Opcode.``obj.arr.new`` -> instr2 Obj_arr_new
     | Opcode.``obj.arr.len`` -> Obj_arr_len(bits1 source, instructionPrimitiveType source, index source)
     | Opcode.``obj.arr.get`` -> instr2 Obj_arr_get
     | Opcode.``obj.arr.set`` -> instr3 Obj_arr_set
+    | Opcode.``obj.arr.addr`` -> Obj_arr_addr(bits1 source, index source, index source)
     | Opcode.``obj.arr.const`` -> instr2 Obj_arr_const
+    | Opcode.alloca -> Alloca(bits1 source, index source, index source)
+    | Opcode.``alloca.obj`` -> Alloca_obj(bits1 source, index source, vector source index)
     | bad -> failwithf "TODO: Unrecognized opcode 0x%08X (%A)" (uint32 bad) bad
 
 let block source =
@@ -331,7 +339,6 @@ let fromBytes (source: #IByteSequence) =
                 let inline primitive t = success (ValueType.Primitive t)
             
                 match tag with // TODO: Avoid code duplication with parsedPrimitiveType
-                | Tag.Type.Unit -> primitive PrimitiveType.Unit
                 | Tag.Type.S8 -> primitive PrimitiveType.S8
                 | Tag.Type.S16 -> primitive PrimitiveType.S16
                 | Tag.Type.S32 -> primitive PrimitiveType.S32
@@ -345,6 +352,7 @@ let fromBytes (source: #IByteSequence) =
                 | Tag.Type.Bool -> primitive PrimitiveType.Bool
                 | Tag.Type.Char16 -> primitive PrimitiveType.Char16
                 | Tag.Type.Char32 -> primitive PrimitiveType.Char32
+                | Tag.Type.UnsafePointer -> parsedValueType (bits1 tsig) (ValueType.UnsafePointer >> success) continuation
                 | bad -> continuation bad
 
             // Explicit instantiation gets around "less generic" errors with mutually recursive functions.

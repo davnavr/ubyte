@@ -159,7 +159,6 @@ type PrimitiveType =
     | Char32
     | F32
     | F64
-    | Unit
 
     interface IEquatable<PrimitiveType>
 
@@ -226,6 +225,12 @@ module InstructionSet =
         | ``br.ge`` = 0x56u
         | ``br.true`` = 0x57u
 
+        | ``mem.init`` = 0x6Au
+        | ``mem.st`` = 0x6Bu
+        | ``mem.ld`` = 0x6Cu
+        | ``mem.cpy`` = 0x6Du
+        | ``mem.init.const`` = 0x6Eu
+
         | ``obj.new`` = 0x70u
         | ``obj.null`` = 0x71u
         | ``obj.fd.ld`` = 0x72u
@@ -236,9 +241,12 @@ module InstructionSet =
         | ``obj.arr.new`` = 0x7Au
         | ``obj.arr.len`` = 0x7Bu
         | ``obj.arr.get`` = 0x7Cu
-        //| ``obj.arr.addr`` = 0x7Du
+        | ``obj.arr.addr`` = 0x7Du
         | ``obj.arr.set`` = 0x7Eu
         | ``obj.arr.const`` = 0x7Fu
+
+        | alloca = 0xAAu
+        | ``alloca.obj`` = 0xABu
 
     [<Flags>]
     type ArithmeticFlags =
@@ -257,12 +265,27 @@ module InstructionSet =
         | NoTailCallOptimization = 1uy
         /// Indicates that tail call optimization must occur, and that the call instruction must immediately precede a <c>ret</c>
         /// instruction that returns all of the values returned by the called method.
-        | RequiresTailCallOptimization = 0b0000_0010uy
+        | RequiresTailCallOptimization = 2uy
         /// <summary>
         /// Applicable only to the <c>call.virt</c> instruction, indicates that exception should be thrown if the <c>this</c>
         /// object reference is <see langword="null"/>.
         /// </summary>
         | ThrowOnNullThis = 0b1000_0000uy
+
+    [<Flags>]
+    type AllocationFlags =
+        | None = 0uy
+        | ThrowOnFailure = 1uy
+        | ValidMask = 1uy
+
+    [<Flags>]
+    type MemoryAccessFlags =
+        | None = 0uy
+        | ThrowOnInvalidAccess = 1uy
+        /// <summary>Applicable to <c>mem.ld</c>, <c>mem.st</c>, <c>mem.init</c>, and <c>mem.init.const</c> only.</summary>
+        | AllowUnaligned = 0b1000_0000uy
+        | RawAccessValidMask = 0b1000_0001uy
+        | ElementAccessValidMask = 0b0000_0001uy
 
     /// <remarks>
     /// <para>
@@ -487,7 +510,7 @@ module InstructionSet =
         /// <remarks>
         /// The integer is stored as a variable-width signed integer.
         /// </remarks>
-        | Const_s of PrimitiveType * value: varint
+        | Const_s of PrimitiveType * value: varint //////////////////////// TODO: Have a const.i instruction instead for all integer constants.
         /// <summary>
         /// <para>
         /// <c>&lt;result&gt; = const.u &lt;numeric type&gt; &lt;value&gt;</c>
@@ -611,10 +634,59 @@ module InstructionSet =
         /// </para>
         /// </summary>
         | Br_true of condition: RegisterIndex * btrue: BlockOffset * bfalse: BlockOffset
-
         /// <summary>
         /// <para>
-        /// <c>&lt;result&gt; = obj.new &lt;constructor&gt; (&lt;arguments&gt;)</c>
+        /// <c>mem.init [unaligned] [throw.invalid] &lt;count&gt; &lt;type&gt; at &lt;address&gt; with &lt;value&gt;</c>
+        /// </para>
+        /// <para>
+        /// Sets the values at the address stored in the <paramref name="address"/> register to the specified initial value.
+        /// </para>
+        /// </summary>
+        /// <remarks>
+        /// <para>This instruction can be used, for example, to set the contents of a region of memory to all zeroes.</para>
+        /// <para>Memory is not allocated by this instruction, use <c>alloca</c> or <c>alloca.obj</c> instead.</para>
+        /// </remarks>
+        | Mem_init of MemoryAccessFlags * count: RegisterIndex * TypeSignatureIndex * address: RegisterIndex * value: RegisterIndex
+        /// <summary>
+        /// <para>
+        /// <c>mem.st [unaligned] [throw.invalid] &lt;value&gt; &lt;type&gt; into &lt;address&gt;</c>
+        /// </para>
+        /// <para>
+        /// Stores the value of the specified type into the memory specified by the <paramref name="address"/> register.
+        /// </para>
+        /// </summary>
+        | Mem_st of MemoryAccessFlags * value: RegisterIndex * TypeSignatureIndex * address: RegisterIndex
+        /// <summary>
+        /// <para>
+        /// <c>mem.cpy [throw.invalid] &lt;count&gt; &lt;type&gt; from &lt;source&gt; to &lt;destination&gt;</c>
+        /// </para>
+        /// <para>
+        /// Copies the specified number of items from the memory address specified by the <paramref name="source"/> register to
+        /// the memory address specified by the <paramref name="destination"/> register.
+        /// </para>
+        /// </summary>
+        | Mem_cpy of MemoryAccessFlags * count: RegisterIndex * TypeSignatureIndex * source: RegisterIndex * destination: RegisterIndex
+        /// <summary>
+        /// <para>
+        /// <c>&lt;result&gt; = mem.ld [unaligned] [throw.invalid] &lt;type&gt; from &lt;address&gt;</c>
+        /// </para>
+        /// <para>
+        /// Loads a value of the specified type from the memory address specified by the <paramref name="address"/> register.
+        /// </para>
+        /// </summary>
+        | Mem_ld of MemoryAccessFlags * TypeSignatureIndex * address: RegisterIndex
+        /// <summary>
+        /// <para>
+        /// <c>&lt;result&gt; = mem.init.const [unaligned] [throw.invalid] &lt;type&gt; at &lt;address&gt; with &lt;data&gt;</c>
+        /// </para>
+        /// <para>
+        /// Sets the values at the address stored in the <paramref name="address"/> register to the specified module data.
+        /// </para>
+        /// </summary>
+        | Mem_init_const of MemoryAccessFlags * TypeSignatureIndex * address: RegisterIndex * data: DataIndex
+        /// <summary>
+        /// <para>
+        /// <c>&lt;result&gt; = obj.new &lt;constructor&gt; (&lt;argument1&gt;, &lt;argument2&gt;, ...)</c>
         /// </para>
         /// <para>
         /// Allocates a new object, calls the specified <paramref name="constructor"/> with the specified
@@ -649,7 +721,15 @@ module InstructionSet =
         /// </para>
         /// </summary>
         | Obj_fd_st of field: FieldIndex * object: RegisterIndex * source: RegisterIndex
-        //| Obj_fd_addr
+        /// <summary>
+        /// <para>
+        /// <c>&lt;result&gt; = obj.fd.addr [throw.oob] &lt;field&gt; &lt;object&gt;</c>
+        /// </para>
+        /// <para>
+        /// Returns a pointer to the field of the specified object.
+        /// </para>
+        /// </summary>
+        | Obj_fd_addr of MemoryAccessFlags * field: FieldIndex * object: RegisterIndex
         /// <summary>
         /// <para>
         /// obj.throw &lt;ex&gt;
@@ -697,7 +777,16 @@ module InstructionSet =
         /// specified <paramref name="index"/>.
         /// </para>
         /// </summary>
-        | Obj_arr_set of array: RegisterIndex * index: RegisterIndex * source: RegisterIndex
+        | Obj_arr_set of array: RegisterIndex * index: RegisterIndex * source: RegisterIndex // TODO: Have flags for array access.
+        /// <summary>
+        /// <para>
+        /// <c>&lt;result&gt; = obj.arr.addr [throw.oob] &lt;array&gt; &lt;index&gt; &lt;source&gt;</c>
+        /// </para>
+        /// <para>
+        /// Returns a pointer to the array element at the specified <paramref name="index"/>
+        /// </para>
+        /// </summary>
+        | Obj_arr_addr of MemoryAccessFlags * array: RegisterIndex * index: RegisterIndex
         /// <summary>
         /// <para>
         /// <c>&lt;result&gt; = obj.arr.const &lt;etype&gt; &lt;data&gt;</c>
@@ -708,6 +797,29 @@ module InstructionSet =
         /// </para>
         /// </summary>
         | Obj_arr_const of etype: TypeSignatureIndex * data: DataIndex
+
+        // TODO: How to allocate an "array" of object references? Maybe have a separate RegisterType type?
+        /// <summary>
+        /// <para>
+        /// <c>&lt;result&gt; = alloca [throw.fail] &lt;count&gt; &lt;type&gt;</c>
+        /// </para>
+        /// <para>
+        /// Allocates a contiguous region of memory enough to hold the specified number of instances of the specified types, and
+        /// returns a pointer to the region of memory.
+        /// </para>
+        /// </summary>
+        | Alloca of AllocationFlags * count: RegisterIndex * TypeSignatureIndex
+        /// <summary>
+        /// <para>
+        /// <c>&lt;result&gt; = alloca.obj [throw.fail] &lt;constructor&gt; (&lt;argument1&gt;, &lt;argument2&gt;, ...)</c>
+        /// </para>
+        /// <para>
+        /// Allocates a region of memory to contain an instance of a type, calls the specified <paramref name="constructor"/>
+        /// providing a pointer to the region of memory along with the specified <paramref name="arguments"/>, and returns a
+        /// pointer to the region of memory.
+        /// </para>
+        /// </summary>
+        | Alloca_obj of AllocationFlags * constructor: MethodIndex * arguments: vector<RegisterIndex> // TODO: How to support VTable for some instances, add a new alloca instruction?
 
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
 type IdentifierSection = // TODO: Rename to something else
@@ -728,7 +840,6 @@ module Tag =
         //| Explicit = 2uy
 
     type Type =
-        | Unit = 0uy
         | S8 = 1uy
         | S16 = 2uy
         | S32 = 4uy

@@ -1,0 +1,59 @@
+﻿.module Memory
+.format 0 0
+.version 1
+
+.identifier @id_namespace Example
+.identifier @id_class Memory
+.identifier @id_entry_point main
+.identifier @id_println println
+.identifier @id_extern_interpreter runmdl
+.identifier @id_extern_println testhelperprintln
+
+.signature @sig_int type s32
+.signature @sig_char type char32
+.signature @sig_string type char32*
+.signature @sig_main method (@sig_int) ()
+.signature @sig_println method () (@sig_string)
+
+.data @data_message utf32le "Hello?"
+
+.code @code_main {
+    .block $ENTRY {
+        %t_zero = const.zero s32
+        %t_count = const.s s32 7
+        %t_memory = alloca throw.fail %t_count @sig_char
+        mem.init.const throw.invalid @sig_char at %t_memory with @data_message
+        //%t_offset_0 = const.s s32 6
+        //%t_memory_end = add char32* %t_memory %t_offset_0 // TODO: Update parser to allow pointer types for arithmetic operations?
+        //mem.st throw.invalid %t_exp @sig_char into %t_memory_end
+        //%t_exp = const.s char32 33 // !
+        //%t_offset_1 = const.s s32 5
+        //%t_memory_exp = add char32* %t_memory %t_offset_1
+        //mem.st throw.invalid %t_exp @sig_char into %t_memory_exp
+        call @method_println (%t_memory)
+        ret %t_zero
+    }
+}
+
+.namespace @namespace {
+    .name @id_namespace
+}
+
+.type @class_program public {
+    .name @id_class
+    .namespace @namespace
+
+    .method @method_main public {
+        .name @id_entry_point
+        .signature @sig_main
+        .body defined @code_main
+    }
+
+    .method @method_println private {
+        .signature @sig_println
+        .name @id_println
+        .body external @id_extern_println from @id_extern_interpreter
+    }
+}
+
+.entrypoint @method_main

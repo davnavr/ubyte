@@ -128,7 +128,6 @@ type PrimitiveType =
     | Char32
     | F32
     | F64
-    | Unit
 
 module InstructionSet =
     type BlockOffset = varint
@@ -155,10 +154,6 @@ module InstructionSet =
         | ``not`` = 0x28u
         | ``xor`` = 0x29u
         | rem = 0x30u
-        //| = 0x31 TODO: Have operation that stores both division result AND remainder.
-        // TODO: Have oepration for shifting integer bits left and right
-        //| = 0x32u
-        //| = 0x33u
         | rotl = 0x34u
         | rotr = 0x35u
         | ``const.s`` = 0x40u
@@ -168,17 +163,6 @@ module InstructionSet =
         | ``const.true`` = 0x44u
         | ``const.zero`` = 0x45u
         | ``const.false`` = 0x45u
-        // TODO: Have conversion operators (int to float, float to int, etc.), with ArithmeticFlags for overflow checks.
-        //|  = 46u
-        //|  = 47u
-        //|  = 48u
-        //|  = 49u
-        //|  = 4Au
-        //|  = 4Bu
-        //|  = 4Cu
-        //|  = 4Du
-        //|  = 4Eu
-        //|  = 4Fu
         | br = 0x50u
         | ``br.eq`` = 0x51u
         | ``br.ne`` = 0x52u
@@ -187,20 +171,25 @@ module InstructionSet =
         | ``br.le`` = 0x55u
         | ``br.ge`` = 0x56u
         | ``br.true`` = 0x57u
-
+        | ``mem.init`` = 0x6Au
+        | ``mem.st`` = 0x6Bu
+        | ``mem.ld`` = 0x6Cu
+        | ``mem.cpy`` = 0x6Du
+        | ``mem.init.const`` = 0x6Eu
         | ``obj.new`` = 0x70u
         | ``obj.null`` = 0x71u
         | ``obj.fd.ld`` = 0x72u
         | ``obj.fd.st`` = 0x73u
         | ``obj.fd.addr`` = 0x74u
         | ``obj.throw`` = 0x75u
-
         | ``obj.arr.new`` = 0x7Au
         | ``obj.arr.len`` = 0x7Bu
         | ``obj.arr.get`` = 0x7Cu
-        //| ``obj.arr.addr`` = 0x7Du
         | ``obj.arr.set`` = 0x7Eu
+        | ``obj.arr.addr`` = 0x7Du
         | ``obj.arr.const`` = 0x7Fu
+        | alloca = 0xAAu
+        | ``alloca.obj`` = 0xABu
 
     [<Flags>]
     type ArithmeticFlags =
@@ -215,6 +204,20 @@ module InstructionSet =
         | NoTailCallOptimization = 1uy
         | RequiresTailCallOptimization = 0b0000_0010uy
         | ThrowOnNullThis = 0b1000_0000uy
+
+    [<Flags>]
+    type AllocationFlags =
+        | None = 0uy
+        | ThrowOnFailure = 1uy
+        | ValidMask = 1uy
+
+    [<Flags>]
+    type MemoryAccessFlags =
+        | None = 0uy
+        | ThrowOnInvalidAccess = 1uy
+        | AllowUnaligned = 0b1000_0000uy
+        | RawAccessValidMask = 0b1000_0001uy
+        | ElementAccessValidMask = 0b0000_0001uy
 
     type Instruction =
         | Nop
@@ -251,16 +254,25 @@ module InstructionSet =
         | Br_le of x: RegisterIndex * y: RegisterIndex * btrue: BlockOffset * bfalse: BlockOffset
         | Br_ge of x: RegisterIndex * y: RegisterIndex * btrue: BlockOffset * bfalse: BlockOffset
         | Br_true of condition: RegisterIndex * btrue: BlockOffset * bfalse: BlockOffset
+        | Mem_init of MemoryAccessFlags * count: RegisterIndex * TypeSignatureIndex * address: RegisterIndex * value: RegisterIndex
+        | Mem_st of MemoryAccessFlags * value: RegisterIndex * TypeSignatureIndex * address: RegisterIndex
+        | Mem_cpy of MemoryAccessFlags * count: RegisterIndex * TypeSignatureIndex * source: RegisterIndex * destination: RegisterIndex
+        | Mem_ld of MemoryAccessFlags * TypeSignatureIndex * address: RegisterIndex
+        | Mem_init_const of MemoryAccessFlags * TypeSignatureIndex * address: RegisterIndex * data: DataIndex
         | Obj_new of constructor: MethodIndex * arguments: vector<RegisterIndex>
         | Obj_null
         | Obj_fd_ld of field: FieldIndex * object: RegisterIndex
         | Obj_fd_st of field: FieldIndex * object: RegisterIndex * source: RegisterIndex
+        | Obj_fd_addr of MemoryAccessFlags * field: FieldIndex * object: RegisterIndex
         | Obj_throw of ex: RegisterIndex
         | Obj_arr_new of etype: TypeSignatureIndex * length: RegisterIndex
         | Obj_arr_len of ArithmeticFlags * PrimitiveType * array: RegisterIndex
         | Obj_arr_get of array: RegisterIndex * index: RegisterIndex
         | Obj_arr_set of array: RegisterIndex * index: RegisterIndex * source: RegisterIndex
+        | Obj_arr_addr of MemoryAccessFlags * array: RegisterIndex * index: RegisterIndex
         | Obj_arr_const of etype: TypeSignatureIndex * data: DataIndex
+        | Alloca of AllocationFlags * count: RegisterIndex * TypeSignatureIndex
+        | Alloca_obj of AllocationFlags * constructor: MethodIndex * arguments: vector<RegisterIndex>
 
 [<RequireQualifiedAccess>]
 type IdentifierSection =
@@ -279,7 +291,6 @@ module Tag =
         | Sequential = 1uy
 
     type Type =
-        | Unit = 0uy
         | S8 = 1uy
         | S16 = 2uy
         | S32 = 4uy
