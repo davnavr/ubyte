@@ -1170,9 +1170,13 @@ module ExternalCode =
                 let c = chars.[i].ReadRaw<System.Text.Rune> 0
                 stdout.Write(c.ToString())
         | RuntimeObject.UnsafePointer data ->
-            for i = 0 to (data.RawData.Length / 4) - 1 do // TODO: Figure out why it starts with null byte, and end at null byte.
+            let mutable finished, i = false, 0
+            while not finished do
                 let c = data.ReadRaw<System.Text.Rune> i
-                stdout.Write(c.ToString())
+                if c.Value <> 0 then
+                    stdout.Write(c.ToString())
+                    i <- Checked.(+) i 4
+                else finished <- true
         | _ ->
             failwith "TODO: How to print some other thing"
 
