@@ -656,7 +656,7 @@ module InstructionSet =
         /// Stores the value of the specified type into the memory specified by the <paramref name="address"/> register.
         /// </para>
         /// </summary>
-        | Mem_st of MemoryAccessFlags * address: RegisterIndex * TypeSignatureIndex * value: RegisterIndex
+        | Mem_st of MemoryAccessFlags * value: RegisterIndex * TypeSignatureIndex * address: RegisterIndex
         /// <summary>
         /// <para>
         /// <c>mem.cpy [throw.invalid] &lt;count&gt; &lt;type&gt; from &lt;source&gt; to &lt;destination&gt;</c>

@@ -1088,7 +1088,7 @@ module Interpreter =
                     branchToTarget (if Compare.isTrueValue condition then ttrue else tfalse)
                 | Obj_throw(Register e) ->
                     ex <- ValueSome(RuntimeException(frame', "Runtime exception has been thrown", e.RegisterType, e.RegisterValue) :> exn)
-                | Mem_st(ValidMemoryAccessFlags MemoryAccessFlags.RawAccessValidMask flags, Register address, TypeSignature t, Register value) -> // TODO: Throw exception on invalid access (store)
+                | Mem_st(ValidMemoryAccessFlags MemoryAccessFlags.RawAccessValidMask flags, Register value, TypeSignature t, Register address) -> // TODO: Throw exception on invalid access (store)
                     MemoryOperations.access address <| fun ptr -> copyRuntimeValue &value.RegisterValue &ptr
                 | Mem_ld(ValidMemoryAccessFlags MemoryAccessFlags.RawAccessValidMask flags, TypeSignature t, Register address) -> // TODO: Throw exception on invalid access (load)
                     let struct(dlen, rlen) = frame'.CurrentModule.CalculateTypeSize t
@@ -1141,10 +1141,11 @@ module Interpreter =
                 | ValueSome run ->
                     run frame
                     runExternalCode <- ValueNone
+
+                // Incrementing here means index points to instruction that caused the exception in the stack frame.
+                frame'.InstructionIndex <- Checked.(+) frame'.InstructionIndex 1
             with
             | e -> ex <- ValueSome e
-
-            frame'.InstructionIndex <- Checked.(+) frame'.InstructionIndex 1
 
         match frame.contents with
         | ValueNone -> entryPointResults

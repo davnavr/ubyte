@@ -217,12 +217,12 @@ let instruction instr dest =
         index ty dest
         index addr dest
         index value dest
-    | Mem_st(flags, addr, ty, value) ->
+    | Mem_st(flags, value, ty, addr) ->
         opcode Opcode.``mem.st`` dest
         bits1 flags dest
-        index addr dest
-        index ty dest
         index value dest
+        index ty dest
+        index addr dest
     | Mem_cpy(flags, count, ty, sreg, dreg) ->
         opcode Opcode.``mem.init`` dest
         bits1 flags dest

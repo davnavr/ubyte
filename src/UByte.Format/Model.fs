@@ -256,7 +256,7 @@ module InstructionSet =
         | Br_ge of x: RegisterIndex * y: RegisterIndex * btrue: BlockOffset * bfalse: BlockOffset
         | Br_true of condition: RegisterIndex * btrue: BlockOffset * bfalse: BlockOffset
         | Mem_init of MemoryAccessFlags * count: RegisterIndex * TypeSignatureIndex * address: RegisterIndex * value: RegisterIndex
-        | Mem_st of MemoryAccessFlags * address: RegisterIndex * TypeSignatureIndex * value: RegisterIndex
+        | Mem_st of MemoryAccessFlags * value: RegisterIndex * TypeSignatureIndex * address: RegisterIndex
         | Mem_cpy of MemoryAccessFlags * count: RegisterIndex * TypeSignatureIndex * source: RegisterIndex * destination: RegisterIndex
         | Mem_ld of MemoryAccessFlags * TypeSignatureIndex * address: RegisterIndex
         | Mem_init_const of MemoryAccessFlags * TypeSignatureIndex * address: RegisterIndex * data: DataIndex
