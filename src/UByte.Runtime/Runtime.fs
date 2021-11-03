@@ -71,8 +71,6 @@ module private RuntimeStruct =
     let copyRuntimeValue (source: inref<RuntimeStruct>) (destination: inref<RuntimeStruct>) =
         if source.RawData.Length > destination.RawData.Length then invalidDataLength "bytes"
         if source.References.Length > destination.References.Length then invalidDataLength "references"
-        if destination.RawData.Length > source.RawData.Length then source.RawData.AsSpan().Clear()
-        if destination.References.Length > source.References.Length then source.RawData.AsSpan().Clear()
         source.RawData.CopyTo destination.RawData
         source.References.CopyTo destination.References
 
@@ -312,12 +310,12 @@ type RuntimeObject =
     | UnsafePointer of RuntimeStruct
 
 type RuntimeStruct with
-    member this.ReadRaw<'T when 'T : struct and 'T :> System.ValueType and 'T : (new: unit -> 'T)> (index: int32): 'T =
-        MemoryMarshal.Read<'T>(Span.op_Implicit(this.RawData.AsSpan()).Slice(index))
+    member this.ReadRaw<'T when 'T : struct and 'T :> System.ValueType and 'T : (new: unit -> 'T)> (offset: int32): 'T =
+        MemoryMarshal.Read<'T>(Span.op_Implicit(this.RawData.AsSpan()).Slice(offset))
 
-    member this.WriteRaw<'T when 'T : struct and 'T :> System.ValueType and 'T : (new: unit -> 'T)>(index, value: 'T) =
+    member this.WriteRaw<'T when 'T : struct and 'T :> System.ValueType and 'T : (new: unit -> 'T)>(offset, value: 'T) =
         let mutable value = value
-        MemoryMarshal.Write<'T>(this.RawData.AsSpan().Slice(index), &value)
+        MemoryMarshal.Write<'T>(this.RawData.AsSpan().Slice(offset), &value)
 
     member this.ReadRef index = this.References.AsSpan().[index]
 
@@ -762,11 +760,11 @@ module Interpreter =
             | RuntimeObject.UnsafePointer memory -> accessor memory
             | _ -> invalidOp "Expected address register to contain a pointer"
 
-    let [<Literal>] private maxStackDataLength = 0xFFFFF
+    let [<Literal>] private MaxStackDataLength = 0xFFFFF
 
     let interpret arguments (entrypoint: RuntimeMethod) =
         let frame: RuntimeStackFrame voption ref = ref ValueNone
-        let mutable values = RuntimeValueStack(maxStackDataLength, maxStackDataLength / 8)
+        let values = RuntimeValueStack(MaxStackDataLength, MaxStackDataLength / 8)
         let mutable runExternalCode: (RuntimeStackFrame voption ref -> unit) voption = ValueNone
         let mutable ex = ValueNone
 
@@ -1140,12 +1138,17 @@ module Interpreter =
                 | ValueNone -> ()
                 | ValueSome run ->
                     run frame
-                    runExternalCode <- ValueNone
+                    runExternalCode <- ValueNone // TODO: Avoid code duplication with ret.
+                    values.PopAllocations()
 
                 // Incrementing here means index points to instruction that caused the exception in the stack frame.
                 frame'.InstructionIndex <- Checked.(+) frame'.InstructionIndex 1
             with
             | e -> ex <- ValueSome e
+
+        match ex with
+        | ValueSome e -> raise e
+        | ValueNone -> ()
 
         match frame.contents with
         | ValueNone -> entryPointResults
@@ -1161,14 +1164,19 @@ module ExternalCode =
 
     let private println (frame: RuntimeStackFrame) =
         match frame.ArgumentRegisters.[0].RegisterValue.ReadRef 0 with
-        | RuntimeObject.Null -> stdout.WriteLine()
+        | RuntimeObject.Null -> ()
         | RuntimeObject.Array chars ->
             for i = 0 to chars.Length - 1 do
                 let c = chars.[i].ReadRaw<System.Text.Rune> 0
                 stdout.Write(c.ToString())
-            stdout.WriteLine()
+        | RuntimeObject.UnsafePointer data ->
+            for i = 0 to (data.RawData.Length / 4) - 1 do // TODO: Figure out why it starts with null byte, and end at null byte.
+                let c = data.ReadRaw<System.Text.Rune> i
+                stdout.Write(c.ToString())
         | _ ->
             failwith "TODO: How to print some other thing"
+
+        stdout.WriteLine()
 
     do lookup.[(InternalCall, "testhelperprintln")] <- println
     do lookup.[(InternalCall, "break")] <- fun _ -> System.Diagnostics.Debugger.Launch() |> ignore
