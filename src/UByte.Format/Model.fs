@@ -111,7 +111,7 @@ type TemporaryIndex = Index<IndexKinds.TemporaryRegister>
 type LocalIndex = Index<IndexKinds.LocalRegister>
 type DataIndex = Index<IndexKinds.Data>
 
-[<RequireQualifiedAccess>]
+[<RequireQualifiedAccess; Struct>]
 type PrimitiveType =
     | Bool
     | U8
@@ -128,6 +128,9 @@ type PrimitiveType =
     | Char32
     | F32
     | F64
+
+[<RequireQualifiedAccess; Struct>]
+type RegisterType = | Primitive of PrimitiveType | Pointer | Object
 
 module InstructionSet =
     type BlockOffset = varint
@@ -434,14 +437,6 @@ type TypeDefinition =
       Fields: vector<FieldIndex>
       Methods: vector<MethodIndex>
       VTable: vector<MethodOverride> }
-
-[<Flags>]
-type RegisterFlags =
-    | None = 0uy
-    | ValidMask = 0b0000_0000uy
-
-[<Struct>]
-type RegisterType = { RegisterType: TypeSignatureIndex; RegisterFlags: RegisterFlags }
 
 type BlockExceptionHandler =
     { ExceptionRegister: LocalIndex voption

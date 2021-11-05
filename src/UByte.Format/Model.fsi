@@ -142,7 +142,7 @@ type LocalIndex = Index<IndexKinds.LocalRegister>
 /// </summary>
 type RegisterIndex = Index<IndexKinds.Register>
 
-[<RequireQualifiedAccess; NoComparison; StructuralEquality>]
+[<RequireQualifiedAccess; IsReadOnly; Struct; NoComparison; StructuralEquality>]
 type PrimitiveType =
     | Bool
     | U8
@@ -161,6 +161,12 @@ type PrimitiveType =
     | F64
 
     interface IEquatable<PrimitiveType>
+
+[<RequireQualifiedAccess; IsReadOnly; Struct>]
+type RegisterType =
+    | Primitive of PrimitiveType
+    | Pointer
+    | Object
 
 module InstructionSet =
     /// <summary>
@@ -875,7 +881,7 @@ type ValueType =
     | Primitive of PrimitiveType
     /// User-defined struct that is passed by value. The types index must point to a struct.
     | Defined of TypeDefinitionIndex
-    | UnsafePointer of ValueType
+    | UnsafePointer of ValueType // TODO: Pointer types should be considered reference types.
 
 [<RequireQualifiedAccess; NoComparison; StructuralEquality>]
 type ReferenceType =

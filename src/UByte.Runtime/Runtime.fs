@@ -28,6 +28,13 @@ let primitiveTypeSize ptype =
     | PrimitiveType.UNative
     | PrimitiveType.SNative -> sizeof<unativeint>
 
+let anyTypeToRegisterType t =
+    match t with
+    | AnyType.ValueType(ValueType.Primitive prim) -> RegisterType.Primitive prim
+    | AnyType.ReferenceType _ -> RegisterType.Object
+    | AnyType.ValueType(ValueType.Defined _ | ValueType.UnsafePointer _)
+    | AnyType.SafePointer _ -> RegisterType.Pointer
+
 [<Struct>]
 type OffsetArray<'T> =
     val Start: int32
@@ -77,11 +84,11 @@ module private RuntimeStruct =
         { RuntimeStruct.RawData = source.RawData.Clone(); References = source.References.Clone() }
 
 type RuntimeRegister =
-    { RegisterValue: RuntimeStruct; RegisterType: AnyType }
+    { RegisterValue: RuntimeStruct; RegisterType: RegisterType }
 
     override this.ToString() =
         match this.RegisterType with
-        | ValueType(ValueType.Primitive prim) ->
+        | RegisterType.Primitive prim ->
             match prim with
             | PrimitiveType.Bool -> sprintf "%b" (this.RegisterValue.ReadRaw<bool> 0)
             | PrimitiveType.U8 -> sprintf "%iuy" (this.RegisterValue.ReadRaw<uint8> 0)
@@ -96,39 +103,38 @@ type RuntimeRegister =
             | PrimitiveType.S64 -> sprintf "%iL" (this.RegisterValue.ReadRaw<int32> 0)
             | PrimitiveType.UNative -> sprintf "%iun" (this.RegisterValue.ReadRaw<unativeint> 0)
             | PrimitiveType.SNative -> sprintf "%in" (this.RegisterValue.ReadRaw<nativeint> 0)
-            | PrimitiveType.F32 -> sprintf "%A" (this.RegisterValue.ReadRaw<single> 0)
+            | PrimitiveType.F32 -> string(this.RegisterValue.ReadRaw<single> 0)
             | PrimitiveType.F64 -> string(this.RegisterValue.ReadRaw<double> 0)
-        | ReferenceType rtype ->
-            match this.RegisterValue.ReadRef 0, rtype with
-            | RuntimeObject.Null, _ -> "null"
-            | RuntimeObject.TypeInstance(otype, _), _ -> otype.ToString()
-            | RuntimeObject.Array chars, ReferenceType.Vector(ReferenceOrValueType.Value(ValueType.Primitive PrimitiveType.Char16)) ->
-                let str = System.Text.StringBuilder chars.Length
-                for i = 0 to chars.Length - 1 do str.Append(chars.[i].ReadRaw<char> 0) |> ignore
-                str.ToString()
-            | RuntimeObject.Array chars, ReferenceType.Vector(ReferenceOrValueType.Value(ValueType.Primitive PrimitiveType.Char32)) ->
-                let str = System.Text.StringBuilder(2 * chars.Length)
-                for i = 0 to chars.Length - 1 do str.Append(chars.[i].ReadRaw<System.Text.Rune>(0).ToString()) |> ignore
-                str.ToString()
-            | _, _ -> string rtype
-        | atype -> string atype
+        | RegisterType.Object | RegisterType.Pointer ->
+            match this.RegisterValue.ReadRef 0 with
+            | RuntimeObject.Null -> "null"
+            | RuntimeObject.TypeInstance(otype, _) -> otype.ToString()
+            | RuntimeObject.Array array ->
+                match array.ElementType with
+                | AnyType.ValueType(ValueType.Primitive PrimitiveType.Char16) ->
+                    let str = System.Text.StringBuilder array.Length
+                    for i = 0 to array.Length - 1 do str.Append(array.[i].ReadRaw<char> 0) |> ignore
+                    str.ToString()
+                | AnyType.ValueType(ValueType.Primitive PrimitiveType.Char32) ->
+                    let str = System.Text.StringBuilder array.Length
+                    for i = 0 to array.Length - 1 do str.Append(array.[i].ReadRaw<System.Text.Rune>(0).ToString()) |> ignore
+                    str.ToString()
+                | elemt ->
+                    string elemt
+            | RuntimeObject.UnsafePointer ptr ->
+                sprintf "%i,%i" ptr.RawData.Start ptr.References.Start
 
 type RuntimeRegister with
-    static member Raw(size, vtype) =
+    static member Raw(size, ptype) =
         { RegisterValue = RuntimeStruct.Raw size
-          RegisterType = AnyType.ValueType vtype }
+          RegisterType = RegisterType.Primitive ptype }
 
-    static member Object rtype =
+    static member Object() =
         { RegisterValue = RuntimeStruct.Object()
-          RegisterType = AnyType.ReferenceType rtype }
+          RegisterType = RegisterType.Object }
 
 [<RequireQualifiedAccess>]
 module private RuntimeRegister = // TODO: Make it so registers only contain primtive type or object reference, no struct
-    let primitiveType register =
-        match register.RegisterType with
-        | AnyType.ValueType(ValueType.Primitive prim) -> prim
-        | _ -> invalidArg (nameof register) "Cannot retrieve numeric value from a register not containing a primitive type"
-
     let create rtype (dsize: int32) (rlen: int32) =
         { RuntimeRegister.RegisterValue =
             { RuntimeStruct.RawData = OffsetArray dsize
@@ -252,7 +258,7 @@ type InterpreterExecutionException =
 type RuntimeException =
     inherit InterpreterExecutionException
 
-    val ExceptionType: AnyType
+    val ExceptionType: RegisterType
     val ExceptionValue: RuntimeStruct
 
     new (frame, message, etype, evalue) =
@@ -331,22 +337,33 @@ module Interpreter =
     module private NumberValue =
         let inline private number register u8 s8 u16 s16 u32 s32 u64 s64 f32 f64 unative snative =
             let value = &register.RegisterValue
-            match RuntimeRegister.primitiveType register with
-            | PrimitiveType.Bool
-            | PrimitiveType.U8 -> value.ReadRaw<uint8> 0 |> u8
-            | PrimitiveType.S8 -> value.ReadRaw<int8> 0 |> s8
-            | PrimitiveType.Char16
-            | PrimitiveType.U16 -> value.ReadRaw<uint16> 0 |> u16
-            | PrimitiveType.S16 -> value.ReadRaw<int16> 0 |> s16
-            | PrimitiveType.Char32
-            | PrimitiveType.U32 -> value.ReadRaw<uint32> 0 |> u32
-            | PrimitiveType.S32 -> value.ReadRaw<int32> 0 |> s32
-            | PrimitiveType.U64 -> value.ReadRaw<uint64> 0 |> u64
-            | PrimitiveType.S64 -> value.ReadRaw<int64> 0 |> s64
-            | PrimitiveType.F32 -> value.ReadRaw<single> 0 |> f32
-            | PrimitiveType.F64 -> value.ReadRaw<double> 0 |> f64
-            | PrimitiveType.UNative -> value.ReadRaw<unativeint> 0 |> unative
-            | PrimitiveType.SNative -> value.ReadRaw<nativeint> 0 |> snative
+            match register.RegisterType with
+            | RegisterType.Primitive PrimitiveType.Bool
+            | RegisterType.Primitive PrimitiveType.U8 -> value.ReadRaw<uint8> 0 |> u8
+            | RegisterType.Primitive PrimitiveType.S8 -> value.ReadRaw<int8> 0 |> s8
+            | RegisterType.Primitive PrimitiveType.Char16
+            | RegisterType.Primitive PrimitiveType.U16 -> value.ReadRaw<uint16> 0 |> u16
+            | RegisterType.Primitive PrimitiveType.S16 -> value.ReadRaw<int16> 0 |> s16
+            | RegisterType.Primitive PrimitiveType.Char32
+            | RegisterType.Primitive PrimitiveType.U32 -> value.ReadRaw<uint32> 0 |> u32
+            | RegisterType.Primitive PrimitiveType.S32 -> value.ReadRaw<int32> 0 |> s32
+            | RegisterType.Primitive PrimitiveType.U64 -> value.ReadRaw<uint64> 0 |> u64
+            | RegisterType.Primitive PrimitiveType.S64 -> value.ReadRaw<int64> 0 |> s64
+            | RegisterType.Primitive PrimitiveType.F32 -> value.ReadRaw<single> 0 |> f32
+            | RegisterType.Primitive PrimitiveType.F64 -> value.ReadRaw<double> 0 |> f64
+            | RegisterType.Primitive PrimitiveType.UNative -> value.ReadRaw<unativeint> 0 |> unative
+            | RegisterType.Primitive PrimitiveType.SNative -> value.ReadRaw<nativeint> 0 |> snative
+            | RegisterType.Pointer | RegisterType.Object ->
+                match value.ReadRef 0 with
+                | RuntimeObject.Null -> u8 0uy
+                | RuntimeObject.UnsafePointer ptr ->
+                    uint64(ptr.References.GetHashCode()) +
+                    uint64 ptr.References.Start +
+                    uint64(ptr.RawData.GetHashCode()) +
+                    uint64 ptr.RawData.Start
+                    |> u64
+                | RuntimeObject.TypeInstance _ | RuntimeObject.Array _ ->
+                    invalidOp "Cannot convert object reference into a numeric value"
 
         let u8 register = number register id uint8 uint8 uint8 uint8 uint8 uint8 uint8 uint8 uint8 uint8 uint8
         let s8 register = number register int8 id int8 int8 int8 int8 int8 int8 int8 int8 int8 int8
@@ -535,94 +552,91 @@ module Interpreter =
     module private Compare =
         let inline private comparison s8 u8 s16 u16 s32 u32 s64 u64 snative unative f32 f64 obj xreg yreg =
             match xreg.RegisterType, yreg.RegisterType with
-            | AnyType.ReferenceType _, AnyType.ReferenceType _ ->
-                obj (xreg.RegisterValue.ReadRef 0) (yreg.RegisterValue.ReadRef 0)
-            | AnyType.ReferenceType _, _
-            | _, AnyType.ReferenceType _ ->
-                failwith "TODO: Error for comparisons between objects and numeric values are prohibited"
-            | AnyType.ValueType(ValueType.Defined _), _
-            | _, AnyType.ValueType(ValueType.Defined _) ->
-                raise(NotImplementedException "Comparisons of structs may be implemented in the future")
-            | AnyType.SafePointer _, _
-            | _, AnyType.SafePointer _ ->
-                failwith "TODO: Error for comparisons of safe pointers are prohibited"
-            | AnyType.ValueType(ValueType.Primitive PrimitiveType.F64), _ ->
+            | RegisterType.Primitive PrimitiveType.F64, _ ->
                 f64 (xreg.RegisterValue.ReadRaw<float> 0) (NumberValue.f64 yreg)
-            | _, AnyType.ValueType(ValueType.Primitive PrimitiveType.F64) ->
+            | _, RegisterType.Primitive PrimitiveType.F64 ->
                 f64 (NumberValue.f64 xreg) (yreg.RegisterValue.ReadRaw<float> 0)
-            | AnyType.ValueType(ValueType.Primitive PrimitiveType.F32), _ ->
+            | RegisterType.Primitive PrimitiveType.F32, _ ->
                 f32 (xreg.RegisterValue.ReadRaw<float32> 0) (NumberValue.f32 yreg)
-            | _, AnyType.ValueType(ValueType.Primitive PrimitiveType.F32) ->
+            | _, RegisterType.Primitive PrimitiveType.F32 ->
                 f32 (NumberValue.f32 xreg) (yreg.RegisterValue.ReadRaw<float32> 0)
-            | AnyType.ValueType(ValueType.Primitive PrimitiveType.SNative), AnyType.ValueType(ValueType.Primitive PrimitiveType.UNative | ValueType.UnsafePointer _) ->
+            | RegisterType.Primitive PrimitiveType.SNative, RegisterType.Primitive PrimitiveType.UNative ->
                 let x = xreg.RegisterValue.ReadRaw<nativeint> 0
                 if x < 0n
                 then failwith "TODO: How to compare long and ulong?"
                 else unative (unativeint x) (yreg.RegisterValue.ReadRaw<unativeint> 0)
-            | AnyType.ValueType(ValueType.Primitive PrimitiveType.UNative | ValueType.UnsafePointer _), AnyType.ValueType(ValueType.Primitive PrimitiveType.SNative) ->
+            | RegisterType.Primitive PrimitiveType.UNative, RegisterType.Primitive PrimitiveType.SNative ->
                 let y = yreg.RegisterValue.ReadRaw<nativeint> 0
                 if y < 0n
                 then failwith "TODO: How to compare long and ulong?"
                 else unative (xreg.RegisterValue.ReadRaw<unativeint> 0) (unativeint y)
-            | AnyType.ValueType(ValueType.Primitive PrimitiveType.UNative | ValueType.UnsafePointer _), _ ->
+            | RegisterType.Primitive PrimitiveType.UNative, _ ->
                 unative (xreg.RegisterValue.ReadRaw<unativeint> 0) (NumberValue.unative yreg)
-            | _, AnyType.ValueType(ValueType.Primitive PrimitiveType.UNative | ValueType.UnsafePointer _) ->
+            | _, RegisterType.Primitive PrimitiveType.UNative ->
                 unative (NumberValue.unative xreg) (yreg.RegisterValue.ReadRaw<unativeint> 0)
-            | AnyType.ValueType(ValueType.Primitive PrimitiveType.SNative), _ ->
+            | RegisterType.Primitive PrimitiveType.SNative, _ ->
                 snative (xreg.RegisterValue.ReadRaw<nativeint> 0) (NumberValue.snative yreg)
-            | _, AnyType.ValueType(ValueType.Primitive PrimitiveType.SNative) ->
+            | _, RegisterType.Primitive PrimitiveType.SNative ->
                 snative (NumberValue.snative xreg) (yreg.RegisterValue.ReadRaw<nativeint> 0)
-            | AnyType.ValueType(ValueType.Primitive PrimitiveType.S64), AnyType.ValueType(ValueType.Primitive PrimitiveType.U64) ->
+            | RegisterType.Primitive PrimitiveType.S64, RegisterType.Primitive PrimitiveType.U64 ->
                 let x = xreg.RegisterValue.ReadRaw<int64> 0
                 if x < 0L
                 then failwith "TODO: How to compare long and ulong?"
                 else u64 (uint64 x) (yreg.RegisterValue.ReadRaw<uint64> 0)
-            | AnyType.ValueType(ValueType.Primitive PrimitiveType.U64), AnyType.ValueType(ValueType.Primitive PrimitiveType.S64) ->
+            | RegisterType.Primitive PrimitiveType.U64, RegisterType.Primitive PrimitiveType.S64 ->
                 let y = yreg.RegisterValue.ReadRaw<int64> 0
                 if y < 0L
                 then failwith "TODO: How to compare long and ulong?"
                 else u64 (xreg.RegisterValue.ReadRaw<uint64> 0) (uint64 y)
-            | AnyType.ValueType(ValueType.Primitive PrimitiveType.U64), _ ->
+            | RegisterType.Primitive PrimitiveType.U64, _ ->
                 u64 (xreg.RegisterValue.ReadRaw<uint64> 0) (NumberValue.u64 yreg)
-            | _, AnyType.ValueType(ValueType.Primitive PrimitiveType.U64) ->
+            | _, RegisterType.Primitive PrimitiveType.U64 ->
                 u64 (NumberValue.u64 xreg) (yreg.RegisterValue.ReadRaw<uint64> 0)
-            | AnyType.ValueType(ValueType.Primitive PrimitiveType.S64), _ ->
+            | RegisterType.Primitive PrimitiveType.S64, _ ->
                 s64 (xreg.RegisterValue.ReadRaw<int64> 0) (NumberValue.s64 yreg)
-            | _, AnyType.ValueType(ValueType.Primitive PrimitiveType.S64) ->
+            | _, RegisterType.Primitive PrimitiveType.S64 ->
                 s64 (NumberValue.s64 xreg) (yreg.RegisterValue.ReadRaw<int64> 0)
-            | AnyType.ValueType(ValueType.Primitive PrimitiveType.S32), AnyType.ValueType(ValueType.Primitive(PrimitiveType.U32 | PrimitiveType.Char32))
-            | AnyType.ValueType(ValueType.Primitive(PrimitiveType.U32 | PrimitiveType.Char32)), AnyType.ValueType(ValueType.Primitive PrimitiveType.S32) ->
+            | RegisterType.Primitive PrimitiveType.S32, RegisterType.Primitive(PrimitiveType.U32 | PrimitiveType.Char32)
+            | RegisterType.Primitive(PrimitiveType.U32 | PrimitiveType.Char32), RegisterType.Primitive PrimitiveType.S32 ->
                 s64 (NumberValue.s64 xreg) (NumberValue.s64 yreg)
-            | AnyType.ValueType(ValueType.Primitive PrimitiveType.U32), _ ->
+            | RegisterType.Primitive PrimitiveType.U32, _ ->
                 u32 (xreg.RegisterValue.ReadRaw<uint32> 0) (NumberValue.u32 yreg)
-            | _, AnyType.ValueType(ValueType.Primitive(PrimitiveType.U32 | PrimitiveType.Char32)) ->
+            | _, RegisterType.Primitive(PrimitiveType.U32 | PrimitiveType.Char32) ->
                 u32 (NumberValue.u32 xreg) (yreg.RegisterValue.ReadRaw<uint32> 0)
-            | AnyType.ValueType(ValueType.Primitive PrimitiveType.S32), _ ->
+            | RegisterType.Primitive PrimitiveType.S32, _ ->
                 s32 (xreg.RegisterValue.ReadRaw<int32> 0) (NumberValue.s32 yreg)
-            | _, AnyType.ValueType(ValueType.Primitive PrimitiveType.S32) ->
+            | _, RegisterType.Primitive PrimitiveType.S32 ->
                 s32 (NumberValue.s32 xreg) (yreg.RegisterValue.ReadRaw<int32> 0)
-            | AnyType.ValueType(ValueType.Primitive PrimitiveType.S16), AnyType.ValueType(ValueType.Primitive(PrimitiveType.U16 | PrimitiveType.Char16))
-            | AnyType.ValueType(ValueType.Primitive(PrimitiveType.U16 | PrimitiveType.Char16)), AnyType.ValueType(ValueType.Primitive PrimitiveType.S16) ->
+            | RegisterType.Primitive PrimitiveType.S16, RegisterType.Primitive(PrimitiveType.U16 | PrimitiveType.Char16)
+            | RegisterType.Primitive(PrimitiveType.U16 | PrimitiveType.Char16), RegisterType.Primitive PrimitiveType.S16 ->
                 s32 (NumberValue.s32 xreg) (NumberValue.s32 yreg)
-            | AnyType.ValueType(ValueType.Primitive(PrimitiveType.U16 | PrimitiveType.Char16)), _ ->
+            | RegisterType.Primitive(PrimitiveType.U16 | PrimitiveType.Char16), _ ->
                 u16 (xreg.RegisterValue.ReadRaw<uint16> 0) (NumberValue.u16 yreg)
-            | _, AnyType.ValueType(ValueType.Primitive(PrimitiveType.U16 | PrimitiveType.Char16)) ->
+            | _, RegisterType.Primitive(PrimitiveType.U16 | PrimitiveType.Char16) ->
                 u16 (NumberValue.u16 xreg) (yreg.RegisterValue.ReadRaw<uint16> 0)
-            | AnyType.ValueType(ValueType.Primitive PrimitiveType.S16), _ ->
+            | RegisterType.Primitive PrimitiveType.S16, _ ->
                 s16 (xreg.RegisterValue.ReadRaw<int16> 0) (NumberValue.s16 yreg)
-            | _, AnyType.ValueType(ValueType.Primitive PrimitiveType.S16) ->
+            | _, RegisterType.Primitive PrimitiveType.S16 ->
                 s16 (NumberValue.s16 xreg) (yreg.RegisterValue.ReadRaw<int16> 0)
-            | AnyType.ValueType(ValueType.Primitive PrimitiveType.S8), AnyType.ValueType(ValueType.Primitive(PrimitiveType.U8 | PrimitiveType.Bool))
-            | AnyType.ValueType(ValueType.Primitive(PrimitiveType.U8 | PrimitiveType.Bool)), AnyType.ValueType(ValueType.Primitive PrimitiveType.S8) ->
+            | RegisterType.Primitive PrimitiveType.S8, RegisterType.Primitive(PrimitiveType.U8 | PrimitiveType.Bool)
+            | RegisterType.Primitive(PrimitiveType.U8 | PrimitiveType.Bool), RegisterType.Primitive PrimitiveType.S8 ->
                 s16 (NumberValue.s16 xreg) (NumberValue.s16 yreg)
-            | AnyType.ValueType(ValueType.Primitive PrimitiveType.S8), _ ->
+            | RegisterType.Primitive PrimitiveType.S8, _ ->
                 s8 (xreg.RegisterValue.ReadRaw<int8> 0) (NumberValue.s8 yreg)
-            | _, AnyType.ValueType(ValueType.Primitive PrimitiveType.S8) ->
+            | _, RegisterType.Primitive PrimitiveType.S8 ->
                 s8 (NumberValue.s8 xreg) (yreg.RegisterValue.ReadRaw<int8> 0)
-            | AnyType.ValueType(ValueType.Primitive(PrimitiveType.U8 | PrimitiveType.Bool)), _ ->
+            | RegisterType.Primitive(PrimitiveType.U8 | PrimitiveType.Bool), _ ->
                 u8 (xreg.RegisterValue.ReadRaw<uint8> 0) (NumberValue.u8 yreg)
-            | _, AnyType.ValueType(ValueType.Primitive(PrimitiveType.U8 | PrimitiveType.Bool)) ->
+            | _, RegisterType.Primitive(PrimitiveType.U8 | PrimitiveType.Bool) ->
                 u8 (NumberValue.u8 xreg) (yreg.RegisterValue.ReadRaw<uint8> 0)
+            | RegisterType.Object, RegisterType.Object ->
+                obj (xreg.RegisterValue.ReadRef 0) (yreg.RegisterValue.ReadRef 0)
+            | RegisterType.Object, _
+            | _, RegisterType.Object ->
+                failwith "TODO: Error for comparisons between objects and numeric values are prohibited"
+            | _, RegisterType.Pointer
+            | RegisterType.Pointer, _ ->
+                u64 (NumberValue.u64 xreg) (NumberValue.u64 yreg)
 
         let isTrueValue register =
             let rvalue = &register.RegisterValue
@@ -876,12 +890,12 @@ module Interpreter =
                     raise(NullReferenceException "Cannot access an array element with a null array reference")
 
             let inline createPrimitiveRegister rtype =
-                let register = RuntimeRegister.Raw(primitiveTypeSize rtype, ValueType.Primitive rtype)
+                let register = RuntimeRegister.Raw(primitiveTypeSize rtype, rtype)
                 frame'.TemporaryRegisters.Add register
                 register
 
-            let inline createReferenceRegister rtype =
-                let register = RuntimeRegister.Object rtype
+            let inline createReferenceRegister()=
+                let register = RuntimeRegister.Object()
                 frame'.TemporaryRegisters.Add register
                 register
 
@@ -966,7 +980,7 @@ module Interpreter =
                 | Const_false vtype | Const_zero vtype ->
                     let destination = createPrimitiveRegister vtype
                     Constant.boolean vtype false &destination.RegisterValue
-                | Obj_null -> (createReferenceRegister ReferenceType.Any).RegisterValue.WriteRef(0, RuntimeObject.Null)
+                | Obj_null -> createReferenceRegister().RegisterValue.WriteRef(0, RuntimeObject.Null)
                 | Const_f32 _
                 | Const_f64 _ -> failwith "TODO: Storing of constant floating point integers is not yet supported"
                 | Call(flags, Method method, LookupRegisterArray arguments) ->
@@ -990,12 +1004,13 @@ module Interpreter =
                         |> invalidOp
                 | Obj_new(Method constructor, LookupRegisterArray arguments) ->
                     let o = RuntimeObject.TypeInstance(constructor.DeclaringType, constructor.DeclaringType.InitializeObjectFields())
-                    let destination = createReferenceRegister(ReferenceType.Defined constructor.DeclaringType.Index) // TODO: Cache the ReferenceType in RuntimeTypeDefinition.
+                    let destination = createReferenceRegister()
                     destination.RegisterValue.WriteRef(0, o)
                     invoke CallFlags.None (arguments.Insert(0, destination)) constructor |> ignore
                 | Obj_fd_ld(Field field, Register object) ->
                     field.CheckMutate frame'
-                    let destination = { RuntimeRegister.RegisterType = field.FieldType; RegisterValue = field.AllocateValue() }
+                    let destination =
+                        { RuntimeRegister.RegisterType = anyTypeToRegisterType field.FieldType; RegisterValue = field.AllocateValue() }
                     frame'.TemporaryRegisters.Add destination
                     fieldAccessInstruction field object <| fun value -> copyRuntimeValue &value &destination.RegisterValue
                 | Obj_fd_st(Field field, Register object, Register source) ->
@@ -1003,7 +1018,7 @@ module Interpreter =
                 | Obj_fd_addr(ValidMemoryAccessFlags MemoryAccessFlags.ElementAccessValidMask flags, Field field, Register object) ->
                     // TODO: If object register does not contain the field, throw exception if exn flag is set.
                     fieldAccessInstruction field object <| fun value ->
-                        { RuntimeRegister.RegisterType = AnyType.ReferenceType ReferenceType.Any
+                        { RuntimeRegister.RegisterType = RegisterType.Object
                           RegisterValue =
                             { RuntimeStruct.RawData = OffsetArray.Empty
                               References = OffsetArray(Array.singleton(RuntimeObject.UnsafePointer value)) } }
@@ -1011,13 +1026,13 @@ module Interpreter =
                 | Obj_arr_new(TypeSignature etype, Register length) ->
                     let struct(dsize, rlen) = frame'.CurrentMethod.Module.CalculateTypeSize etype
                     let array = RuntimeArray(dsize, rlen, NumberValue.s32 length, etype)
-                    createReferenceRegister((*ReferenceType.Vector etype*) ReferenceType.Any).RegisterValue.WriteRef(0, RuntimeObject.Array array) // TODO: Get/check array element type.
+                    createReferenceRegister().RegisterValue.WriteRef(0, RuntimeObject.Array array)
                 | Obj_arr_const(TypeSignature etype, Data data) ->
                     let struct(dsize, rlen) = frame'.CurrentMethod.Module.CalculateTypeSize etype
                     if rlen > 0 then invalidOp("Cannot create constant array containing elements of type " + etype.ToString())
                     let array = RuntimeArray(dsize, rlen, data.Length / dsize, etype)
                     data.AsSpan().Slice(0, array.Data.Length).CopyTo(Span array.Data)
-                    createReferenceRegister((*ReferenceType.Vector etype*) ReferenceType.Any).RegisterValue.WriteRef(0, RuntimeObject.Array array) // TODO: Get/check array element type.
+                    createReferenceRegister().RegisterValue.WriteRef(0, RuntimeObject.Array array)
                 | Obj_arr_len(ValidArithmeticFlags flags, ltype, Register array) ->
                     let destination = createPrimitiveRegister ltype
                     match array.RegisterValue.ReadRef 0 with
@@ -1035,8 +1050,9 @@ module Interpreter =
                     arrayAccessInstruction array index <| fun array i ->
                         let value = array.[i]
                         let destination =
-                            { RuntimeRegister.RegisterType = array.ElementType
+                            { RuntimeRegister.RegisterType = anyTypeToRegisterType array.ElementType
                               RegisterValue =
+                                // TODO: If array contains structs, copy struct contents to a UnsafePointer instance.
                                 { RuntimeStruct.RawData = OffsetArray array.DataLength
                                   References = OffsetArray array.ReferenceCount } }
                         frame'.TemporaryRegisters.Add destination
@@ -1045,9 +1061,8 @@ module Interpreter =
                     arrayAccessInstruction array index <| fun array i -> array.[i] <- source.RegisterValue
                 | Obj_arr_addr(ValidMemoryAccessFlags MemoryAccessFlags.ElementAccessValidMask flags, Register array, Register index) ->
                     arrayAccessInstruction array index <| fun array i ->
-                        // TODO: What type to use for pointer to array element? array.ElementType may be a reference type but ValueType.UnsafePointer only applies to ValueTypes.
                         // TODO: If array index is out of bounds and exn flag is set, throw exception.
-                        { RuntimeRegister.RegisterType = AnyType.ReferenceType ReferenceType.Any
+                        { RuntimeRegister.RegisterType = RegisterType.Pointer
                           RegisterValue =
                             { RuntimeStruct.RawData = OffsetArray.Empty
                               References = OffsetArray(Array.singleton(RuntimeObject.UnsafePointer array.[i])) } }
@@ -1082,7 +1097,7 @@ module Interpreter =
                         { RuntimeRegister.RegisterValue =
                             { RuntimeStruct.RawData = OffsetArray dlen
                               References = OffsetArray rlen }
-                          RegisterType = t }
+                          RegisterType = anyTypeToRegisterType t }
                     MemoryOperations.access address <| fun ptr ->
                         ptr.RawData.AsSpan().Slice(0, dlen).CopyTo(destination.RegisterValue.RawData.AsSpan())
                         ptr.References.AsSpan().Slice(0, rlen).CopyTo(destination.RegisterValue.References.AsSpan())
@@ -1101,7 +1116,7 @@ module Interpreter =
                             { RuntimeRegister.RegisterValue =
                                 { RuntimeStruct.RawData = OffsetArray.Empty
                                   References = OffsetArray(Array.singleton(RuntimeObject.UnsafePointer allocated)) }
-                              RegisterType = t }
+                              RegisterType = RegisterType.Pointer }
                     elif isFlagSet AllocationFlags.ThrowOnFailure flags then
                         invalidOp "Failed to allocate on stack, maximum capacity exceeded"
                     else
@@ -1205,7 +1220,7 @@ type RuntimeMethod (rmodule: RuntimeModule, index: MethodIndex, method: Method) 
     member private _.CreateRuntimeRegister(tindex: TypeSignatureIndex): RuntimeRegister =
         let t = rmodule.TypeSignatureAt tindex
         let struct(dsize, rlen) = rmodule.CalculateTypeSize t
-        RuntimeRegister.create t dsize rlen
+        RuntimeRegister.create (anyTypeToRegisterType t) dsize rlen
 
     member this.CreateArgumentRegisters() =
         let { MethodSignature.ParameterTypes = atypes } = rmodule.MethodSignatureAt method.Signature
@@ -1272,9 +1287,8 @@ type RuntimeField (rmodule: RuntimeModule, field: Field, size) =
     member _.IsMutable = isFlagSet FieldFlags.Mutable flags
     member _.IsStatic = isFlagSet FieldFlags.Static flags
 
-    member val DeclaringType: RuntimeTypeDefinition = rmodule.InitializeType field.FieldOwner
-
-    member val FieldType = rmodule.TypeSignatureAt field.FieldType
+    member val DeclaringType : RuntimeTypeDefinition = rmodule.InitializeType field.FieldOwner
+    member val FieldType : AnyType = rmodule.TypeSignatureAt field.FieldType
 
     member this.AllocateValue(): RuntimeStruct =
         { RuntimeStruct.RawData = OffsetArray this.DataSize; References = OffsetArray this.ReferencesLength }
@@ -1586,7 +1600,7 @@ type RuntimeModule (m: Module, moduleImportResolver: ModuleIdentifier -> Runtime
                 | 0 -> ImmutableArray.Empty
                 | 1 ->
                     match this.TypeSignatureAt signature.ParameterTypes.[0] with
-                    | AnyType.ReferenceType(ReferenceType.Vector tstring as argt) ->
+                    | AnyType.ReferenceType(ReferenceType.Vector tstring) ->
                         match tstring with
                         | ReferenceOrValueType.Reference(ReferenceType.Vector tchar) ->
                             let inline characterArrayArguments ctype convert =
@@ -1602,7 +1616,7 @@ type RuntimeModule (m: Module, moduleImportResolver: ModuleIdentifier -> Runtime
                                     arg.WriteRef(0, RuntimeObject.Array(convert argv.[i]))
                                     argv'.[i] <- arg
 
-                                let argv'' = RuntimeRegister.Object argt
+                                let argv'' = RuntimeRegister.Object()
                                 argv''.RegisterValue.WriteRef(0, RuntimeObject.Array argv')
                                 ImmutableArray.Create argv''
 
