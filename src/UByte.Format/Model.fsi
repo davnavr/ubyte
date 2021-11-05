@@ -375,63 +375,64 @@ module InstructionSet =
         //| Global_st
         /// <summary>
         /// <para>
-        /// <c>&lt;result&gt; = add [throw.ovf] &lt;numeric type&gt; &lt;x&gt; &lt;y&gt;</c>
+        /// <c>&lt;result&gt; = add [throw.ovf] &lt;type&gt; &lt;x&gt; &lt;y&gt;</c>
         /// </para>
         /// <para>
         /// Computes the sum of the values in registers <paramref name="x"/> and <paramref name="y"/> converted to the specified
-        /// numeric type. and returns the sum.
+        /// type. and returns the sum.
         /// </para>
         /// </summary>
-        | Add of ArithmeticFlags * PrimitiveType * x: RegisterIndex * y: RegisterIndex
+        | Add of ArithmeticFlags * TypeSignatureIndex * x: RegisterIndex * y: RegisterIndex
         /// <summary>
         /// <para>
-        /// <c>&lt;result&gt; = sub [throw.ovf] &lt;numeric type&gt; &lt;x&gt; &lt;y&gt;</c>
+        /// <c>&lt;result&gt; = sub [throw.ovf] &lt;type&gt; &lt;x&gt; &lt;y&gt;</c>
         /// </para>
         /// <para>
-        /// Converts the values in the <paramref name="x"/> and <paramref name="y"/> registers to the specified numeric type,
-        /// subtracts the value in register <paramref name="y"/> from the value in register <paramref name="x"/>, returns the
+        /// Converts the values in the <paramref name="x"/> and <paramref name="y"/> registers to the specified type, subtracts
+        /// the value in register <paramref name="y"/> from the value in register <paramref name="x"/>, returns the
         /// difference.
         /// </para>
         /// </summary>
-        | Sub of ArithmeticFlags * PrimitiveType * x: RegisterIndex * y: RegisterIndex
+        | Sub of ArithmeticFlags * TypeSignatureIndex * x: RegisterIndex * y: RegisterIndex
         /// <summary>
         /// <para>
-        /// <c>&lt;result&gt; = mul [throw.ovf] &lt;numeric type&gt; &lt;x&gt; &lt;y&gt;</c>
+        /// <c>&lt;result&gt; = mul [throw.ovf] &lt;type&gt; &lt;x&gt; &lt;y&gt;</c>
         /// </para>
         /// <para>
         /// Computes the product of the values in registers <paramref name="x"/> and <paramref name="y"/> converted to the
-        /// specified numeric type, and returns the product.
+        /// specified type, and returns the product.
         /// </para>
         /// </summary>
-        | Mul of ArithmeticFlags * PrimitiveType * x: RegisterIndex * y: RegisterIndex
+        | Mul of ArithmeticFlags * TypeSignatureIndex * x: RegisterIndex * y: RegisterIndex
         /// <summary>
         /// <para>
-        /// <c>&lt;result&gt; = div [throw.div0] &lt;numeric type&gt; &lt;x&gt; &lt;y&gt;</c>
+        /// <c>&lt;result&gt; = div [throw.div0] &lt;type&gt; &lt;x&gt; &lt;y&gt;</c>
         /// </para>
         /// <para>
-        /// Converts the values in the <paramref name="x"/> and <paramref name="y"/> registers to the specified numeric type,
-        /// divides the value in register <paramref name="x"/> by the value in register <paramref name="y"/>, and returns the result.
+        /// Converts the values in the <paramref name="x"/> and <paramref name="y"/> registers to the specified type, divides the
+        /// value in register <paramref name="x"/> by the value in register <paramref name="y"/>, and returns the
+        /// result.
         /// </para>
         /// </summary>
-        | Div of ArithmeticFlags * PrimitiveType * x: RegisterIndex * y: RegisterIndex
+        | Div of ArithmeticFlags * TypeSignatureIndex * x: RegisterIndex * y: RegisterIndex
         /// <summary>
         /// <para>
-        /// <c>&lt;result&gt; = incr [throw.ovf] &lt;numeric type&gt; &lt;value&gt;</c>
+        /// <c>&lt;result&gt; = incr [throw.ovf] &lt;type&gt; &lt;value&gt;</c>
         /// </para>
         /// <para>
-        /// Converts the value stored in the register to the specified numeric type, and returns the value plus one.
+        /// Converts the value stored in the register to the specified type, and returns the value plus one.
         /// </para>
         /// </summary>
-        | Incr of ArithmeticFlags * PrimitiveType * RegisterIndex
+        | Incr of ArithmeticFlags * TypeSignatureIndex * RegisterIndex
         /// <summary>
         /// <para>
-        /// <c>&lt;result&gt; = decr [throw.ovf] &lt;numeric type&gt; &lt;value&gt;</c>
+        /// <c>&lt;result&gt; = decr [throw.ovf] &lt;type&gt; &lt;value&gt;</c>
         /// </para>
         /// <para>
-        /// Converts the value stored in the register to the specified numeric type, and returns the value minus one.
+        /// Converts the value stored in the register to the specified type, and returns the value minus one.
         /// </para>
         /// </summary>
-        | Decr of ArithmeticFlags * PrimitiveType * RegisterIndex
+        | Decr of ArithmeticFlags * TypeSignatureIndex * RegisterIndex
         /// <summary>
         /// <para>
         /// <c>&lt;result&gt; = and &lt;integer type&gt; &lt;x&gt; &lt;y&gt;</c>
@@ -482,7 +483,7 @@ module InstructionSet =
         /// remainder.
         /// </para>
         /// </summary>
-        | Rem of ArithmeticFlags * PrimitiveType * x: RegisterIndex * y: RegisterIndex
+        | Rem of ArithmeticFlags * TypeSignatureIndex * x: RegisterIndex * y: RegisterIndex
 
         /// <summary>
         /// <para>

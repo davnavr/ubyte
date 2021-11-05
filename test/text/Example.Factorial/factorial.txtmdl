@@ -23,9 +23,9 @@
         br.eq $a0 $l_one then $RETURN_EARLY else $NEXT
     }
     .block $NEXT {
-        %t0 = sub s32 $a0 $l_one
+        %t0 = sub @sig_int $a0 $l_one
         %t1 = call @method_factorial (%t0)
-        %t_result = mul s32 $a0 %t1
+        %t_result = mul @sig_int $a0 %t1
         ret %t_result
     }
     .block $RETURN_EARLY {

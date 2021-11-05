@@ -113,10 +113,10 @@ let primitiveType prim (dest: Stream) =
     |> dest.WriteByte
 
 let instruction instr dest =
-    let inline arithmeticUnaryOp i (flags: ArithmeticFlags) rtype (register: RegisterIndex) =
+    let inline arithmeticUnaryOp i (flags: ArithmeticFlags) (rtype: TypeSignatureIndex) (register: RegisterIndex) =
         opcode i dest
         bits1 flags dest
-        primitiveType rtype dest
+        index rtype dest
         index register dest
 
     let inline arithmeticBinaryOp i flags rtype (x: RegisterIndex) (y: RegisterIndex) =

@@ -28,7 +28,7 @@
         call @method_decrement_decrement (%t_class_1)
         %t_incr_1 = obj.fd.ld @field_base_counter %t_class_1
 
-        %t_incr_sum = add s32 %t_incr_0 %t_incr_1
+        %t_incr_sum = add @sig_int %t_incr_0 %t_incr_1
 
         ret %t_incr_sum
     }
@@ -47,7 +47,7 @@
     .arguments ($a_this)
     .block $ENTRY {
         %t0 = obj.fd.ld @field_base_counter $a_this
-        %t1 = incr s32 %t0
+        %t1 = incr @sig_int %t0
         obj.fd.st @field_base_counter $a_this %t1
         ret
     }
@@ -65,7 +65,7 @@
     .arguments ($a_this)
     .block $ENTRY {
         %t0 = obj.fd.ld @field_base_counter $a_this
-        %t1 = decr s32 %t0
+        %t1 = decr @sig_int %t0
         obj.fd.st @field_base_counter $a_this %t1
         ret
     }

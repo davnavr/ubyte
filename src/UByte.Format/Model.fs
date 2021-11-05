@@ -229,17 +229,17 @@ module InstructionSet =
         | Select of condition: RegisterIndex * vtrue: RegisterIndex * vfalse: RegisterIndex
         | Call of CallFlags * method: MethodIndex * arguments: vector<RegisterIndex>
         | Call_virt of CallFlags * method: MethodIndex * this: RegisterIndex * arguments: vector<RegisterIndex>
-        | Add of ArithmeticFlags * PrimitiveType * x: RegisterIndex * y: RegisterIndex
-        | Sub of ArithmeticFlags * PrimitiveType * x: RegisterIndex * y: RegisterIndex
-        | Mul of ArithmeticFlags * PrimitiveType * x: RegisterIndex * y: RegisterIndex
-        | Div of ArithmeticFlags * PrimitiveType * x: RegisterIndex * y: RegisterIndex
-        | Incr of ArithmeticFlags * PrimitiveType * RegisterIndex
-        | Decr of ArithmeticFlags * PrimitiveType * RegisterIndex
+        | Add of ArithmeticFlags * TypeSignatureIndex * x: RegisterIndex * y: RegisterIndex
+        | Sub of ArithmeticFlags * TypeSignatureIndex * x: RegisterIndex * y: RegisterIndex
+        | Mul of ArithmeticFlags * TypeSignatureIndex * x: RegisterIndex * y: RegisterIndex
+        | Div of ArithmeticFlags * TypeSignatureIndex * x: RegisterIndex * y: RegisterIndex
+        | Incr of ArithmeticFlags * TypeSignatureIndex * RegisterIndex
+        | Decr of ArithmeticFlags * TypeSignatureIndex * RegisterIndex
         | And of PrimitiveType * x: RegisterIndex * y: RegisterIndex
         | Or of PrimitiveType * x: RegisterIndex * y: RegisterIndex
         | Not of PrimitiveType * RegisterIndex
         | Xor of PrimitiveType * x: RegisterIndex * y: RegisterIndex
-        | Rem of ArithmeticFlags * PrimitiveType * x: RegisterIndex * y: RegisterIndex
+        | Rem of ArithmeticFlags * TypeSignatureIndex * x: RegisterIndex * y: RegisterIndex
         | Rotl of PrimitiveType * amount: RegisterIndex * i: RegisterIndex
         | Rotr of PrimitiveType * amount: RegisterIndex * i: RegisterIndex
         | Const_s of PrimitiveType * value: varint
