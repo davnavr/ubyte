@@ -388,47 +388,70 @@ module Interpreter =
     /// Contains functions for performing arithmetic on the values stored in registers.
     [<RequireQualifiedAccess>]
     module private Arithmetic =
-        let private noReferenceType() = invalidOp "Cannot use reference type in an arithmetic operation"
+        let private noReferenceType() = invalidOp "Cannot use object reference in an arithmetic operation"
 
         // Performs an operation on two integers and stores a result value, with no overflow checks.
         let inline private binop opu8 ops8 opu16 ops16 opu32 ops32 opu64 ops64 opunative opsnative opf32 opf64 vtype xreg yreg (destination: inref<RuntimeStruct>) =
             match vtype with
-            | PrimitiveType.U8
-            | PrimitiveType.Bool -> destination.WriteRaw<uint8>(0, opu8 (NumberValue.u8 xreg) (NumberValue.u8 yreg))
-            | PrimitiveType.S8 -> destination.WriteRaw<int8>(0, ops8 (NumberValue.s8 xreg) (NumberValue.s8 yreg))
-            | PrimitiveType.U16
-            | PrimitiveType.Char16 -> destination.WriteRaw<uint16>(0, opu16 (NumberValue.u16 xreg) (NumberValue.u16 yreg))
-            | PrimitiveType.S16 -> destination.WriteRaw<int16>(0, ops16 (NumberValue.s16 xreg) (NumberValue.s16 yreg))
-            | PrimitiveType.U32
-            | PrimitiveType.Char32 -> destination.WriteRaw<uint32>(0, opu32 (NumberValue.u32 xreg) (NumberValue.u32 yreg))
-            | PrimitiveType.S32 -> destination.WriteRaw<int32>(0, ops32 (NumberValue.s32 xreg) (NumberValue.s32 yreg))
-            | PrimitiveType.U64 -> destination.WriteRaw<uint64>(0, opu64 (NumberValue.u64 xreg) (NumberValue.u64 yreg))
-            | PrimitiveType.S64 -> destination.WriteRaw<int64>(0, ops64 (NumberValue.s64 xreg) (NumberValue.s64 yreg))
-            | PrimitiveType.UNative ->
+            | RegisterType.Primitive(PrimitiveType.U8 | PrimitiveType.Bool) ->
+                destination.WriteRaw<uint8>(0, opu8 (NumberValue.u8 xreg) (NumberValue.u8 yreg))
+            | RegisterType.Primitive PrimitiveType.S8 ->
+                destination.WriteRaw<int8>(0, ops8 (NumberValue.s8 xreg) (NumberValue.s8 yreg))
+            | RegisterType.Primitive(PrimitiveType.U16 | PrimitiveType.Char16) ->
+                destination.WriteRaw<uint16>(0, opu16 (NumberValue.u16 xreg) (NumberValue.u16 yreg))
+            | RegisterType.Primitive PrimitiveType.S16 ->
+                destination.WriteRaw<int16>(0, ops16 (NumberValue.s16 xreg) (NumberValue.s16 yreg))
+            | RegisterType.Primitive(PrimitiveType.U32 | PrimitiveType.Char32) ->
+                destination.WriteRaw<uint32>(0, opu32 (NumberValue.u32 xreg) (NumberValue.u32 yreg))
+            | RegisterType.Primitive PrimitiveType.S32 ->
+                destination.WriteRaw<int32>(0, ops32 (NumberValue.s32 xreg) (NumberValue.s32 yreg))
+            | RegisterType.Primitive PrimitiveType.U64 ->
+                destination.WriteRaw<uint64>(0, opu64 (NumberValue.u64 xreg) (NumberValue.u64 yreg))
+            | RegisterType.Primitive PrimitiveType.S64 ->
+                destination.WriteRaw<int64>(0, ops64 (NumberValue.s64 xreg) (NumberValue.s64 yreg))
+            | RegisterType.Primitive PrimitiveType.UNative ->
                 destination.WriteRaw<unativeint>(0, opunative (NumberValue.unative xreg) (NumberValue.unative yreg))
-            | PrimitiveType.SNative ->
+            | RegisterType.Primitive PrimitiveType.SNative ->
                 destination.WriteRaw<nativeint>(0, opsnative (NumberValue.snative xreg) (NumberValue.snative yreg))
-            | PrimitiveType.F32 -> destination.WriteRaw<single>(0, opf32 (NumberValue.f32 xreg) (NumberValue.f32 yreg))
-            | PrimitiveType.F64 -> destination.WriteRaw<double>(0, opf64 (NumberValue.f64 xreg) (NumberValue.f64 yreg))
+            | RegisterType.Primitive PrimitiveType.F32 ->
+                destination.WriteRaw<single>(0, opf32 (NumberValue.f32 xreg) (NumberValue.f32 yreg))
+            | RegisterType.Primitive PrimitiveType.F64 ->
+                destination.WriteRaw<double>(0, opf64 (NumberValue.f64 xreg) (NumberValue.f64 yreg))
+            | RegisterType.Pointer ->
+                // TODO: Fix, pointer addition should work with size of type that is pointed to (e.g. an int pointer + 1 should point to the next int)
+                match xreg.RegisterType, yreg.RegisterType with
+                | RegisterType.Pointer, _ ->
+                    match xreg.RegisterValue.ReadRef 0 with
+                    | RuntimeObject.UnsafePointer ptr ->
+                        let amount = NumberValue.s32 yreg
+                        destination.WriteRef(0, RuntimeObject.UnsafePointer { RuntimeStruct.RawData = ptr.RawData.Slice amount; References = ptr.References.Slice amount })
+                    | _ ->
+                        failwith "TODO: Unexpected object reference"
+                | _, RegisterType.Pointer ->
+                    failwith "TODO: Handle yreg pointer"
+                | _, _ ->
+                    invalidOp "Conversion of arbitrary integers to pointers is not yet supported"
+            | RegisterType.Object ->
+                noReferenceType()
 
         let inline private unop opu8 ops8 opu16 ops16 opu32 ops32 opu64 ops64 opunative opsnative opf32 opf64 vtype register (destination: inref<RuntimeStruct>) =
             let value = &register.RegisterValue
             match vtype with
-            | PrimitiveType.S8 -> destination.WriteRaw<int8>(0, ops8(value.ReadRaw<int8> 0))
-            | PrimitiveType.U8
-            | PrimitiveType.Bool -> destination.WriteRaw<uint8>(0, opu8(value.ReadRaw<uint8> 0))
-            | PrimitiveType.S16 -> destination.WriteRaw<int16>(0, ops16(value.ReadRaw<int16> 0))
-            | PrimitiveType.U16
-            | PrimitiveType.Char16 -> destination.WriteRaw<uint16>(0, opu16(value.ReadRaw<uint16> 0))
-            | PrimitiveType.S32 -> destination.WriteRaw<int32>(0, ops32(value.ReadRaw<int32> 0))
-            | PrimitiveType.U32
-            | PrimitiveType.Char32 -> destination.WriteRaw<uint32>(0, opu32(value.ReadRaw<uint32> 0))
-            | PrimitiveType.S64 -> destination.WriteRaw<int64>(0, ops64(value.ReadRaw<int64> 0))
-            | PrimitiveType.U64 -> destination.WriteRaw<uint64>(0, opu64(value.ReadRaw<uint64> 0))
-            | PrimitiveType.SNative -> destination.WriteRaw<nativeint>(0, opsnative(value.ReadRaw<nativeint> 0))
-            | PrimitiveType.UNative -> destination.WriteRaw<unativeint>(0, opunative(value.ReadRaw<unativeint> 0))
-            | PrimitiveType.F32 -> destination.WriteRaw<single>(0, opf32(value.ReadRaw<single> 0))
-            | PrimitiveType.F64 -> destination.WriteRaw<double>(0, opf64(value.ReadRaw<double> 0))
+            | RegisterType.Primitive PrimitiveType.S8 -> destination.WriteRaw<int8>(0, ops8(value.ReadRaw<int8> 0))
+            | RegisterType.Primitive PrimitiveType.U8
+            | RegisterType.Primitive PrimitiveType.Bool -> destination.WriteRaw<uint8>(0, opu8(value.ReadRaw<uint8> 0))
+            | RegisterType.Primitive PrimitiveType.S16 -> destination.WriteRaw<int16>(0, ops16(value.ReadRaw<int16> 0))
+            | RegisterType.Primitive PrimitiveType.U16
+            | RegisterType.Primitive PrimitiveType.Char16 -> destination.WriteRaw<uint16>(0, opu16(value.ReadRaw<uint16> 0))
+            | RegisterType.Primitive PrimitiveType.S32 -> destination.WriteRaw<int32>(0, ops32(value.ReadRaw<int32> 0))
+            | RegisterType.Primitive PrimitiveType.U32
+            | RegisterType.Primitive PrimitiveType.Char32 -> destination.WriteRaw<uint32>(0, opu32(value.ReadRaw<uint32> 0))
+            | RegisterType.Primitive PrimitiveType.S64 -> destination.WriteRaw<int64>(0, ops64(value.ReadRaw<int64> 0))
+            | RegisterType.Primitive PrimitiveType.U64 -> destination.WriteRaw<uint64>(0, opu64(value.ReadRaw<uint64> 0))
+            | RegisterType.Primitive PrimitiveType.SNative -> destination.WriteRaw<nativeint>(0, opsnative(value.ReadRaw<nativeint> 0))
+            | RegisterType.Primitive PrimitiveType.UNative -> destination.WriteRaw<unativeint>(0, opunative(value.ReadRaw<unativeint> 0))
+            | RegisterType.Primitive PrimitiveType.F32 -> destination.WriteRaw<single>(0, opf32(value.ReadRaw<single> 0))
+            | RegisterType.Primitive PrimitiveType.F64 -> destination.WriteRaw<double>(0, opf64(value.ReadRaw<double> 0))
 
         let add vtype xreg yreg (destination: inref<_>) =
             binop (+) (+) (+) (+) (+) (+) (+) (+) (+) (+) (+) (+) vtype xreg yreg &destination
@@ -445,42 +468,52 @@ module Interpreter =
             else raise(NotImplementedException "Integer division that cannot throw on division by zero is not implemented")
 
         let div vtype xreg yreg (destination: inref<_>) =
-            binop (integerDivideOperation (/)) (integerDivideOperation (/)) (integerDivideOperation (/)) (integerDivideOperation (/)) (integerDivideOperation (/)) (integerDivideOperation (/)) (integerDivideOperation (/)) (integerDivideOperation (/)) (integerDivideOperation (/)) (integerDivideOperation (/)) (/) (/) vtype xreg yreg &destination
+            binop (integerDivideOperation (/)) (integerDivideOperation (/)) (integerDivideOperation (/))
+                (integerDivideOperation (/)) (integerDivideOperation (/)) (integerDivideOperation (/))
+                (integerDivideOperation (/)) (integerDivideOperation (/)) (integerDivideOperation (/))
+                (integerDivideOperation (/)) (/) (/) vtype xreg yreg &destination
 
         let rem vtype xreg yreg (destination: inref<_>) =
-            binop (integerDivideOperation (%)) (integerDivideOperation (%)) (integerDivideOperation (%)) (integerDivideOperation (%)) (integerDivideOperation (%)) (integerDivideOperation (%)) (integerDivideOperation (%)) (integerDivideOperation (%)) (integerDivideOperation (%)) (integerDivideOperation (%)) (/) (/) vtype xreg yreg &destination
+            binop (integerDivideOperation (%)) (integerDivideOperation (%)) (integerDivideOperation (%))
+                (integerDivideOperation (%)) (integerDivideOperation (%)) (integerDivideOperation (%))
+                (integerDivideOperation (%)) (integerDivideOperation (%)) (integerDivideOperation (%))
+                (integerDivideOperation (%)) (/) (/) vtype xreg yreg &destination
 
         let private bitf32 operation = fun (Reinterpret.F32 x) (Reinterpret.F32 y) -> Reinterpret.(|U32|) (operation x y)
         let private bitf64 operation = fun (Reinterpret.F64 x) (Reinterpret.F64 y) -> Reinterpret.(|U64|) (operation x y)
 
         let ``and`` vtype xreg yreg (destination: inref<_>) =
-            binop (&&&) (&&&) (&&&) (&&&) (&&&) (&&&) (&&&) (&&&) (&&&) (&&&) (bitf32 (&&&)) (bitf64 (&&&)) vtype xreg yreg &destination
+            binop (&&&) (&&&) (&&&) (&&&) (&&&) (&&&) (&&&) (&&&) (&&&) (&&&) (bitf32 (&&&)) (bitf64 (&&&))
+                (RegisterType.Primitive vtype) xreg yreg &destination
 
         let ``or`` vtype xreg yreg (destination: inref<_>) =
-            binop (|||) (|||) (|||) (|||) (|||) (|||) (|||) (|||) (|||) (|||) (bitf32 (|||)) (bitf64 (|||)) vtype xreg yreg &destination
+            binop (|||) (|||) (|||) (|||) (|||) (|||) (|||) (|||) (|||) (|||) (bitf32 (|||)) (bitf64 (|||))
+                (RegisterType.Primitive vtype) xreg yreg &destination
 
         //let ``not`` xreg yreg rreg = unop (~~~) (~~~) (~~~) (~~~) (~~~) (~~~) (~~~) (~~~) (~~~) (~~~) xreg yreg rreg
 
         let xor vtype xreg yreg (destination: inref<_>) =
-            binop (^^^) (^^^) (^^^) (^^^) (^^^) (^^^) (^^^) (^^^) (^^^) (^^^) (bitf32 (^^^)) (bitf64 (^^^)) vtype xreg yreg &destination
+            binop (^^^) (^^^) (^^^) (^^^) (^^^) (^^^) (^^^) (^^^) (^^^) (^^^) (bitf32 (^^^)) (bitf64 (^^^))
+                (RegisterType.Primitive vtype) xreg yreg &destination
 
         let inline private oneop (op: _ -> _ -> _) = op LanguagePrimitives.GenericOne
 
         let inline private increment value = oneop (+) value
 
         let incr vtype register (destination: inref<_>) =
-            unop increment increment increment increment increment increment increment increment increment increment increment increment vtype register &destination
+            unop increment increment increment increment increment increment increment increment increment increment increment
+                increment vtype register &destination
 
         let inline private decrement value = oneop (-) value
 
         let decr vtype register (destination: inref<_>) =
-            unop decrement decrement decrement decrement decrement decrement decrement decrement decrement decrement decrement decrement vtype register &destination
+            unop decrement decrement decrement decrement decrement decrement decrement decrement decrement decrement decrement
+                decrement vtype register &destination
 
         let not vtype register (destination: inref<_>) =
             unop (~~~) (~~~) (~~~) (~~~) (~~~) (~~~) (~~~) (~~~) (~~~) (~~~)
-                (fun (Reinterpret.F32 i) ->  Reinterpret.(|U32|) (~~~i))
-                (fun (Reinterpret.F64 i) -> Reinterpret.(|U64|) (~~~i))
-                vtype register &destination
+                (fun (Reinterpret.F32 i) ->  Reinterpret.(|U32|) (~~~i)) (fun (Reinterpret.F64 i) -> Reinterpret.(|U64|) (~~~i))
+                (RegisterType.Primitive vtype) register &destination
 
         let inline private rotop sh8 sh16 sh32 sh64 shnative vtype amount register (destination: inref<RuntimeStruct>) =
             let amount' = NumberValue.s32 amount
@@ -841,8 +874,8 @@ module Interpreter =
 
             let inline (|Method|) mindex: RuntimeMethod = frame'.CurrentModule.InitializeMethod mindex
             let inline (|Field|) findex: RuntimeField = frame'.CurrentModule.InitializeField findex
-            let inline (|DeclaringType|) m: RuntimeTypeDefinition = (^Member : (member DeclaringType : RuntimeTypeDefinition) m)
             let inline (|TypeSignature|) tindex: AnyType = frame'.CurrentModule.TypeSignatureAt tindex
+            let inline (|RegisterType|) (TypeSignature rtype) = anyTypeToRegisterType rtype
             let inline (|TypeLayout|) (t: RuntimeTypeDefinition) = t.Layout
             let inline (|Data|) dindex: ImmutableArray<_> = frame'.CurrentModule.DataAt dindex
             let inline (|BranchTarget|) (target: BlockOffset) = Checked.(+) frame'.BlockIndex target
@@ -894,10 +927,15 @@ module Interpreter =
                 frame'.TemporaryRegisters.Add register
                 register
 
-            let inline createReferenceRegister()=
+            let inline createReferenceRegister() =
                 let register = RuntimeRegister.Object()
                 frame'.TemporaryRegisters.Add register
                 register
+
+            let inline createTypedRegister rtype =
+                match rtype with
+                | RegisterType.Primitive prim -> createPrimitiveRegister prim
+                | RegisterType.Pointer | RegisterType.Object -> createReferenceRegister()
 
             try
                 let instr = frame'.CurrentBlock.Instructions.[frame'.InstructionIndex]
@@ -920,38 +958,38 @@ module Interpreter =
                     |> RuntimeRegister.clone
                     |> frame'.TemporaryRegisters.Add
                 // TODO: Create common helper function for arithmetic operations, and don't use inref<_> since RuntimeRegister can be used directly
-                | Add(ValidArithmeticFlags flags, vtype, Register x, Register y) ->
-                    let destination = createPrimitiveRegister vtype
+                | Add(ValidArithmeticFlags flags, RegisterType vtype, Register x, Register y) ->
+                    let destination = createTypedRegister vtype
                     if isFlagSet ArithmeticFlags.ThrowOnOverflow flags
                     then Arithmetic.Checked.add vtype x y &destination.RegisterValue
                     else Arithmetic.add vtype x y &destination.RegisterValue
-                | Sub(ValidArithmeticFlags flags, vtype, Register x, Register y) ->
-                    let destination = createPrimitiveRegister vtype
+                | Sub(ValidArithmeticFlags flags, RegisterType vtype, Register x, Register y) ->
+                    let destination = createTypedRegister vtype
                     if isFlagSet ArithmeticFlags.ThrowOnOverflow flags
                     then Arithmetic.Checked.sub vtype x y &destination.RegisterValue
                     else Arithmetic.sub vtype x y &destination.RegisterValue
-                | Mul(ValidArithmeticFlags flags, vtype, Register x, Register y) ->
-                    let destination = createPrimitiveRegister vtype
+                | Mul(ValidArithmeticFlags flags, RegisterType vtype, Register x, Register y) ->
+                    let destination = createTypedRegister vtype
                     if isFlagSet ArithmeticFlags.ThrowOnOverflow flags
                     then Arithmetic.Checked.mul vtype x y &destination.RegisterValue
                     else Arithmetic.mul vtype x y &destination.RegisterValue
-                | Div(ValidArithmeticFlags flags, vtype, Register x, Register y) ->
-                    let destination = createPrimitiveRegister vtype
+                | Div(ValidArithmeticFlags flags, RegisterType vtype, Register x, Register y) ->
+                    let destination = createTypedRegister vtype
                     if isFlagSet ArithmeticFlags.ThrowOnDivideByZero flags
                     then Arithmetic.Checked.div vtype x y &destination.RegisterValue
                     else Arithmetic.div vtype x y &destination.RegisterValue
-                | Rem(ValidArithmeticFlags flags, vtype, Register x, Register y) ->
-                    let destination = createPrimitiveRegister vtype
+                | Rem(ValidArithmeticFlags flags, RegisterType vtype, Register x, Register y) ->
+                    let destination = createTypedRegister vtype
                     if isFlagSet ArithmeticFlags.ThrowOnDivideByZero flags
                     then Arithmetic.Checked.rem vtype x y &destination.RegisterValue
                     else Arithmetic.rem vtype x y &destination.RegisterValue
-                | Incr(ValidArithmeticFlags flags, vtype, Register register) ->
-                    let destination = createPrimitiveRegister vtype
+                | Incr(ValidArithmeticFlags flags, RegisterType vtype, Register register) ->
+                    let destination = createTypedRegister vtype
                     if isFlagSet ArithmeticFlags.ThrowOnOverflow flags
                     then Arithmetic.Checked.incr vtype register &destination.RegisterValue
                     else Arithmetic.incr vtype register &destination.RegisterValue
-                | Decr(ValidArithmeticFlags flags, vtype, Register register) ->
-                    let destination = createPrimitiveRegister vtype
+                | Decr(ValidArithmeticFlags flags, RegisterType vtype, Register register) ->
+                    let destination = createTypedRegister vtype
                     if isFlagSet ArithmeticFlags.ThrowOnOverflow flags
                     then Arithmetic.Checked.decr vtype register &destination.RegisterValue
                     else Arithmetic.decr vtype register &destination.RegisterValue
