@@ -351,23 +351,31 @@ let code: Parser<ParsedCode, _> =
         withThreeRegisters "obj.arr.set" InstructionSet.Obj_arr_set
 
         let arithmeticUnaryInstruction name flags instr =
-            pipe3 flags tprimitive localCodeRegister <| fun aflags vtype reg rlookup _ errors _ ->
+            pipe3 flags symbol localCodeRegister <| fun aflags vtype reg rlookup resolver errors _ ->
                 voptional {
+                    let! vtype' = lookupTypeSignature resolver errors vtype
                     let! reg' = lookupRegisterName rlookup errors reg
-                    return instr(aflags, vtype, reg')
+                    return instr(aflags, vtype', reg')
                 }
             |> addInstructionParser name
 
         arithmeticUnaryInstruction "incr" commonArithmeticFlags InstructionSet.Incr
         arithmeticUnaryInstruction "decr" commonArithmeticFlags InstructionSet.Decr
-        arithmeticUnaryInstruction "obj.arr.len" commonArithmeticFlags InstructionSet.Obj_arr_len
+
+        pipe3 commonArithmeticFlags tprimitive localCodeRegister <| fun aflags vtype reg rlookup _ errors _ ->
+            voptional {
+                let! reg' = lookupRegisterName rlookup errors reg
+                return InstructionSet.Obj_arr_len(aflags, vtype, reg')
+            }
+        |> addInstructionParser "obj.arr.len"
 
         let arithmeticBinaryInstruction name flags instr =
-            pipe4 flags tprimitive localCodeRegister localCodeRegister <| fun aflags vtype xreg yreg rlookup _ errors _ ->
+            pipe4 flags symbol localCodeRegister localCodeRegister <| fun aflags vtype xreg yreg rlookup resolver errors _ ->
                 voptional {
+                    let! vtype' = lookupTypeSignature resolver errors vtype
                     let! xreg' = lookupRegisterName rlookup errors xreg
                     let! yreg' = lookupRegisterName rlookup errors yreg
-                    return instr(aflags, vtype, xreg', yreg')
+                    return instr(aflags, vtype', xreg', yreg')
                 }
             |> addInstructionParser name
 

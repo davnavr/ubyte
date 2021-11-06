@@ -228,10 +228,10 @@ let instructionPrimitiveType source = parsedPrimitiveType (bits1 source) id (fai
 
 let instruction source =
     let inline arithmeticUnaryOp instr: Instruction =
-        instr(bits1 source, instructionPrimitiveType source, index source)
+        instr(bits1 source, index source, index source)
 
     let inline arithmeticBinaryOp instr: Instruction =
-        instr(bits1 source, instructionPrimitiveType source, index source, index source)
+        instr(bits1 source, index source, index source, index source)
 
     let inline bitwiseUnaryOp instr: Instruction =
         instr(instructionPrimitiveType source, index source)
