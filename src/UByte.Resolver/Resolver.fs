@@ -33,10 +33,19 @@ module private Helpers =
 type ResolvedModule =
     val private source : Module
     val private importedModuleLookup : ModuleIndex -> ResolvedModule
+    val private moduleResolvedEvent : Event<ResolvedModule>
     val private typeDefinitionLookup : TypeDefinitionIndex -> ResolvedTypeDefinition
+    val private typeResolvedEvent : Event<ResolvedTypeDefinition>
     val private definedMethodLookup : MethodIndex -> ResolvedMethod
+    val private methodResolvedEvent : Event<ResolvedMethod>
     val private definedFieldLookup : FieldIndex -> ResolvedField
+    val private fieldResolvedEvent : Event<ResolvedField>
     val private typeNameLookup : Dictionary<struct(string * string), ResolvedTypeDefinition>
+
+    member this.ModuleResolved = this.moduleResolvedEvent.Publish
+    member this.TypeResolved = this.typeResolvedEvent.Publish
+    member this.MethodResolved = this.methodResolvedEvent.Publish
+    member this.FieldResolved = this.fieldResolvedEvent.Publish
 
 and [<Sealed>] ResolvedTypeDefinition =
     val DeclaringModule : ResolvedModule
@@ -145,35 +154,49 @@ type ResolvedModule with
           importedModuleLookup =
             let imports = source.Imports.ImportedModules
             createIndexedLookup imports.Length <| fun (Index i) ->
-                if i = 0u
-                then this
-                else resolver imports.[Checked.int32 i - 1]
+                if i = 0u then
+                    this
+                else
+                    let rm = resolver imports.[Checked.int32 i - 1]
+                    this.moduleResolvedEvent.Trigger rm
+                    rm
+          moduleResolvedEvent = Event<_>()
           typeDefinitionLookup =
             let imports = source.Imports.ImportedTypes
             let definitions = source.Definitions.DefinedTypes
             createDefinitionOrImportLookup definitions.Length imports.Length
-                (fun i i' -> ResolvedTypeDefinition(this, definitions.[i], i'))
+                (fun i i' ->
+                    let rt = ResolvedTypeDefinition(this, definitions.[i], i')
+                    this.typeResolvedEvent.Trigger rt
+                    rt)
                 (fun i _ ->
                     let t = imports.[Checked.int32 i]
                     let owner = this.ModuleAt t.Module
-                    owner.FindType(this.NamespaceAt t.TypeNamespace, this.IdentifierAt t.TypeName)) 
+                    owner.FindType(this.NamespaceAt t.TypeNamespace, this.IdentifierAt t.TypeName))
+          typeResolvedEvent = Event<_>()
           definedMethodLookup =
             let imports = source.Imports.ImportedMethods
             let definitions = source.Definitions.DefinedMethods
             createDefinitionOrImportLookup definitions.Length imports.Length
                 (fun i index ->
                     let method = definitions.[i]
-                    ResolvedMethod(this.TypeAt method.MethodOwner, method, index))
+                    let rm = ResolvedMethod(this.TypeAt method.MethodOwner, method, index)
+                    this.methodResolvedEvent.Trigger rm
+                    rm)
                 (fun i _ ->
                     let m = imports.[Checked.int32 i]
                     let owner = this.TypeAt m.MethodOwner
                     owner.FindMethod(rm.IdentifierAt m.MethodName))
+          methodResolvedEvent = Event<_>()
           definedFieldLookup =
             let owners = source.Definitions.DefinedTypes
             let fields = source.Definitions.DefinedFields
-            createIndexedLookup fields.Length <| fun (Index i as i') ->
+            createIndexedLookup fields.Length <| fun (Index i as i') -> // TODO: Support lookup for field imports in resolver.
                 let field = fields.[Checked.int32 i]
                 //let (Index owner) = f.FieldOwner
                 //let n = owners.[Checked.int32 owner].Fields.IndexOf i' // Won't work for inherited types
-                ResolvedField(this.TypeAt field.FieldOwner, field, i')
+                let rf = ResolvedField(this.TypeAt field.FieldOwner, field, i')
+                this.fieldResolvedEvent.Trigger rf
+                rf
+          fieldResolvedEvent = Event<_>()
           typeNameLookup = Dictionary() }

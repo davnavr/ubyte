@@ -67,10 +67,10 @@ type TypeNotFoundException =
     member TypeName : string
 
 type ResolvedModule with
-    member ModuleResolved : IEvent<ResolvedModule>
-    member TypeResolved : IEvent<ResolvedTypeDefinition>
-    member MethodResolved : IEvent<ResolvedMethod>
-    member FieldResolved : IEvent<ResolvedField>
+    [<CLIEvent>] member ModuleResolved : IEvent<ResolvedModule>
+    [<CLIEvent>] member TypeResolved : IEvent<ResolvedTypeDefinition>
+    [<CLIEvent>] member MethodResolved : IEvent<ResolvedMethod>
+    [<CLIEvent>] member FieldResolved : IEvent<ResolvedField>
 
     member TypeAt : index: TypeDefinitionIndex -> ResolvedTypeDefinition
     member MethodAt : index: MethodIndex -> ResolvedMethod
