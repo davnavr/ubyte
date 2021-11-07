@@ -200,13 +200,12 @@ type ResolvedTypeDefinition with
             lazy
                 let lookup = Dictionary overrides.Length
                 let inline (|Method|) mindex = rm.MethodAt mindex
-                Seq.iter
-                    (fun { MethodOverride.Declaration = Method decl; Implementation = Method impl } ->
-                        // TODO: Check that owner of decl is an inherited type
-                        // TODO: Check that impl is owned by this type
-                        // TODO: Check that decl and impl are different
-                        lookup.Add(decl, impl))
-                    overrides
+                for i = 0 to overrides.Length - 1 do
+                    let { MethodOverride.Declaration = Method decl; Implementation = Method impl } = overrides.[i]
+                    // TODO: Check that owner of decl is an inherited type
+                    // TODO: Check that impl is owned by this type
+                    // TODO: Check that decl and impl are different
+                    lookup.Add(decl, impl)
                 lookup }
 
 type ResolvedMethod with
