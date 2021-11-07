@@ -10,8 +10,8 @@ open UByte.Format.Model
 type ResolvedModule =
     new: Module * importer: (ModuleIdentifier -> ResolvedModule) -> ResolvedModule
 
+    member Identifier : ModuleIdentifier
     member Name : string
-    member Version : VersionNumbers
 
     override ToString: unit -> string
 
@@ -21,6 +21,7 @@ type ResolvedMethod =
     member IsInstance : bool
     member IsConstructor : bool
     member IsVirtual : bool
+    member IsExternal : bool
     member Visibility : VisibilityFlags
 
     override ToString: unit -> string
@@ -37,7 +38,8 @@ type ResolvedTypeDefinition =
     //member Namespace : ImmutableArray<string>
     member Name : string
     member DeclaringModule : ResolvedModule
-    member InheritedTypes : ImmutableArray<ResolvedTypeDefinition>
+    /// The types that the current type directly inherits from.
+    member BaseTypes : ImmutableArray<ResolvedTypeDefinition>
     member VTable: IReadOnlyDictionary<ResolvedMethod, ResolvedMethod>
 
     member FindMethod : name: string -> ResolvedMethod
@@ -56,11 +58,15 @@ type ResolvedMethod with
 type ModuleNotFoundException =
     inherit Exception
 
-    member Name : ModuleIdentifier
+    new: identifier: ModuleIdentifier * message: string -> ModuleNotFoundException
+
+    member Identifier : ModuleIdentifier
 
 [<Sealed; Class>]
 type TypeNotFoundException =
     inherit Exception
+
+    new: ResolvedModule * typeNamespace: string * typeName: string * message: string -> TypeNotFoundException
 
     member Module : ResolvedModule
     member TypeNamespace : string

@@ -3,6 +3,8 @@
 open System
 open System.Collections.Immutable
 open System.Collections.Generic
+open System.Runtime.CompilerServices
+open System.Text
 
 open UByte.Format.Model
 
@@ -28,7 +30,6 @@ module private Helpers =
             then importInitializer i index
             else definedInitializer (i - importCount) index
 
-
 [<Sealed>]
 type ResolvedModule =
     val private source : Module
@@ -42,49 +43,98 @@ type ResolvedModule =
     val private fieldResolvedEvent : Event<ResolvedField>
     val private typeNameLookup : Dictionary<struct(string * string), ResolvedTypeDefinition>
 
-    member this.ModuleResolved = this.moduleResolvedEvent.Publish
-    member this.TypeResolved = this.typeResolvedEvent.Publish
-    member this.MethodResolved = this.methodResolvedEvent.Publish
-    member this.FieldResolved = this.fieldResolvedEvent.Publish
+    member this.Identifier = this.source.Header.Module
+    member this.Name = this.Identifier.ModuleName.ToString()
+
+    [<CLIEvent>] member this.ModuleResolved = this.moduleResolvedEvent.Publish
+    [<CLIEvent>] member this.TypeResolved = this.typeResolvedEvent.Publish
+    [<CLIEvent>] member this.MethodResolved = this.methodResolvedEvent.Publish
+    [<CLIEvent>] member this.FieldResolved = this.fieldResolvedEvent.Publish
+
+    member this.IdentifierAt index = this.source.Identifiers.[index]
+
+    member this.NamespaceAt(ItemIndex i: NamespaceIndex): string =
+        this.source.Namespaces.[i] |> Seq.map this.IdentifierAt |> String.concat "::" // TODO: Cache namespaces
+
+    override this.ToString() = sprintf "(%s, v%O)" this.Name this.Identifier.Version
 
 and [<Sealed>] ResolvedTypeDefinition =
-    val DeclaringModule : ResolvedModule
+    val private rmodule : ResolvedModule
     val private source : TypeDefinition
     val private index : TypeDefinitionIndex
+    val private specifiedInheritedTypes : Lazy<ImmutableArray<ResolvedTypeDefinition>>
+    val private vtable : Lazy<Dictionary<ResolvedMethod, ResolvedMethod>>
+
+    member this.DeclaringModule = this.rmodule
+    member this.BaseTypes = this.specifiedInheritedTypes.Value
+    member this.VTable = this.vtable.Value :> IReadOnlyDictionary<_, _>
+    member this.Name = this.DeclaringModule.IdentifierAt this.source.TypeName
+    member this.Namespace = this.DeclaringModule.NamespaceAt this.source.TypeNamespace
+
+    override this.ToString() =
+        StringBuilder(this.DeclaringModule.ToString())
+            .Append(if this.Namespace.Length > 0 then "::" + this.Namespace else String.Empty)
+            .Append("::")
+            .Append(this.Name)
+            .ToString()
 
 and [<Sealed>] ResolvedMethod =
-    val DeclaringType : ResolvedTypeDefinition
+    val private owner : ResolvedTypeDefinition
     val private source : Method
     val private index : MethodIndex
 
+    member this.DeclaringType = this.owner
+    member this.DeclaringModule = this.DeclaringType.DeclaringModule
+    member this.Name = this.DeclaringModule.IdentifierAt this.source.MethodName
+    member this.Flags = this.source.MethodFlags
+    member this.IsInstance = isFlagSet MethodFlags.Instance this.Flags
+    member this.IsConstructor = isFlagSet MethodFlags.ConstructorMask this.Flags
+    member this.IsVirtual = isFlagSet MethodFlags.Virtual this.Flags
+    member this.IsExternal = match this.source.Body with | MethodBody.External _ -> true | _ -> false
+
+    override this.ToString() =
+        let name = this.Name
+        let t = System.Text.StringBuilder(this.DeclaringType.ToString()).Append('.')
+
+        if String.IsNullOrEmpty name then
+            let (Index i) = this.index
+            t.Append('<')
+                .Append(if this.IsConstructor then "constructor" else "method")
+                .Append('-')
+                .Append(i)
+                .Append('>')
+        else
+            t.Append name
+        |> ignore
+
+        // TODO: Include argument types in string.
+
+        t.ToString()
+
 and [<Sealed>] ResolvedField =
-    val DeclaringType : ResolvedTypeDefinition
+    val private parent : ResolvedTypeDefinition
     val private source : Field
     val private index : FieldIndex
 
-type ResolvedTypeDefinition with
-    new (rm, source, index) =
-        { DeclaringModule = rm
-          source = source
-          index = index }
+    member this.DeclaringType = this.parent
 
 type ResolvedMethod with
     new (rt, source, index) =
-        { DeclaringType = rt
+        { owner = rt
           source = source
           index = index }
 
 type ResolvedField with
     new (rt, source, index) =
-        { DeclaringType = rt
+        { parent = rt
           source = source
           index = index }
 
 [<Sealed>]
-type ModuleNotFoundException (name: ModuleIdentifier, message) =
+type ModuleNotFoundException (identifier: ModuleIdentifier, message) =
     inherit Exception(message)
 
-    member _.Name = name
+    member _.Identifier = identifier
 
 [<Sealed>]
 type TypeNotFoundException (m: ResolvedModule, typeNamespace, typeName, message: string) =
@@ -98,11 +148,8 @@ type ResolvedModule with
     member this.ModuleAt index = this.importedModuleLookup index
     member this.TypeAt index = this.typeDefinitionLookup index
     member this.MethodAt index = this.definedMethodLookup index
-    member this.IdentifierAt index = this.source.Identifiers.[index]
+    member this.FieldAt index = this.definedFieldLookup index
     member this.MethodSignatureAt(ItemIndex i: MethodSignatureIndex) = this.source.MethodSignatures.[i]
-
-    member this.NamespaceAt(ItemIndex i: NamespaceIndex): string =
-        this.source.Namespaces.[i] |> Seq.map this.IdentifierAt |> String.concat "::" // TODO: Cache namespaces
 
     member this.FindType(typeNamespace: string, typeName: string): ResolvedTypeDefinition =
         let key = struct(typeNamespace, typeName)
@@ -137,19 +184,60 @@ type ResolvedModule with
                 |> raise
         | true, existing -> existing
 
+type ResolvedTypeDefinition with
+    new (rm, source, index) =
+        { rmodule = rm
+          source = source
+          index = index
+          specifiedInheritedTypes =
+            let { TypeDefinition.InheritedTypes = indices } = source
+            lazy
+                let mutable inherited = Array.zeroCreate indices.Length
+                for i = 0 to inherited.Length - 1 do inherited.[i] <- rm.TypeAt indices.[i]
+                Unsafe.As<ResolvedTypeDefinition[], ImmutableArray<ResolvedTypeDefinition>> &inherited
+          vtable =
+            let { TypeDefinition.VTable = overrides } = source
+            lazy
+                let lookup = Dictionary overrides.Length
+                let inline (|Method|) mindex = rm.MethodAt mindex
+                Seq.iter
+                    (fun { MethodOverride.Declaration = Method decl; Implementation = Method impl } ->
+                        // TODO: Check that owner of decl is an inherited type
+                        // TODO: Check that impl is owned by this type
+                        // TODO: Check that decl and impl are different
+                        lookup.Add(decl, impl))
+                    overrides
+                lookup }
+
 type ResolvedMethod with
-    member this.DeclaringModule = (this.DeclaringType : ResolvedTypeDefinition).DeclaringModule
     member this.Visibility = this.source.MethodVisibility
-    member this.DeclaringType = this.DeclaringModule.TypeAt this.source.MethodOwner
     member this.Signature = this.DeclaringModule.MethodSignatureAt this.source.Signature
 
 type ResolvedField with
     member this.DeclaringModule = this.DeclaringType.DeclaringModule
-    member this.IsMutable = isFlagSet FieldFlags.Mutable this.source.FieldFlags
-    member this.IsStatic = isFlagSet FieldFlags.Static this.source.FieldFlags
+    member this.Name = this.DeclaringModule.IdentifierAt this.source.FieldName
+    member this.Flags = this.source.FieldFlags
+    member this.Visibility = this.source.FieldVisibility
+    member this.IsMutable = isFlagSet FieldFlags.Mutable this.Flags
+    member this.IsStatic = isFlagSet FieldFlags.Static this.Flags
+
+type ResolvedTypeDefinition with
+    member this.FindMethod name = // TODO: Figure out if methods defined in inherited class(es), note that this is used to resolve method references.
+        let methodis = this.source.Methods
+        let mutable result, i = ValueNone, 0
+
+        while i < methodis.Length && result.IsNone do
+            let m = this.DeclaringModule.MethodAt methodis.[i]
+            if m.Visibility <= VisibilityFlags.Public && m.Name = name then
+                result <- ValueSome m
+            i <- Checked.(+) i 1
+
+        match result with
+        | ValueSome m -> m
+        | ValueNone -> failwithf "TODO: Method not found %s" name
 
 type ResolvedModule with
-    new (source, resolver) as this =
+    new (source, importer) as this =
         { source = source
           importedModuleLookup =
             let imports = source.Imports.ImportedModules
@@ -157,7 +245,7 @@ type ResolvedModule with
                 if i = 0u then
                     this
                 else
-                    let rm = resolver imports.[Checked.int32 i - 1]
+                    let rm = importer imports.[Checked.int32 i - 1]
                     this.moduleResolvedEvent.Trigger rm
                     rm
           moduleResolvedEvent = Event<_>()
@@ -186,7 +274,7 @@ type ResolvedModule with
                 (fun i _ ->
                     let m = imports.[Checked.int32 i]
                     let owner = this.TypeAt m.MethodOwner
-                    owner.FindMethod(rm.IdentifierAt m.MethodName))
+                    owner.FindMethod(this.IdentifierAt m.MethodName))
           methodResolvedEvent = Event<_>()
           definedFieldLookup =
             let owners = source.Definitions.DefinedTypes
