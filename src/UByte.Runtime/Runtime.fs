@@ -1349,7 +1349,7 @@ type RecursiveInheritanceException (message, t: RuntimeTypeDefinition) =
     member _.Type = t
 
 [<NoComparison; NoEquality>]
-type InheritedTypeLayout =
+type InheritedTypeLayout = // TODO: Type layout should be esaily accessible via unmanaged pointers, as the GC needs access to this.
     { InheritedFieldCount: int32
       InheritedDataSize: int32
       InheritedReferencesLength: int32 }
