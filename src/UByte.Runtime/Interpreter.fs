@@ -18,6 +18,28 @@ open UByte.Runtime.MemoryManagement
 
 let inline isFlagSet flag value = value &&& flag = flag
 
+[<RequireQualifiedAccess; IsReadOnly; Struct; NoComparison; NoEquality>]
+type TypeLayout =
+    { /// The size, in bytes, of instances of the type.
+      Size: int32
+      Fields: Dictionary<ResolvedField, int32>
+      /// The offsets to the fields containing object references.
+      References: ImmutableArray<int32> }
+
+let private sizeOfType (md: ResolvedModule) (typeLayoutResolver: ResolvedTypeDefinition -> TypeLayout) ty =
+    match ty with
+    | AnyType.ValueType(ValueType.Primitive prim) ->
+        match prim with
+        | PrimitiveType.Bool | PrimitiveType.S8 | PrimitiveType.U8 -> 1
+        | PrimitiveType.S16 | PrimitiveType.U16 | PrimitiveType.Char16 -> 2
+        | PrimitiveType.S32 | PrimitiveType.U32 | PrimitiveType.Char32 | PrimitiveType.F32 -> 4
+        | PrimitiveType.S64 | PrimitiveType.U64 | PrimitiveType.F64 -> 8
+        | PrimitiveType.SNative | PrimitiveType.UNative -> sizeof<nativeint>
+    | AnyType.ValueType(ValueType.Defined tindex) ->
+        (md.TypeAt tindex |> typeLayoutResolver).Size
+    | AnyType.ReferenceType _ -> sizeof<ObjectReference>
+    | AnyType.ValueType(ValueType.UnsafePointer _) | AnyType.SafePointer _ -> sizeof<voidptr>
+
 [<RequireQualifiedAccess>]
 module private Array =
     let allocate (gc: IGarbageCollector) etype length =
@@ -59,6 +81,20 @@ type Register =
             | PrimitiveType.F32 -> string(Unsafe.As<_, single> &this.Value)
             | PrimitiveType.F64 -> string(Unsafe.As<_, double> &this.Value)
         | RegisterType.Object | RegisterType.Pointer -> sprintf "0x%016X" this.Value
+
+[<RequireQualifiedAccess>]
+module Register =
+    let ofRegisterType rtype = { Register.Value = Unchecked.defaultof<uint64>; Register.Type = rtype }
+
+    let ofTypeIndex (rm: ResolvedModule) typei =
+        match rm.TypeSignatureAt typei with
+        | AnyType.ValueType(ValueType.Primitive prim) ->
+            RegisterType.Primitive prim
+        | AnyType.ReferenceType _ ->
+            RegisterType.Object
+        | AnyType.SafePointer _ | AnyType.ValueType(ValueType.Defined _ | ValueType.UnsafePointer _) ->
+            RegisterType.Pointer
+        |> ofRegisterType
 
 let [<Literal>] private MaxStackCapacity = 0xFFFFF
 
@@ -149,9 +185,47 @@ module private InterpretRegister =
     let inline value<'Value when 'Value : unmanaged> (register: inref<Register>) =
         Unsafe.As<_, 'Value>(&Unsafe.AsRef(&register).Value)
 
+[<RequireQualifiedAccess>]
+module ExternalCode =
+    [<Literal>]
+    let private InternalCall = "runmdl"
+
+    let private lookup = Dictionary<struct(string * string), StackFrame -> unit>()
+
+    let private println (frame: StackFrame) =
+        failwith "TODO: How to print some other thing"
+        stdout.WriteLine()
+
+    do lookup.[(InternalCall, "testhelperprintln")] <- println
+    do lookup.[(InternalCall, "break")] <- fun _ -> System.Diagnostics.Debugger.Launch() |> ignore
+
+    let call library name =
+        match lookup.TryGetValue(struct(library, name)) with
+        | true, call' -> call'
+        | false, _ -> fun _ -> failwithf "TODO: Handle external calls to %s in %s" library name
+
 let private setupStackFrame (method: ResolvedMethod) (frame: StackFrame voption ref) (runExternalCode: byref<_ voption>) =
-    failwith "TODO: Setup stack frame"
-    ()
+    let inline createRegisterList (indices: ImmutableArray<_>) = Array.init indices.Length <| fun i ->
+        Register.ofTypeIndex method.DeclaringModule indices.[i]
+
+    let args = createRegisterList method.Signature.ParameterTypes
+    let returns = createRegisterList method.Signature.ReturnTypes
+
+    match method.Body with
+    | MethodBody.Defined codei ->
+        let code = method.DeclaringModule.CodeAt codei
+        frame.contents <- ValueSome(StackFrame(frame.Value, args, code.LocalCount, returns, code.Blocks, method))
+    | MethodBody.Abstract ->
+        if not method.IsVirtual then failwith "TODO: Error for abstract method must be virtual"
+        invalidOp(sprintf "Cannot directly call %O, use the call.virt instruction and related instructions instead" method)
+    | MethodBody.External(library, efunction) ->
+        let library' = method.DeclaringModule.IdentifierAt library
+        let efunction' = method.DeclaringModule.IdentifierAt efunction
+        let frame' = StackFrame(frame.Value, args, 0u, returns, ImmutableArray.Empty, method)
+        frame.contents <- ValueSome frame'
+        runExternalCode <- ValueSome <| fun (frame'': _ voption ref) ->
+            ExternalCode.call library' efunction' frame''.Value.Value
+            frame''.contents <- frame'.Previous
 
 let private interpret
     (gc: IGarbageCollector)
@@ -172,6 +246,8 @@ let private interpret
         let arguments' = current.ArgumentRegisters
         if arguments.Length < arguments'.Length then
             invalidOp(sprintf "Expected %i arguments but only %i were provided" arguments'.Length arguments.Length)
+        // TODO: Copy only the Value part of the argument register.
+        // TODO: Check that argument register types match.
         arguments.Span.CopyTo(Span arguments')
         current.ReturnRegisters
 
@@ -279,8 +355,38 @@ let moduleImportResolver (loader: ModuleIdentifier -> Module voption) =
         | ValueNone -> raise(ModuleNotFoundException(id, "Unable to find module " + string id))
     resolver.Value
 
-[<NoComparison; NoEquality>]
-type TypeLayout = { Size: int32; Fields: Dictionary<ResolvedField, int32> }
+let typeLayoutResolver() =
+    let lookup = Dictionary<ResolvedTypeDefinition, TypeLayout>()
+    let rec inner ty =
+        match lookup.TryGetValue ty with
+        | true, existing -> existing
+        | false, _ ->
+            // TODO: How to deal with the "Deadly Diamond of Death"
+            // TODO: Update format to allow specifying of HOW fields are inherited (e.g. a flag before each type index).
+            // TODO: In the future, check for recursion by ensuring that the list does not contain the current type
+            let mutable size = 0
+            let fields = Dictionary()
+            let references = ImmutableArray.CreateBuilder()
+
+            for baseType in ty.BaseTypes do
+                let inheritedLayout = inner baseType // DDD
+                for KeyValue(field, i) in inheritedLayout.Fields do
+                    fields.Add(field, size + i)
+                for offset in inheritedLayout.References do
+                    references.Add(size + offset)
+                size <- size + inheritedLayout.Size
+
+            for defined in ty.DefinedFields do
+                let fsize = sizeOfType ty.DeclaringModule inner defined.FieldType
+
+                match defined.FieldType with
+                | AnyType.ReferenceType _ -> references.Add size
+                | _ -> ()
+
+                size <- size + fsize
+
+            failwith "TODO: Calculate the layout"
+    inner
 
 [<Sealed>]
 type Runtime
@@ -292,6 +398,7 @@ type Runtime
     =
     let program = ResolvedModule(program, moduleImportResolver moduleImportLoader)
     let types = Dictionary<ObjectType, struct(ResolvedModule * AnyType)>()
+    let layouts = typeLayoutResolver()
 
     static member Initialize
         (

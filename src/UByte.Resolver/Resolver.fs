@@ -64,12 +64,14 @@ and [<Sealed>] ResolvedTypeDefinition =
     val private index : TypeDefinitionIndex
     val private specifiedInheritedTypes : Lazy<ImmutableArray<ResolvedTypeDefinition>>
     val private vtable : Lazy<Dictionary<ResolvedMethod, ResolvedMethod>>
+    val private fields : Lazy<ImmutableArray<ResolvedField>>
 
     member this.DeclaringModule = this.rmodule
     member this.BaseTypes = this.specifiedInheritedTypes.Value
     member this.VTable = this.vtable.Value :> IReadOnlyDictionary<_, _>
     member this.Name = this.DeclaringModule.IdentifierAt this.source.TypeName
     member this.Namespace = this.DeclaringModule.NamespaceAt this.source.TypeNamespace
+    member this.DefinedFields = this.fields.Value
 
     override this.ToString() =
         StringBuilder(this.DeclaringModule.ToString())
@@ -86,6 +88,7 @@ and [<Sealed>] ResolvedMethod =
     member this.DeclaringType = this.owner
     member this.DeclaringModule = this.DeclaringType.DeclaringModule
     member this.Name = this.DeclaringModule.IdentifierAt this.source.MethodName
+    member this.Body = this.source.Body
     member this.Flags = this.source.MethodFlags
     member this.IsInstance = isFlagSet MethodFlags.Instance this.Flags
     member this.IsConstructor = isFlagSet MethodFlags.ConstructorMask this.Flags
@@ -152,6 +155,7 @@ type ResolvedModule with
     member this.TypeSignatureAt(ItemIndex i: TypeSignatureIndex) = this.source.TypeSignatures.[i]
     member this.MethodSignatureAt(ItemIndex i: MethodSignatureIndex) = this.source.MethodSignatures.[i]
     member this.DataAt(ItemIndex i: DataIndex) = this.source.Data.[i]
+    member this.CodeAt(ItemIndex i: CodeIndex) = this.source.Code.[i]
 
     member this.FindType(typeNamespace: string, typeName: string): ResolvedTypeDefinition =
         let key = struct(typeNamespace, typeName)
@@ -208,7 +212,13 @@ type ResolvedTypeDefinition with
                     // TODO: Check that impl is owned by this type
                     // TODO: Check that decl and impl are different
                     lookup.Add(decl, impl)
-                lookup }
+                lookup
+          fields =
+            let indices = source.Fields
+            lazy
+                let mutable fields = Array.zeroCreate source.Fields.Length
+                for i = 0 to fields.Length - 1 do fields.[i] <- rm.FieldAt indices.[i]
+                Unsafe.As<ResolvedField[], ImmutableArray<ResolvedField>> &fields }
 
 type ResolvedMethod with
     member this.Visibility = this.source.MethodVisibility
@@ -217,6 +227,7 @@ type ResolvedMethod with
 type ResolvedField with
     member this.DeclaringModule = this.DeclaringType.DeclaringModule
     member this.Name = this.DeclaringModule.IdentifierAt this.source.FieldName
+    member this.FieldType = this.DeclaringModule.TypeSignatureAt this.source.FieldType
     member this.Flags = this.source.FieldFlags
     member this.Visibility = this.source.FieldVisibility
     member this.IsMutable = isFlagSet FieldFlags.Mutable this.Flags

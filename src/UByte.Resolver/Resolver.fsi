@@ -18,6 +18,7 @@ type ResolvedModule =
 [<Sealed>]
 type ResolvedMethod =
     member Name : string
+    member Body : MethodBody
     member IsInstance : bool
     member IsConstructor : bool
     member IsVirtual : bool
@@ -30,6 +31,7 @@ type ResolvedMethod =
 [<Sealed>]
 type ResolvedField =
     member Name : string
+    member FieldType : AnyType
     member IsStatic : bool
     member IsMutable : bool
     member Visibility : VisibilityFlags
@@ -42,6 +44,7 @@ type ResolvedTypeDefinition =
     /// The types that the current type directly inherits from.
     member BaseTypes : ImmutableArray<ResolvedTypeDefinition>
     member VTable: IReadOnlyDictionary<ResolvedMethod, ResolvedMethod>
+    member DefinedFields : ImmutableArray<ResolvedField>
 
     member FindMethod : name: string -> ResolvedMethod
 
@@ -87,7 +90,9 @@ type ResolvedModule with
 
     member TypeSignatureAt : index: TypeSignatureIndex -> AnyType
     member MethodSignatureAt : index: MethodSignatureIndex -> MethodSignature
+    member IdentifierAt : index: IdentifierIndex -> string
     member DataAt : index: DataIndex -> ImmutableArray<byte>
+    member CodeAt : index: CodeIndex -> Code
 
     /// Finds the first type defined in this module with the specified name.
     member FindType : typeNamespace: string * typeName: string -> ResolvedTypeDefinition
