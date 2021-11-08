@@ -6,16 +6,38 @@ open System.Collections.Generic
 open System.Collections.Immutable
 open System.Runtime.CompilerServices
 
+open Microsoft.FSharp.NativeInterop
+
 open UByte.Format.Model
 open UByte.Format.Model.InstructionSet
 
 open UByte.Resolver
 open UByte.Runtime.MemoryManagement
 
+#nowarn "9"
+
 let inline isFlagSet flag value = value &&& flag = flag
 
-[<Struct; NoComparison; NoEquality>]
-type Register = { mutable Value: unativeint; Type: RegisterType }
+[<RequireQualifiedAccess>]
+module private Array =
+    let allocate (gc: IGarbageCollector) etype length =
+        gc.Allocate(failwith "TODO: Get index for array type, not type of element", sizeof<int32> + (failwith "TODO: Get array element size" * length))
+
+    let length array =
+        ObjectReference.toVoidPtr array
+        |> NativePtr.ofVoidPtr<int32>
+        |> NativePtr.read
+
+    let address (ObjectReference addr) =
+        addr + nativeint sizeof<int32>
+        |> NativePtr.ofNativeInt<byte>
+        |> NativePtr.toVoidPtr
+
+[<RequireQualifiedAccess; Struct; NoComparison; NoEquality>]
+type Register =
+    { // Assumes that all integer types can fit in 64-bits.
+      mutable Value: uint64
+      Type: RegisterType }
 
 let [<Literal>] private MaxStackCapacity = 0xFFFFF
 
@@ -100,10 +122,15 @@ type StackFrame
             if current.IsSome then trace.Append Environment.NewLine |> ignore
         trace.ToString()
 
+/// Contains functions for retrieving values from registers.
+[<RequireQualifiedAccess>]
+module private InterpretRegister =
+    let inline value<'Value when 'Value : unmanaged> (register: inref<Register>) =
+        Unsafe.As<_, 'Value>(&Unsafe.AsRef(&register).Value)
+
 let private setupStackFrame (method: ResolvedMethod) (frame: StackFrame voption ref) (runExternalCode: byref<_ voption>) =
     failwith "TODO: Setup stack frame"
     ()
-
 
 let private interpret
     (gc: IGarbageCollector)
