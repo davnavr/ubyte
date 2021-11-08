@@ -8,7 +8,7 @@ open UByte.Format.Model
 
 [<Sealed>]
 type ResolvedModule =
-    new: Module * importer: (ModuleIdentifier -> ResolvedModule) -> ResolvedModule
+    new : Module * importer: (ModuleIdentifier -> ResolvedModule) -> ResolvedModule
 
     member Identifier : ModuleIdentifier
     member Name : string
@@ -58,7 +58,7 @@ type ResolvedMethod with
 type ModuleNotFoundException =
     inherit Exception
 
-    new: identifier: ModuleIdentifier * message: string -> ModuleNotFoundException
+    new : identifier: ModuleIdentifier * message: string -> ModuleNotFoundException
 
     member Identifier : ModuleIdentifier
 
@@ -66,7 +66,7 @@ type ModuleNotFoundException =
 type TypeNotFoundException =
     inherit Exception
 
-    new: ResolvedModule * typeNamespace: string * typeName: string * message: string -> TypeNotFoundException
+    new : ResolvedModule * typeNamespace: string * typeName: string * message: string -> TypeNotFoundException
 
     member Module : ResolvedModule
     member TypeNamespace : string

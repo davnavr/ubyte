@@ -7,6 +7,8 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="MemoryManagement.fsi" />
+    <Compile Include="MemoryManagement.fs" />
     <Compile Include="Runtime.fsi" />
     <Compile Include="Runtime.fs" />
 
