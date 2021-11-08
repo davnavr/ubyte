@@ -27,7 +27,7 @@ module ObjectReference =
 
 [<Interface>]
 type IGarbageCollector =
-    /// <summary>Allocates an object of the specified size.</summary>
+    /// <summary>Allocates an object of the specified size, without zeroing out memory.</summary>
     /// <param name="size">The size, in bytes, of the object to allocate.</param>
     /// <exception cref="T:System.ArgumentOutOfRangeException">Thrown when the <paramref name="size"/> is negative.</exception>
     abstract Allocate : ObjectType * size: int32 -> ObjectReference

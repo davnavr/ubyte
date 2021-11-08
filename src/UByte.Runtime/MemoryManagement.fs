@@ -95,22 +95,22 @@ type NaiveMarkAndSweep (threshold: uint32) =
             let oflags = &NaiveMarkAndSweep.ObjectFlags o
             oflags <- oflags ||| MarkAndSweepFlags.Marked
             for referenced in getReferencedObjects gc o do
-                let rflags = &NaiveMarkAndSweep.ObjectFlags referenced
-                if rflags &&& MarkAndSweepFlags.Marked = MarkAndSweepFlags.None then
+                if NaiveMarkAndSweep.ObjectFlags referenced &&& MarkAndSweepFlags.Marked = MarkAndSweepFlags.None then
                     unmarked.Push referenced
 
         // Sweep
-        let mutable current = first
+        let mutable current, previous = first, ObjectReference.Null
         while not current.IsNull do
             let (ByReference header) = ObjectReference.header<MarkAndSweepHeader> current
 
             if header.Flags &&& MarkAndSweepFlags.Marked = MarkAndSweepFlags.None then
                 if current = first then first <- header.Next
                 free<MarkAndSweepHeader> current
-                // TODO: Adjust next pointer of previous
+                if not previous.IsNull then NaiveMarkAndSweep.NextObject previous <- header.Next
 
             header.Flags <- header.Flags &&& (~~~MarkAndSweepFlags.Marked)
             if header.Next.IsNull then last <- current
+            previous <- current
             current <- header.Next
 
     interface IGarbageCollector with
