@@ -55,6 +55,8 @@ type ValueStack =
     new: size: int32 -> ValueStack
 
     member TryAllocate : size: int32 * address: outref<voidptr> -> bool
+    member SaveAllocations: unit -> unit
+    member FreeAllocations: unit -> unit
 
     override Finalize : unit -> unit
 

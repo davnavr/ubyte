@@ -147,15 +147,20 @@ type CollectionStrategies =
 type ValueStack (size: int32) =
     do if size <= 0 then raise(ArgumentOutOfRangeException(nameof size, size, "The size of the stack must be positive"))
     let start = Marshal.AllocHGlobal size
+    let previous = Stack<nativeint>()
     let mutable disposed = false
-    let mutable remaining = size
+    let mutable remaining = nativeint size
 
     member _.TryAllocate(size, address: outref<_>) =
-        if size < 0 then raise(ArgumentOutOfRangeException(nameof size, size, "The size to allocate cannot be negative"))
+        let size = nativeint size
+        if size < 0n then raise(ArgumentOutOfRangeException(nameof size, size, "The size to allocate cannot be negative"))
         if remaining >= size then
-            address <- NativePtr.ofNativeInt<byte>(start + nativeint size - nativeint remaining) |> NativePtr.toVoidPtr
+            address <- NativePtr.ofNativeInt<byte>(start + size - remaining) |> NativePtr.toVoidPtr
             true
         else false
+
+    member _.SaveAllocations() = previous.Push remaining
+    member _.FreeAllocations() = remaining <- previous.Pop()
 
     override stack.Finalize() = (stack :> IDisposable).Dispose()
 
@@ -163,6 +168,6 @@ type ValueStack (size: int32) =
         member stack.Dispose() =
             if not disposed then
                 Marshal.FreeHGlobal start
-                remaining <- 0
+                remaining <- 0n
                 disposed <- true
             GC.SuppressFinalize stack
