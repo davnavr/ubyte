@@ -39,6 +39,27 @@ type Register =
       mutable Value: uint64
       Type: RegisterType }
 
+    override this.ToString() =
+        match this.Type with
+        | RegisterType.Primitive prim ->
+            match prim with
+            | PrimitiveType.Bool -> sprintf "%b" (this.Value = 0UL)
+            | PrimitiveType.U8 -> sprintf "%iuy" (uint8 this.Value)
+            | PrimitiveType.S8 -> sprintf "%iy" (int8 this.Value)
+            | PrimitiveType.U16 -> sprintf "%ius" (uint16 this.Value)
+            | PrimitiveType.S16 -> sprintf "%is" (int16 this.Value)
+            | PrimitiveType.Char16 -> string(char this.Value)
+            | PrimitiveType.U32 -> sprintf "%iu" (uint32 this.Value)
+            | PrimitiveType.S32 -> string(int32 this.Value)
+            | PrimitiveType.Char32 -> System.Text.Rune(int32 this.Value).ToString()
+            | PrimitiveType.U64 -> sprintf "%iUL" this.Value
+            | PrimitiveType.S64 -> sprintf "%iL" (int64 this.Value)
+            | PrimitiveType.UNative -> sprintf "%iun" (unativeint this.Value)
+            | PrimitiveType.SNative -> sprintf "%in" (nativeint this.Value)
+            | PrimitiveType.F32 -> string(Unsafe.As<_, single> &this.Value)
+            | PrimitiveType.F64 -> string(Unsafe.As<_, double> &this.Value)
+        | RegisterType.Object | RegisterType.Pointer -> sprintf "0x%016X" this.Value
+
 let [<Literal>] private MaxStackCapacity = 0xFFFFF
 
 [<Sealed>]
