@@ -66,6 +66,10 @@ let main argv =
             | false, _ -> ValueNone
 
     let runtime =
-        Runtime.initialize (UByte.Format.ParseModule.fromPath program.FullName) moduleImportResolver
+        UByte.Runtime.Interpreter.Runtime.Initialize (
+            UByte.Format.ParseModule.fromPath program.FullName,
+            moduleImportResolver
+            // TODO: Allow selection of a GC strategy from command line options
+        )
 
     runtime.InvokeEntryPoint pargs

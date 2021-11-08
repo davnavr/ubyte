@@ -293,9 +293,16 @@ type Runtime
             if main.DeclaringModule <> program then
                 raise(MissingEntryPointException "The entry point method for a module must be defined in the module")
 
-            if main.Signature.ParameterTypes.Length <> 0 then failwith "TODO: ARGV is not yet supported"
+            let arguments =
+                if main.Signature.ParameterTypes.Length = 0 then
+                    ImmutableArray.Empty
+                else
+                    failwith "TODO: argv is not yet supported"
 
-            failwith "BAD"
-            -1
+            if main.Signature.ReturnTypes.Length > 1 then failwith "TODO: Error for multiple return values are not supported in entry point"
+
+            let results = interpret garbageCollectorStrategy arguments main
+
+            if Array.isEmpty results then 0 else int32 results.[0].Value
         | ValueNone ->
             raise(MissingEntryPointException "The entry point method of the module is not defined")
