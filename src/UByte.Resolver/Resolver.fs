@@ -151,6 +151,7 @@ type ResolvedModule with
     member this.FieldAt index = this.definedFieldLookup index
     member this.TypeSignatureAt(ItemIndex i: TypeSignatureIndex) = this.source.TypeSignatures.[i]
     member this.MethodSignatureAt(ItemIndex i: MethodSignatureIndex) = this.source.MethodSignatures.[i]
+    member this.DataAt(ItemIndex i: DataIndex) = this.source.Data.[i]
 
     member this.FindType(typeNamespace: string, typeName: string): ResolvedTypeDefinition =
         let key = struct(typeNamespace, typeName)

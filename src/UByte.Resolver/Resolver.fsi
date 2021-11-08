@@ -87,6 +87,7 @@ type ResolvedModule with
 
     member TypeSignatureAt : index: TypeSignatureIndex -> AnyType
     member MethodSignatureAt : index: MethodSignatureIndex -> MethodSignature
+    member DataAt : index: DataIndex -> ImmutableArray<byte>
 
     /// Finds the first type defined in this module with the specified name.
     member FindType : typeNamespace: string * typeName: string -> ResolvedTypeDefinition
