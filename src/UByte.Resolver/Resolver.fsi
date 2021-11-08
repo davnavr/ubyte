@@ -23,6 +23,7 @@ type ResolvedMethod =
     member IsVirtual : bool
     member IsExternal : bool
     member Visibility : VisibilityFlags
+    member Signature : MethodSignature
 
     override ToString: unit -> string
 
@@ -78,10 +79,13 @@ type ResolvedModule with
     [<CLIEvent>] member MethodResolved : IEvent<ResolvedMethod>
     [<CLIEvent>] member FieldResolved : IEvent<ResolvedField>
 
+    member EntryPoint : ResolvedMethod voption
+
     member TypeAt : index: TypeDefinitionIndex -> ResolvedTypeDefinition
     member MethodAt : index: MethodIndex -> ResolvedMethod
     member FieldAt : index: FieldIndex -> ResolvedField
 
+    member TypeSignatureAt : index: TypeSignatureIndex -> AnyType
     member MethodSignatureAt : index: MethodSignatureIndex -> MethodSignature
 
     /// Finds the first type defined in this module with the specified name.

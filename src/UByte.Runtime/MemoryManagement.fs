@@ -65,6 +65,7 @@ type MarkAndSweepHeader =
       Type: ObjectType
       mutable Next: ObjectReference }
 
+// TODO: When disposed or finalized, call Collect.
 [<Sealed>]
 type NaiveMarkAndSweep (threshold: uint32) =
     let mutable first = ObjectReference.Null
@@ -141,3 +142,27 @@ type NaiveMarkAndSweep (threshold: uint32) =
 type CollectionStrategies =
     static member NaiveMarkAndSweep threshold = NaiveMarkAndSweep threshold :> IGarbageCollector
     static member NaiveMarkAndSweep() = CollectionStrategies.NaiveMarkAndSweep(0xFFFu)
+
+[<Sealed>]
+type ValueStack (size: int32) =
+    do if size <= 0 then raise(ArgumentOutOfRangeException(nameof size, size, "The size of the stack must be positive"))
+    let start = Marshal.AllocHGlobal size
+    let mutable disposed = false
+    let mutable remaining = size
+
+    member _.TryAllocate(size, address: outref<_>) =
+        if size < 0 then raise(ArgumentOutOfRangeException(nameof size, size, "The size to allocate cannot be negative"))
+        if remaining >= size then
+            address <- NativePtr.ofNativeInt<byte>(start + nativeint size - nativeint remaining) |> NativePtr.toVoidPtr
+            true
+        else false
+
+    override stack.Finalize() = (stack :> IDisposable).Dispose()
+
+    interface IDisposable with
+        member stack.Dispose() =
+            if not disposed then
+                Marshal.FreeHGlobal start
+                remaining <- 0
+                disposed <- true
+            GC.SuppressFinalize stack

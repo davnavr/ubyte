@@ -149,6 +149,7 @@ type ResolvedModule with
     member this.TypeAt index = this.typeDefinitionLookup index
     member this.MethodAt index = this.definedMethodLookup index
     member this.FieldAt index = this.definedFieldLookup index
+    member this.TypeSignatureAt(ItemIndex i: TypeSignatureIndex) = this.source.TypeSignatures.[i]
     member this.MethodSignatureAt(ItemIndex i: MethodSignatureIndex) = this.source.MethodSignatures.[i]
 
     member this.FindType(typeNamespace: string, typeName: string): ResolvedTypeDefinition =
@@ -287,3 +288,8 @@ type ResolvedModule with
                 rf
           fieldResolvedEvent = Event<_>()
           typeNameLookup = Dictionary() }
+
+    member this.EntryPoint =
+        match this.source.EntryPoint with
+        | ValueSome eindex -> ValueSome(this.MethodAt eindex)
+        | ValueNone -> ValueNone

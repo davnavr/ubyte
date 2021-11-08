@@ -2,7 +2,6 @@
 module UByte.Runtime.Interpreter
 
 open UByte.Format
-open UByte.Resolver
 
 [<Sealed; Class>]
 type MissingEntryPointException = inherit System.Exception

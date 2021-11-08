@@ -1,5 +1,6 @@
 ﻿module UByte.Runtime.MemoryManagement
 
+open System
 open System.Collections.Immutable
 open System.Runtime.CompilerServices
 
@@ -27,6 +28,8 @@ module ObjectReference =
 
 [<Interface>]
 type IGarbageCollector =
+    //interface IDisposable
+
     /// <summary>Allocates an object of the specified size, without zeroing out memory.</summary>
     /// <param name="size">The size, in bytes, of the object to allocate.</param>
     /// <exception cref="T:System.ArgumentOutOfRangeException">Thrown when the <paramref name="size"/> is negative.</exception>
@@ -38,7 +41,21 @@ type IGarbageCollector =
     /// The objects that are always reachable, such as objects in local variables, arguments, global variables, etc.
     abstract Roots : System.Collections.Generic.ICollection<ObjectReference>
 
+// TODO: Have NaiveMarkAndSweep class be public instead to force usage of 'new' keyword since it is disposable
+
 [<AbstractClass; Sealed>]
 type CollectionStrategies =
     static member NaiveMarkAndSweep : unit -> IGarbageCollector
     static member NaiveMarkAndSweep : threshold: uint32 -> IGarbageCollector
+
+[<Sealed>]
+type ValueStack =
+    /// <summary>Constructs a new stack to store values with the specified size.</summary>
+    /// <param name="size">The maximum capacity of the stack, in bytes.</param>
+    new: size: int32 -> ValueStack
+
+    member TryAllocate : size: int32 * address: outref<voidptr> -> bool
+
+    override Finalize : unit -> unit
+
+    interface IDisposable
