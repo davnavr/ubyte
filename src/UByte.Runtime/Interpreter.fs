@@ -724,7 +724,7 @@ let private interpret
                 raise(NotImplementedException "TODO: Storing of constant floating point integers is not yet supported")
 
             | Call(flags, Method method, LookupRegisterArray arguments) ->
-                control.TemporaryRegisters.AddRange(invoke flags (ReadOnlyMemory arguments) method)
+                invoke flags (ReadOnlyMemory arguments) method |> ignore
 
             | Ret(LookupRegisterArray results) ->
                 if results.Length < control.ReturnRegisters.Length then
@@ -733,9 +733,13 @@ let private interpret
                         results.Length
                     |> invalidOp
 
-                // TODO: Copy return register values only.
-                Span(results).CopyTo(Span control.ReturnRegisters)
+                Span(results).CopyTo(Span control.ReturnRegisters) // TODO: Maybe Register could be a reference type? Ensuring registers are copied correctly may be confusing.
                 frame.Value <- control.Previous
+
+                match control.Previous with
+                | ValueSome caller -> caller.TemporaryRegisters.AddRange results // TODO: Maybe Register could be a reference type? Ensuring registers are copied correctly may be confusing.
+                | ValueNone -> ()
+
                 stack.FreeAllocations()
             | Br target -> branchToTarget target
             | Br_eq(Register x, Register y, ttrue, tfalse)
