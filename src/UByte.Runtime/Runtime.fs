@@ -654,7 +654,7 @@ module Interpreter =
             | RegisterType.Primitive PrimitiveType.S8, RegisterType.Primitive(PrimitiveType.U8 | PrimitiveType.Bool)
             | RegisterType.Primitive(PrimitiveType.U8 | PrimitiveType.Bool), RegisterType.Primitive PrimitiveType.S8 ->
                 s16 (NumberValue.s16 xreg) (NumberValue.s16 yreg)
-            | RegisterType.Primitive PrimitiveType.S8, _ ->
+            | RegisterType.Primitive PrimitiveType.S8, _ -> //
                 s8 (xreg.RegisterValue.ReadRaw<int8> 0) (NumberValue.s8 yreg)
             | _, RegisterType.Primitive PrimitiveType.S8 ->
                 s8 (NumberValue.s8 xreg) (yreg.RegisterValue.ReadRaw<int8> 0)

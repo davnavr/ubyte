@@ -299,6 +299,98 @@ module private RegisterArithmetic =
         let sub vtype xreg yreg = binop (-) (-) (-) (-) (-) (-) (-) (-) (-) (-) (-) (-) vtype xreg yreg
         let mul vtype xreg yreg = binop (*) (*) (*) (*) (*) (*) (*) (*) (*) (*) (*) (*) vtype xreg yreg
 
+/// Contains functions for comparing the values stored in registers.
+[<RequireQualifiedAccess>]
+module private RegisterComparison =
+    let isTrueValue (register: Register) = register.Value <> LanguagePrimitives.GenericZero
+
+    let inline private comparison s8 u8 s16 u16 s32 u32 s64 u64 snative unative f32 f64 (xreg: Register) (yreg: Register) =
+        match xreg.Type, yreg.Type with
+        | (RegisterType.Pointer | RegisterType.Object | RegisterType.Primitive PrimitiveType.SNative),
+          (RegisterType.Pointer | RegisterType.Object | RegisterType.Primitive PrimitiveType.SNative) ->
+            snative (InterpretRegister.value<nativeint> &xreg) (InterpretRegister.value<nativeint> &yreg)
+        | (RegisterType.Object _, _) | (_, RegisterType.Object) ->
+            invalidOp "Comparing an object reference and a numeric valuw is prohibited"
+        | (RegisterType.Primitive PrimitiveType.SNative | RegisterType.Pointer), RegisterType.Primitive PrimitiveType.UNative ->
+            let x = InterpretRegister.value<nativeint> &xreg
+            if x < 0n
+            then failwith "TODO: How to compare long and ulong?"
+            else unative (unativeint x) (InterpretRegister.value<unativeint> &yreg)
+        | RegisterType.Primitive PrimitiveType.UNative, (RegisterType.Primitive PrimitiveType.SNative | RegisterType.Pointer) ->
+            let y = InterpretRegister.value<nativeint> &yreg
+            if y < 0n
+            then failwith "TODO: How to compare long and ulong?"
+            else unative (InterpretRegister.value<unativeint> &xreg) (unativeint y)
+        | _, RegisterType.Primitive PrimitiveType.F64 ->
+            f64 (ConvertRegister.f64 xreg) (InterpretRegister.value<double> &yreg)
+        | RegisterType.Primitive PrimitiveType.F64, _ ->
+            f64 (InterpretRegister.value<double> &xreg) (ConvertRegister.f64 yreg)
+        | RegisterType.Primitive PrimitiveType.F32, _ ->
+            f32 (InterpretRegister.value<single> &xreg) (ConvertRegister.f32 yreg)
+        | _, RegisterType.Primitive PrimitiveType.F32 ->
+            f32 (ConvertRegister.f32 xreg) (InterpretRegister.value<single> &yreg)
+        | RegisterType.Primitive PrimitiveType.S64, RegisterType.Primitive PrimitiveType.U64 ->
+            let x = InterpretRegister.value<int64> &xreg
+            if x < 0L
+            then failwith "TODO: How to compare long and ulong?"
+            else u64 (uint64 x) (InterpretRegister.value<uint64> &yreg)
+        | RegisterType.Primitive PrimitiveType.U64, RegisterType.Primitive PrimitiveType.S64 ->
+            let y = InterpretRegister.value<int64> &yreg
+            if y < 0L
+            then failwith "TODO: How to compare long and ulong?"
+            else u64 (InterpretRegister.value<uint64> &xreg) (uint64 y)
+        | RegisterType.Primitive PrimitiveType.U64, _ ->
+            u64 (InterpretRegister.value<uint64> &xreg) (ConvertRegister.u64 yreg)
+        | _, RegisterType.Primitive PrimitiveType.U64 ->
+            u64 (ConvertRegister.u64 xreg) (InterpretRegister.value<uint64> &yreg)
+        | RegisterType.Primitive PrimitiveType.S64, _ ->
+            s64 (InterpretRegister.value<int64> &xreg) (ConvertRegister.s64 yreg)
+        | _, RegisterType.Primitive PrimitiveType.S64 ->
+            s64 (ConvertRegister.s64 xreg) (InterpretRegister.value<int64> &yreg)
+        | RegisterType.Primitive PrimitiveType.UNative, _ ->
+            unative (InterpretRegister.value<unativeint> &xreg) (ConvertRegister.unative yreg)
+        | _, RegisterType.Primitive PrimitiveType.UNative ->
+            unative (ConvertRegister.unative xreg) (InterpretRegister.value<unativeint> &yreg)
+        | (RegisterType.Primitive PrimitiveType.SNative | RegisterType.Pointer), _ ->
+            snative (InterpretRegister.value<nativeint> &xreg) (ConvertRegister.snative yreg)
+        | _, (RegisterType.Primitive PrimitiveType.SNative | RegisterType.Pointer) ->
+            snative (ConvertRegister.snative xreg) (InterpretRegister.value<nativeint> &yreg)
+        | RegisterType.Primitive PrimitiveType.S32, RegisterType.Primitive(PrimitiveType.U32 | PrimitiveType.Char32)
+        | RegisterType.Primitive(PrimitiveType.U32 | PrimitiveType.Char32), RegisterType.Primitive PrimitiveType.S32 ->
+            s64 (ConvertRegister.s64 xreg) (ConvertRegister.s64 yreg)
+        | RegisterType.Primitive PrimitiveType.U32, _ ->
+            u32 (InterpretRegister.value<uint32> &xreg) (ConvertRegister.u32 yreg)
+        | _, RegisterType.Primitive(PrimitiveType.U32 | PrimitiveType.Char32) ->
+            u32 (ConvertRegister.u32 xreg) (InterpretRegister.value<uint32> &yreg)
+        | RegisterType.Primitive PrimitiveType.S32, _ ->
+            s32 (InterpretRegister.value<int32> &xreg) (ConvertRegister.s32 yreg)
+        | _, RegisterType.Primitive PrimitiveType.S32 ->
+            s32 (ConvertRegister.s32 xreg) (InterpretRegister.value<int32> &yreg)
+        | RegisterType.Primitive PrimitiveType.S16, RegisterType.Primitive(PrimitiveType.U16 | PrimitiveType.Char16)
+        | RegisterType.Primitive(PrimitiveType.U16 | PrimitiveType.Char16), RegisterType.Primitive PrimitiveType.S16 ->
+            s32 (ConvertRegister.s32 xreg) (ConvertRegister.s32 yreg)
+        | RegisterType.Primitive(PrimitiveType.U16 | PrimitiveType.Char16), _ ->
+            u16 (InterpretRegister.value<uint16> &xreg) (ConvertRegister.u16 yreg)
+        | _, RegisterType.Primitive(PrimitiveType.U16 | PrimitiveType.Char16) ->
+            u16 (ConvertRegister.u16 xreg) (InterpretRegister.value<uint16> &yreg)
+        | RegisterType.Primitive PrimitiveType.S16, _ ->
+            s16 (InterpretRegister.value<int16> &xreg) (ConvertRegister.s16 yreg)
+        | _, RegisterType.Primitive PrimitiveType.S16 ->
+            s16 (ConvertRegister.s16 xreg) (InterpretRegister.value<int16> &yreg)
+        | RegisterType.Primitive PrimitiveType.S8, RegisterType.Primitive(PrimitiveType.U8 | PrimitiveType.Bool)
+        | RegisterType.Primitive(PrimitiveType.U8 | PrimitiveType.Bool), RegisterType.Primitive PrimitiveType.S8 ->
+            s16 (ConvertRegister.s16 xreg) (ConvertRegister.s16 yreg)
+        | RegisterType.Primitive(PrimitiveType.U8 | PrimitiveType.Bool), RegisterType.Primitive(PrimitiveType.U8 | PrimitiveType.Bool) ->
+            u8 (InterpretRegister.value<uint8> &xreg) (InterpretRegister.value<uint8> &yreg)
+        | RegisterType.Primitive PrimitiveType.S8, RegisterType.Primitive PrimitiveType.S8 ->
+            s8 (InterpretRegister.value<int8> &xreg) (InterpretRegister.value<int8> &yreg)
+
+    let isLessThan xreg yreg = comparison (<) (<) (<) (<) (<) (<) (<) (<) (<) (<) (<) (<) xreg yreg
+    let isGreaterThan xreg yreg = comparison (>) (>) (>) (>) (>) (>) (>) (>) (>) (>) (>) (>) xreg yreg
+    let isEqual xreg yreg = comparison (=) (=) (=) (=) (=) (=) (=) (=) (=) (=) (=) (=) xreg yreg
+    let isLessOrEqual xreg yreg = comparison (<=) (<=) (<=) (<=) (<=) (<=) (<=) (<=) (<=) (<=) (<=) (<=) xreg yreg
+    let isGreaterOrEqual xreg yreg = comparison (>=) (>=) (>=) (>=) (>=) (<=) (<=) (<=) (<=) (<=) (<=) (<=) xreg yreg
+
 [<RequireQualifiedAccess>]
 module ExternalCode =
     [<Literal>]
@@ -454,6 +546,9 @@ let private interpret
                 else RegisterArithmetic.mul rtype x y
                 |> control.TemporaryRegisters.Add
 
+            | Call(flags, Method method, LookupRegisterArray arguments) ->
+                control.TemporaryRegisters.AddRange(invoke flags (ReadOnlyMemory arguments) method)
+
             | Ret(LookupRegisterArray results) ->
                 if results.Length < control.ReturnRegisters.Length then
                     sprintf "Expected to return %i values but only returned %i values"
@@ -465,6 +560,21 @@ let private interpret
                 Span(results).CopyTo(Span control.ReturnRegisters)
                 frame.Value <- control.Previous
                 stack.FreeAllocations()
+            | Br target -> branchToTarget target
+            | Br_eq(Register x, Register y, ttrue, tfalse)
+            | Br_ne(Register x, Register y, tfalse, ttrue) ->
+                branchToTarget (if RegisterComparison.isEqual x y then ttrue else tfalse)
+            | Br_lt(Register x, Register y, tfalse, ttrue) ->
+                branchToTarget (if RegisterComparison.isLessThan x y then ttrue else tfalse)
+            | Br_gt(Register x, Register y, tfalse, ttrue) ->
+                branchToTarget (if RegisterComparison.isGreaterThan x y then ttrue else tfalse)
+            | Br_le(Register x, Register y, tfalse, ttrue) ->
+                branchToTarget (if RegisterComparison.isLessOrEqual x y then ttrue else tfalse)
+            | Br_ge(Register x, Register y, tfalse, ttrue) ->
+                branchToTarget (if RegisterComparison.isGreaterOrEqual x y then ttrue else tfalse)
+            | Br_true(Register condition, ttrue, tfalse) ->
+                branchToTarget (if RegisterComparison.isTrueValue condition then ttrue else tfalse)
+
             | Nop -> ()
 
             match runExternalCode with
