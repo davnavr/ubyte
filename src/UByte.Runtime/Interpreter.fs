@@ -427,11 +427,9 @@ let private setupStackFrame (method: ResolvedMethod) (frame: StackFrame voption 
     | MethodBody.External(library, efunction) ->
         let library' = method.DeclaringModule.IdentifierAt library
         let efunction' = method.DeclaringModule.IdentifierAt efunction
-        let frame' = StackFrame(frame.Value, args, 0u, returns, ImmutableArray.Empty, method)
-        frame.contents <- ValueSome frame'
-        runExternalCode <- ValueSome <| fun (frame'': _ voption ref) ->
-            ExternalCode.call library' efunction' frame''.Value.Value
-            frame''.contents <- frame'.Previous
+        let runtimeStackFrame = StackFrame(frame.Value, args, 0u, returns, ImmutableArray.Empty, method)
+        frame.contents <- ValueSome runtimeStackFrame
+        runExternalCode <- ValueSome(ExternalCode.call library' efunction')
 
 [<RequireQualifiedAccess>]
 module private ValidFlags =
@@ -457,7 +455,7 @@ let private interpret
     (entrypoint: ResolvedMethod)
     =
     let mutable frame: StackFrame voption ref = ref ValueNone
-    let mutable runExternalCode: (StackFrame voption ref -> unit) voption = ValueNone
+    let mutable runExternalCode: (StackFrame -> unit) voption = ValueNone
     let mutable ex = ValueNone
     use stack = new ValueStack(maxStackCapacity)
 
@@ -580,9 +578,14 @@ let private interpret
             match runExternalCode with
             | ValueNone -> ()
             | ValueSome run ->
-                run frame
-                runExternalCode <- ValueNone // TODO: Avoid code duplication with ret.
-                stack.FreeAllocations()
+                let runtimeStackFrame = frame.Value.Value
+                try
+                    run runtimeStackFrame
+                    // TODO: Avoid code duplication with ret.
+                    frame.Value <- runtimeStackFrame.Previous
+                    stack.FreeAllocations()
+                finally
+                    runExternalCode <- ValueNone
 
             // Incrementing here means index points to instruction that caused the exception in the stack frame.
             control.InstructionIndex <- Checked.(+) control.InstructionIndex 1
