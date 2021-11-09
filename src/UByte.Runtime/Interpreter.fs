@@ -466,7 +466,7 @@ module private RegisterComparison =
         | RegisterType.Primitive PrimitiveType.S32, RegisterType.Primitive(PrimitiveType.U32 | PrimitiveType.Char32)
         | RegisterType.Primitive(PrimitiveType.U32 | PrimitiveType.Char32), RegisterType.Primitive PrimitiveType.S32 ->
             s64 (ConvertRegister.s64 xreg) (ConvertRegister.s64 yreg)
-        | RegisterType.Primitive PrimitiveType.U32, _ ->
+        | RegisterType.Primitive(PrimitiveType.U32 | PrimitiveType.Char32), _ ->
             u32 (InterpretRegister.value<uint32> &xreg) (ConvertRegister.u32 yreg)
         | _, RegisterType.Primitive(PrimitiveType.U32 | PrimitiveType.Char32) ->
             u32 (ConvertRegister.u32 xreg) (InterpretRegister.value<uint32> &yreg)
