@@ -36,6 +36,8 @@ module ObjectReference =
         NativePtr.ofNativeInt<'Header>(addr - nativeint sizeof<'Header>)
 
 type IGarbageCollector =
+    inherit IDisposable
+
     abstract Allocate : ObjectType * size: int32 -> ObjectReference
     abstract Collect : (IGarbageCollector -> ObjectReference -> ImmutableArray<ObjectReference>) -> unit
     abstract TypeOf : ObjectReference -> ObjectType
@@ -65,9 +67,12 @@ type MarkAndSweepHeader =
       Type: ObjectType
       mutable Next: ObjectReference }
 
+let throwIfDisposed disposed = if disposed then raise(ObjectDisposedException("gc"))
+
 // TODO: When disposed or finalized, call Collect.
 [<Sealed>]
 type NaiveMarkAndSweep (threshold: uint32) =
+    let mutable disposed = false
     let mutable first = ObjectReference.Null
     let mutable last = ObjectReference.Null
     let mutable allocated = 0u
@@ -84,6 +89,8 @@ type NaiveMarkAndSweep (threshold: uint32) =
         &header.Next
 
     member gc.Collect getReferencedObjects =
+        throwIfDisposed disposed
+
         // TODO: Take a lock before collection
         failwith "BAD"
 
@@ -114,12 +121,16 @@ type NaiveMarkAndSweep (threshold: uint32) =
             previous <- current
             current <- header.Next
 
+    override gc.Finalize() = (gc :> IDisposable).Dispose()
+
     interface IGarbageCollector with
         member _.Roots = roots :> ICollection<_>
 
         member gc.Collect getReferencedObjects = gc.Collect getReferencedObjects
 
         member gc.Allocate(ty, size) =
+            throwIfDisposed disposed
+
             // TODO: Take a lock before allocation
             let struct(ByReference header, o) = allocate<MarkAndSweepHeader> size
             allocated <- allocated + uint32 size
@@ -138,9 +149,21 @@ type NaiveMarkAndSweep (threshold: uint32) =
             let (ByReference header) = ObjectReference.header<MarkAndSweepHeader> o
             header.Type
 
+        member _.Dispose() =
+            if not disposed then
+                let mutable current = first
+                while not current.IsNull do
+                    let next = NaiveMarkAndSweep.NextObject current
+                    free<MarkAndSweepHeader> current
+                    current <- next
+
+                first <- ObjectReference.Null
+                last <- ObjectReference.Null
+                disposed <- true
+
 [<AbstractClass; Sealed>]
 type CollectionStrategies =
-    static member NaiveMarkAndSweep threshold = NaiveMarkAndSweep threshold :> IGarbageCollector
+    static member NaiveMarkAndSweep threshold = new NaiveMarkAndSweep(threshold) :> IGarbageCollector
     static member NaiveMarkAndSweep() = CollectionStrategies.NaiveMarkAndSweep(0xFFFu)
 
 [<Sealed>]

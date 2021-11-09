@@ -725,6 +725,7 @@ let private interpret
 
             | Call(flags, Method method, LookupRegisterArray arguments) ->
                 invoke flags (ReadOnlyMemory arguments) method |> ignore
+            //| Call_virt
 
             | Ret(LookupRegisterArray results) ->
                 if results.Length < control.ReturnRegisters.Length then
@@ -857,7 +858,7 @@ type Runtime
             ?garbageCollectorStrategy
         )
         =
-        Runtime (
+        new Runtime (
             program,
             defaultArg moduleImportLoader (fun _ -> ValueNone),
             defaultArg garbageCollectorStrategy (CollectionStrategies.NaiveMarkAndSweep())
@@ -885,3 +886,5 @@ type Runtime
             if Array.isEmpty results then 0 else int32 results.[0].Value
         | ValueNone ->
             raise(MissingEntryPointException "The entry point method of the module is not defined")
+
+    interface IDisposable with member _.Dispose() = (garbageCollectorStrategy :> IDisposable).Dispose()

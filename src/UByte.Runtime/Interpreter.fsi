@@ -28,3 +28,5 @@ type Runtime =
     /// <returns>The integer exit code returned by the program.</returns>
     /// <exception cref="T:UByte.Runtime.Interpreter.MissingEntryPointException" />
     member InvokeEntryPoint : argv: string[] * ?maxStackCapacity: int32 -> int32
+
+    interface System.IDisposable

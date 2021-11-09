@@ -28,7 +28,7 @@ module ObjectReference =
 
 [<Interface>]
 type IGarbageCollector =
-    //interface IDisposable
+    inherit IDisposable
 
     /// <summary>Allocates an object of the specified size, without zeroing out memory.</summary>
     /// <param name="size">The size, in bytes, of the object to allocate.</param>

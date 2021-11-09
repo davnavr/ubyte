@@ -65,8 +65,8 @@ let main argv =
             | true, existing -> ValueSome existing
             | false, _ -> ValueNone
 
-    let runtime =
-        UByte.Runtime.Interpreter.Runtime.Initialize (
+    use runtime =
+        UByte.Runtime.Interpreter.Runtime.Initialize ( // TODO: Use actual constructor so caller knows Runtime is disposable?
             UByte.Format.ParseModule.fromPath program.FullName,
             moduleImportResolver
             // TODO: Allow selection of a GC strategy from command line options
