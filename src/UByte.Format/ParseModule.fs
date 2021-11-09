@@ -267,8 +267,7 @@ let instruction source =
     | Opcode.rem -> arithmeticBinaryOp Rem
     | Opcode.rotl -> bitwiseBinaryOp Rotl
     | Opcode.rotr -> bitwiseBinaryOp Rotr
-    | Opcode.``const.s`` -> Const_s(instructionPrimitiveType source, VarInt.signed source)
-    | Opcode.``const.u`` -> Const_u(instructionPrimitiveType source, VarInt.unsigned source)
+    | Opcode.``const.i`` -> Const_i(instructionPrimitiveType source, VarInt.signed source)
     //| Opcode.``const.f32`` ->
     //| Opcode.``const.f64`` ->
     | Opcode.``const.true`` -> Const_true(instructionPrimitiveType source)

@@ -159,8 +159,7 @@ module InstructionSet =
         | rem = 0x30u
         | rotl = 0x34u
         | rotr = 0x35u
-        | ``const.s`` = 0x40u
-        | ``const.u`` = 0x41u
+        | ``const.i`` = 0x41u
         | ``const.f32`` = 0x42u
         | ``const.f64`` = 0x43u
         | ``const.true`` = 0x44u
@@ -242,8 +241,7 @@ module InstructionSet =
         | Rem of ArithmeticFlags * TypeSignatureIndex * x: RegisterIndex * y: RegisterIndex
         | Rotl of PrimitiveType * amount: RegisterIndex * i: RegisterIndex
         | Rotr of PrimitiveType * amount: RegisterIndex * i: RegisterIndex
-        | Const_s of PrimitiveType * value: varint
-        | Const_u of PrimitiveType * value: uvarint
+        | Const_i of PrimitiveType * value: varint
         | Const_f32 of value: single
         | Const_f64 of value: double
         | Const_true of PrimitiveType

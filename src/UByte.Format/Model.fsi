@@ -204,8 +204,8 @@ module InstructionSet =
         //| = 0x33u
         | rotl = 0x34u
         | rotr = 0x35u
-        | ``const.s`` = 0x40u
-        | ``const.u`` = 0x41u
+        //|  = 0x40u
+        | ``const.i`` = 0x41u
         | ``const.f32`` = 0x42u
         | ``const.f64`` = 0x43u
         | ``const.true`` = 0x44u
@@ -508,28 +508,16 @@ module InstructionSet =
 
         /// <summary>
         /// <para>
-        /// <c>&lt;result&gt; = const.s &lt;numeric type&gt; &lt;value&gt;</c>
+        /// <c>&lt;result&gt; = const.i &lt;numeric type&gt; &lt;value&gt;</c>
         /// </para>
         /// <para>
-        /// Returns a signed integer of the specified numeric type.
+        /// Returns an integer of the specified numeric type, ignoring any integer overflow.
         /// </para>
         /// </summary>
         /// <remarks>
         /// The integer is stored as a variable-width signed integer.
         /// </remarks>
-        | Const_s of PrimitiveType * value: varint //////////////////////// TODO: Have a const.i instruction instead for all integer constants.
-        /// <summary>
-        /// <para>
-        /// <c>&lt;result&gt; = const.u &lt;numeric type&gt; &lt;value&gt;</c>
-        /// </para>
-        /// <para>
-        /// Returns an unsigned integer of the specified numeric type.
-        /// </para>
-        /// </summary>
-        /// <remarks>
-        /// The integer is stored as a variable-width unsigned integer.
-        /// </remarks>
-        | Const_u of PrimitiveType * value: uvarint
+        | Const_i of PrimitiveType * value: varint
         | Const_f32 of value: single
         | Const_f64 of value: double
         /// <summary>

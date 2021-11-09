@@ -178,14 +178,10 @@ let instruction instr dest =
     | Rem(flags, rtype, x, y) -> arithmeticBinaryOp Opcode.rem flags rtype x y
     | Rotl(rtype, amt, reg) -> bitwiseBinaryOp Opcode.rotl rtype amt reg
     | Rotr(rtype, amt, reg) -> bitwiseBinaryOp Opcode.rotr rtype amt reg
-    | Const_s(vtype, value) ->
-        opcode Opcode.``const.s`` dest
+    | Const_i(vtype, value) ->
+        opcode Opcode.``const.i`` dest
         primitiveType vtype dest
         VarInt.signed value dest
-    | Const_u(vtype, value) ->
-        opcode Opcode.``const.u`` dest
-        primitiveType vtype dest
-        VarInt.unsigned value dest
     | Const_f32 _
     | Const_f64 _ -> failwith "TODO: How to handle endianness of floating point values"
     | Const_true vtype ->

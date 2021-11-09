@@ -426,14 +426,9 @@ let code: Parser<ParsedCode, _> =
             }
             |> addInstructionParser name
 
-        constantNumberInstruction "const.s" integerlit InstructionSet.Const_s <| fun value ->
+        constantNumberInstruction "const.i" integerlit InstructionSet.Const_i <| fun value ->
             match Int64.TryParse value.String with
             | true, i when i >= int64 Int32.MinValue && i <= int64 UInt32.MaxValue -> Result.Ok(int32 i)
-            | _ -> Result.Error(fun pos -> InvalidInstructionError.InvalidIntegerLiteral(pos, sizeof<int32>, value.String))
-
-        constantNumberInstruction "const.u" integerlit InstructionSet.Const_u <| fun value ->
-            match Int64.TryParse value.String with
-            | true, i when i >= int64 UInt32.MinValue && i <= int64 UInt32.MaxValue -> Result.Ok(uint32 i)
             | _ -> Result.Error(fun pos -> InvalidInstructionError.InvalidIntegerLiteral(pos, sizeof<int32>, value.String))
 
         //"const.f32"

@@ -595,7 +595,8 @@ let private interpret
 
     while cont() do
         match ex with
-        | ValueSome _ -> raise(NotImplementedException "TODO: Reimplement exception handling, with support for moving back up the call stack")
+        | ValueSome e ->
+            raise(NotImplementedException("TODO: Reimplement exception handling, with support for moving back up the call stack", e))
         | ValueNone -> ()
 
         let control = frame.Value.Value
@@ -690,7 +691,8 @@ let private interpret
                 control.TemporaryRegisters.Add(RegisterArithmetic.xor vtype x y)
             | Not(vtype, Register register) ->
                 control.TemporaryRegisters.Add(RegisterArithmetic.``not`` vtype register)
-            // TODO: Should exception be thrown if Constant integer overflows?
+            | Const_i(vtype, value) ->
+                StoreConstant.uinteger vtype value &destination.RegisterValue
 
             | Call(flags, Method method, LookupRegisterArray arguments) ->
                 control.TemporaryRegisters.AddRange(invoke flags (ReadOnlyMemory arguments) method)
