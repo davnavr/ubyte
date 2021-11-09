@@ -1006,12 +1006,6 @@ module Interpreter =
                     let destination = createPrimitiveRegister vtype
                     Arithmetic.not vtype register &destination.RegisterValue
                 // TODO: Should exception be thrown if Constant integer overflows?
-                | Const_u(vtype, value) ->
-                    let destination = createPrimitiveRegister vtype
-                    Constant.uinteger vtype value &destination.RegisterValue
-                | Const_s(vtype, value) ->
-                    let destination = createPrimitiveRegister vtype
-                    Constant.sinteger vtype value &destination.RegisterValue
                 | Const_true vtype ->
                     let destination = createPrimitiveRegister vtype
                     Constant.boolean vtype true &destination.RegisterValue

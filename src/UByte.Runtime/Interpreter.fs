@@ -556,6 +556,26 @@ module private ValidFlags =
             failwithf "TODO: Bad memory access flags %A" flags
         flags
 
+[<RequireQualifiedAccess>]
+module private StoreConstant =
+    let integer itype value =
+        let rtype = RegisterType.Primitive itype
+        match itype with
+        | PrimitiveType.Bool | PrimitiveType.U8 -> Register.ofValue rtype (uint8 value)
+        | PrimitiveType.S8 -> Register.ofValue rtype (int8 value)
+        | PrimitiveType.U16 | PrimitiveType.Char16 -> Register.ofValue rtype (uint16 value)
+        | PrimitiveType.S16 -> Register.ofValue rtype (int16 value)
+        | PrimitiveType.U32 | PrimitiveType.Char32 -> Register.ofValue rtype (uint32 value)
+        | PrimitiveType.S32 -> Register.ofValue rtype (int32 value)
+        | PrimitiveType.U64 -> Register.ofValue rtype (uint64 value)
+        | PrimitiveType.S64 -> Register.ofValue rtype (int64 value)
+        | PrimitiveType.UNative -> Register.ofValue rtype (unativeint value)
+        | PrimitiveType.SNative -> Register.ofValue rtype (nativeint value)
+        | PrimitiveType.F32 -> Register.ofValue rtype (single value)
+        | PrimitiveType.F64 -> Register.ofValue rtype (double value)
+
+    let nullObjectReference = Register.ofValue RegisterType.Object ObjectReference.Null
+
 let private interpret
     (gc: IGarbageCollector)
     maxStackCapacity
@@ -692,7 +712,16 @@ let private interpret
             | Not(vtype, Register register) ->
                 control.TemporaryRegisters.Add(RegisterArithmetic.``not`` vtype register)
             | Const_i(vtype, value) ->
-                StoreConstant.uinteger vtype value &destination.RegisterValue
+                control.TemporaryRegisters.Add(StoreConstant.integer vtype value)
+            | Const_true vtype ->
+                control.TemporaryRegisters.Add(StoreConstant.integer vtype 1)
+            | Const_false vtype | Const_zero vtype ->
+                control.TemporaryRegisters.Add(StoreConstant.integer vtype 0)
+            | Obj_null ->
+                control.TemporaryRegisters.Add StoreConstant.nullObjectReference
+            | Const_f32 _
+            | Const_f64 _ ->
+                raise(NotImplementedException "TODO: Storing of constant floating point integers is not yet supported")
 
             | Call(flags, Method method, LookupRegisterArray arguments) ->
                 control.TemporaryRegisters.AddRange(invoke flags (ReadOnlyMemory arguments) method)
