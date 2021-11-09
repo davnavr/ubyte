@@ -105,8 +105,6 @@ module Register =
         Unsafe.As<uint64, 'Value> &register.Value <- value
         register
 
-let [<Literal>] private MaxStackCapacity = 0xFFFFF
-
 [<Sealed>]
 type StackFrame
     (
@@ -362,13 +360,14 @@ module private ValidFlags =
 
 let private interpret
     (gc: IGarbageCollector)
+    maxStackCapacity
     (arguments: ImmutableArray<Register>)
     (entrypoint: ResolvedMethod)
     =
     let mutable frame: StackFrame voption ref = ref ValueNone
     let mutable runExternalCode: (StackFrame voption ref -> unit) voption = ValueNone
     let mutable ex = ValueNone
-    use stack = new ValueStack(MaxStackCapacity)
+    use stack = new ValueStack(maxStackCapacity)
 
     let invoke flags (arguments: ReadOnlyMemory<Register>) (method: ResolvedMethod) =
         if isFlagSet CallFlags.RequiresTailCallOptimization flags then
@@ -541,6 +540,8 @@ let typeLayoutResolver() =
               References = references.ToImmutable() }
     inner
 
+let [<Literal>] DefaultStackCapacity = 0xFFFFF
+
 [<Sealed>]
 type Runtime
     (
@@ -568,7 +569,7 @@ type Runtime
 
     member _.Program = program
 
-    member _.InvokeEntryPoint(argv: string[]) =
+    member _.InvokeEntryPoint(argv: string[], ?maxStackCapacity) =
         match program.EntryPoint with
         | ValueSome main ->
             if main.DeclaringModule <> program then
@@ -580,9 +581,10 @@ type Runtime
                 else
                     failwith "TODO: argv is not yet supported"
 
-            if main.Signature.ReturnTypes.Length > 1 then failwith "TODO: Error for multiple return values are not supported in entry point"
+            if main.Signature.ReturnTypes.Length > 1 then
+                failwith "TODO: Error for multiple return values are not supported in entry point"
 
-            let results = interpret garbageCollectorStrategy arguments main
+            let results = interpret garbageCollectorStrategy (defaultArg maxStackCapacity DefaultStackCapacity) arguments main
 
             if Array.isEmpty results then 0 else int32 results.[0].Value
         | ValueNone ->

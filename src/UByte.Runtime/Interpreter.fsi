@@ -12,6 +12,8 @@ type ModuleNotFoundException =
 
     member Name : Model.ModuleIdentifier
 
+[<Literal>] val DefaultStackCapacity : int32 = 0xFFFFF
+
 [<Sealed>]
 type Runtime =
     /// Initializes the interpreter with the specified program containing the code to run.
@@ -25,4 +27,4 @@ type Runtime =
     /// <summary>Invokes the entry point of the program, supplying the specified arguments.</summary>
     /// <returns>The integer exit code returned by the program.</returns>
     /// <exception cref="T:UByte.Runtime.Interpreter.MissingEntryPointException" />
-    member InvokeEntryPoint : argv: string[] -> int32
+    member InvokeEntryPoint : argv: string[] * ?maxStackCapacity: int32 -> int32
