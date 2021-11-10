@@ -40,20 +40,32 @@ let private sizeOfType (md: ResolvedModule) (typeLayoutResolver: ResolvedTypeDef
     | AnyType.ReferenceType _ -> sizeof<ObjectReference>
     | AnyType.ValueType(ValueType.UnsafePointer _) | AnyType.SafePointer _ -> sizeof<voidptr>
 
+let private refOrValTypeToAnyType ty =
+    match ty with
+    | ReferenceOrValueType.Reference t -> AnyType.ReferenceType t
+    | ReferenceOrValueType.Value t -> AnyType.ValueType t
+
 [<RequireQualifiedAccess>]
-module private Array =
-    let allocate (gc: IGarbageCollector) etype length =
-        gc.Allocate(failwith "TODO: Get index for array type, not type of element", sizeof<int32> + (failwith "TODO: Get array element size" * length))
+module private ArrayObject =
+    type ArrayLength = int32
+
+    let allocate rm (gc: IGarbageCollector) typeLayoutResolver arrayTypeResolver etype length =
+        let arrayt = arrayTypeResolver rm (AnyType.ReferenceType(ReferenceType.Vector etype))
+        gc.Allocate(arrayt, sizeof<ArrayLength> + (sizeOfType rm typeLayoutResolver (refOrValTypeToAnyType etype) * length))
 
     let length array =
         ObjectReference.toVoidPtr array
-        |> NativePtr.ofVoidPtr<int32>
+        |> NativePtr.ofVoidPtr<ArrayLength>
         |> NativePtr.read
 
+    /// Returns a (managed/safe) pointer to the first element of the array.
     let address (ObjectReference addr) =
         addr + nativeint sizeof<int32>
         |> NativePtr.ofNativeInt<byte>
         |> NativePtr.toVoidPtr
+
+    let item array index =
+        failwith "TODO: Return address to item"
 
 [<RequireQualifiedAccess; Struct; NoComparison; NoEquality>]
 type Register =
@@ -802,6 +814,17 @@ let moduleImportResolver (loader: ModuleIdentifier -> Module voption) =
         | ValueNone -> raise(ModuleNotFoundException(id, "Unable to find module " + string id))
     resolver.Value
 
+let objectTypeResolver() =
+    let lookup = Dictionary<struct(ResolvedModule * AnyType), ObjectType>()
+    fun owner ty ->
+        let key = struct(owner, ty)
+        match lookup.TryGetValue key with
+        | true, existing -> existing
+        | false, _ ->
+            let i = ObjectType(uint32 lookup.Count)
+            lookup.Add(key, i)
+            i
+
 let typeLayoutResolver() =
     let lookup = Dictionary<ResolvedTypeDefinition, TypeLayout>()
     let rec inner ty =
@@ -848,7 +871,7 @@ type Runtime
     )
     =
     let program = ResolvedModule(program, moduleImportResolver moduleImportLoader)
-    let types = Dictionary<ObjectType, struct(ResolvedModule * AnyType)>()
+    let types = objectTypeResolver()
     let layouts = typeLayoutResolver()
 
     static member Initialize
@@ -873,10 +896,37 @@ type Runtime
                 raise(MissingEntryPointException "The entry point method for a module must be defined in the module")
 
             let arguments =
-                if main.Signature.ParameterTypes.Length = 0 then
-                    ImmutableArray.Empty
-                else
-                    failwith "TODO: argv is not yet supported"
+                let parameters = main.Signature.ParameterTypes
+                match parameters.Length with
+                | 0 -> ImmutableArray.Empty
+                | 1 ->
+                    match program.TypeSignatureAt parameters.[0] with
+                    | AnyType.ReferenceType(ReferenceType.Vector(ReferenceOrValueType.Reference(ReferenceType.Vector tchar) as tstr)) ->
+                        let argv' = ArrayObject.allocate program garbageCollectorStrategy layouts types tstr argv.Length
+                        garbageCollectorStrategy.Roots.Add argv'
+
+                        match tchar with
+                        | ReferenceOrValueType.Value(ValueType.Primitive PrimitiveType.Char32) ->
+                            let start = NativePtr.ofVoidPtr<ObjectReference>(ArrayObject.address argv')
+                            let buffer = List<_>()
+                            for i = 0 to argv.Length - 1 do
+                                buffer.Clear()
+                                buffer.AddRange(argv.[i].EnumerateRunes())
+
+                                let argument =
+                                    ArrayObject.allocate program garbageCollectorStrategy layouts types tchar buffer.Count
+
+                                garbageCollectorStrategy.Roots.Add argument
+                                NativePtr.write (NativePtr.add start i) argument
+
+                                let chars = NativePtr.ofVoidPtr<System.Text.Rune>(ArrayObject.address argument)
+                                for chari = 0 to buffer.Count - 1 do
+                                    NativePtr.write (NativePtr.add chars chari) buffer.[chari]
+                        | _ -> invalidOp(sprintf "%A is not a valid character type" tchar)
+
+                        ImmutableArray.Create(Register.ofValue RegisterType.Object argv')
+                    | bad -> invalidOp(sprintf "%A is not a valid argument for the entry point" bad)
+                | i -> invalidOp(sprintf "Invalid signature for entry point, cannot have %i arguments" i)
 
             if main.Signature.ReturnTypes.Length > 1 then
                 failwith "TODO: Error for multiple return values are not supported in entry point"

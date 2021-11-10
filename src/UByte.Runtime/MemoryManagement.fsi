@@ -39,7 +39,7 @@ type IGarbageCollector =
     /// Returns a value describing the type of an object.
     abstract TypeOf : ObjectReference -> ObjectType
     /// The objects that are always reachable, such as objects in local variables, arguments, global variables, etc.
-    abstract Roots : System.Collections.Generic.ICollection<ObjectReference>
+    abstract Roots : System.Collections.Generic.ICollection<ObjectReference> // TODO: Could be a IList, so same object can be added more than once, helps simplify rooting of objects stored in locals.
 
 // TODO: Have NaiveMarkAndSweep class be public instead to force usage of 'new' keyword since it is disposable
 
