@@ -26,6 +26,7 @@ module ObjectReference =
     val inline toBytePtr : o: ObjectReference -> nativeptr<uint8>
     val inline toVoidPtr : o: ObjectReference -> voidptr
 
+//IGarbageCollectionStrategy
 [<Interface>]
 type IGarbageCollector =
     inherit IDisposable

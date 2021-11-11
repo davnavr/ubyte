@@ -103,6 +103,12 @@ let private anyTypeToRegisterType ty =
     | AnyType.SafePointer _ | AnyType.ValueType(ValueType.Defined _ | ValueType.UnsafePointer _) ->
         RegisterType.Pointer
 
+let private anyTypeToRefOrValType ty =
+    match ty with
+    | AnyType.ReferenceType t ->  ReferenceOrValueType.Reference t
+    | AnyType.ValueType t -> ReferenceOrValueType.Value t
+    | AnyType.SafePointer _ -> invalidOp "Unexpected pointer type"
+
 [<RequireQualifiedAccess>]
 module Register =
     let ofRegisterType rtype = { Register.Value = Unchecked.defaultof<uint64>; Register.Type = rtype }
@@ -591,6 +597,8 @@ module private StoreConstant =
 let private interpret
     (gc: IGarbageCollector)
     maxStackCapacity
+    objectTypeResolver
+    typeLayoutResolver
     (arguments: ImmutableArray<Register>)
     (entrypoint: ResolvedMethod)
     =
@@ -769,6 +777,26 @@ let private interpret
             | Br_true(Register condition, ttrue, tfalse) ->
                 branchToTarget (if RegisterComparison.isTrueValue condition then ttrue else tfalse)
 
+            | Obj_arr_const(TypeSignature etype, Data data) ->
+                let esize = sizeOfType control.CurrentModule typeLayoutResolver etype
+#if DEBUG
+                if data.Length % esize <> 0 then
+                    raise(NotImplementedException "TODO: How to handle mismatch in constant data array length?")
+#endif
+                let a =
+                    ArrayObject.allocate
+                        control.CurrentModule
+                        gc
+                        typeLayoutResolver
+                        objectTypeResolver
+                        (anyTypeToRefOrValType etype)
+                        (data.Length / esize)
+
+                //gc.Roots.Add a
+                // NOTE: Creation of array from constant data might not work when endianness of data and runtime is different.
+                data.AsSpan().CopyTo(Span(ArrayObject.address a, data.Length))
+                control.TemporaryRegisters.Add(Register.ofValue RegisterType.Object a)
+
             | Nop -> ()
 
             match runExternalCode with
@@ -931,7 +959,14 @@ type Runtime
             if main.Signature.ReturnTypes.Length > 1 then
                 failwith "TODO: Error for multiple return values are not supported in entry point"
 
-            let results = interpret garbageCollectorStrategy (defaultArg maxStackCapacity DefaultStackCapacity) arguments main
+            let results =
+                interpret
+                    garbageCollectorStrategy
+                    (defaultArg maxStackCapacity DefaultStackCapacity)
+                    types
+                    layouts
+                    arguments
+                    main
 
             if Array.isEmpty results then 0 else int32 results.[0].Value
         | ValueNone ->
