@@ -3,6 +3,7 @@
 open System
 open System.Collections.Immutable
 open System.Collections.Generic
+open System.Diagnostics
 open System.Runtime.CompilerServices
 open System.Text
 
@@ -30,25 +31,50 @@ module private Helpers =
             then importInitializer i index
             else definedInitializer (i - importCount) index
 
-[<Sealed>]
-type ResolvedModule =
+type ModuleResolutionEventArguments<'Import> = { Originator: ResolvedModule; Import: 'Import }
+
+and ResolutionEventArguments<'Owner, 'Import> = { Originator: ResolvedModule; Owner: 'Owner; Import: 'Import }
+
+and IResolutionEvent<'Owner, 'T> = IEvent<ResolutionEventArguments<'Owner, 'T>>
+
+and [<Sealed>] ResolvedModule =
     val private source : Module
+    [<DebuggerBrowsable(DebuggerBrowsableState.Never)>]
     val private importedModuleLookup : ModuleIndex -> ResolvedModule
-    val private moduleResolvedEvent : Event<ResolvedModule>
+    [<DebuggerBrowsable(DebuggerBrowsableState.Never)>]
+    val private moduleResolvingEvent : Event<ModuleResolutionEventArguments<ModuleIdentifier>>
+    [<DebuggerBrowsable(DebuggerBrowsableState.Never)>]
+    val private moduleResolvedEvent : Event<ModuleResolutionEventArguments<ResolvedModule>>
+    [<DebuggerBrowsable(DebuggerBrowsableState.Never)>]
     val private typeDefinitionLookup : TypeDefinitionIndex -> ResolvedTypeDefinition
-    val private typeResolvedEvent : Event<ResolvedTypeDefinition>
+    [<DebuggerBrowsable(DebuggerBrowsableState.Never)>]
+    val private typeResolvingEvent : Event<ResolutionEventArguments<ResolvedModule, Choice<TypeDefinition, TypeDefinitionImport>>>
+    [<DebuggerBrowsable(DebuggerBrowsableState.Never)>]
+    val private typeResolvedEvent : Event<ResolvedTypeDefinition> // Event<ResolutionEventArguments<ResolvedModule, ResolvedTypeDefinition>>
+    [<DebuggerBrowsable(DebuggerBrowsableState.Never)>]
     val private definedMethodLookup : MethodIndex -> ResolvedMethod
+    [<DebuggerBrowsable(DebuggerBrowsableState.Never)>]
+    val private methodResolvingEvent : Event<ResolutionEventArguments<ResolvedTypeDefinition, Choice<Method, MethodImport>>>
+    [<DebuggerBrowsable(DebuggerBrowsableState.Never)>]
     val private methodResolvedEvent : Event<ResolvedMethod>
+    [<DebuggerBrowsable(DebuggerBrowsableState.Never)>]
     val private definedFieldLookup : FieldIndex -> ResolvedField
+    [<DebuggerBrowsable(DebuggerBrowsableState.Never)>]
+    val private fieldResolvingEvent : Event<ResolutionEventArguments<ResolvedTypeDefinition, Choice<Field, FieldImport>>>
+    [<DebuggerBrowsable(DebuggerBrowsableState.Never)>]
     val private fieldResolvedEvent : Event<ResolvedField>
     val private typeNameLookup : Dictionary<struct(string * string), ResolvedTypeDefinition>
 
     member this.Identifier = this.source.Header.Module
     member this.Name = this.Identifier.ModuleName.ToString()
-
+    
+    [<CLIEvent>] member this.ModuleResolving = this.moduleResolvingEvent.Publish
     [<CLIEvent>] member this.ModuleResolved = this.moduleResolvedEvent.Publish
+    [<CLIEvent>] member this.TypeResolving = this.typeResolvingEvent.Publish
     [<CLIEvent>] member this.TypeResolved = this.typeResolvedEvent.Publish
+    [<CLIEvent>] member this.MethodResolving = this.methodResolvingEvent.Publish
     [<CLIEvent>] member this.MethodResolved = this.methodResolvedEvent.Publish
+    [<CLIEvent>] member this.FieldResolving = this.fieldResolvingEvent.Publish
     [<CLIEvent>] member this.FieldResolved = this.fieldResolvedEvent.Publish
 
     member this.IdentifierAt index = this.source.Identifiers.[index]
@@ -257,22 +283,29 @@ type ResolvedModule with
                 if i = 0u then
                     this
                 else
-                    let rm = importer imports.[Checked.int32 i - 1]
-                    this.moduleResolvedEvent.Trigger rm
+                    let import = imports.[Checked.int32 i - 1]
+                    this.moduleResolvingEvent.Trigger { ModuleResolutionEventArguments.Originator = this; Import = import }
+                    let rm = importer import
+                    this.moduleResolvedEvent.Trigger { ModuleResolutionEventArguments.Originator = this; Import = rm }
                     rm
+          moduleResolvingEvent = Event<_>()
           moduleResolvedEvent = Event<_>()
           typeDefinitionLookup =
             let imports = source.Imports.ImportedTypes
             let definitions = source.Definitions.DefinedTypes
             createDefinitionOrImportLookup definitions.Length imports.Length
                 (fun i i' ->
-                    let rt = ResolvedTypeDefinition(this, definitions.[i], i')
+                    let t = definitions.[i]
+                    this.typeResolvingEvent.Trigger { Originator = this; Owner = this; Import = Choice1Of2 t }
+                    let rt = ResolvedTypeDefinition(this, t, i')
                     this.typeResolvedEvent.Trigger rt
                     rt)
                 (fun i _ ->
                     let t = imports.[Checked.int32 i]
                     let owner = this.ModuleAt t.Module
+                    this.typeResolvingEvent.Trigger { Originator = this; Owner = owner; Import = Choice2Of2 t }
                     owner.FindType(this.NamespaceAt t.TypeNamespace, this.IdentifierAt t.TypeName))
+          typeResolvingEvent = Event<_>()
           typeResolvedEvent = Event<_>()
           definedMethodLookup =
             let imports = source.Imports.ImportedMethods
@@ -280,24 +313,29 @@ type ResolvedModule with
             createDefinitionOrImportLookup definitions.Length imports.Length
                 (fun i index ->
                     let method = definitions.[i]
-                    let rm = ResolvedMethod(this.TypeAt method.MethodOwner, method, index)
+                    let owner = this.TypeAt method.MethodOwner
+                    this.methodResolvingEvent.Trigger { Originator = this; Owner = owner; Import = Choice1Of2 method }
+                    let rm = ResolvedMethod(owner, method, index)
                     this.methodResolvedEvent.Trigger rm
                     rm)
                 (fun i _ ->
-                    let m = imports.[Checked.int32 i]
-                    let owner = this.TypeAt m.MethodOwner
-                    owner.FindMethod(this.IdentifierAt m.MethodName))
+                    let method = imports.[Checked.int32 i]
+                    let owner = this.TypeAt method.MethodOwner
+                    this.methodResolvingEvent.Trigger { Originator = this; Owner = owner; Import = Choice2Of2 method }
+                    owner.FindMethod(this.IdentifierAt method.MethodName))
+          methodResolvingEvent = Event<_>()
           methodResolvedEvent = Event<_>()
           definedFieldLookup =
             let owners = source.Definitions.DefinedTypes
             let fields = source.Definitions.DefinedFields
             createIndexedLookup fields.Length <| fun (Index i as i') -> // TODO: Support lookup for field imports in resolver.
                 let field = fields.[Checked.int32 i]
-                //let (Index owner) = f.FieldOwner
-                //let n = owners.[Checked.int32 owner].Fields.IndexOf i' // Won't work for inherited types
-                let rf = ResolvedField(this.TypeAt field.FieldOwner, field, i')
+                let owner = this.TypeAt field.FieldOwner
+                this.fieldResolvingEvent.Trigger { Originator = this; Owner = owner; Import = Choice1Of2 field }
+                let rf = ResolvedField(owner, field, i')
                 this.fieldResolvedEvent.Trigger rf
                 rf
+          fieldResolvingEvent = Event<_>()
           fieldResolvedEvent = Event<_>()
           typeNameLookup = Dictionary() }
 

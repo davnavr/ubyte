@@ -76,10 +76,27 @@ type TypeNotFoundException =
     member TypeNamespace : string
     member TypeName : string
 
+[<RequireQualifiedAccess; NoComparison; NoEquality>]
+type ModuleResolutionEventArguments<'Import> =
+    { Originator: ResolvedModule
+      Import: 'Import }
+
+[<NoComparison; NoEquality>]
+type ResolutionEventArguments<'Owner, 'Import> =
+    { Originator: ResolvedModule
+      Owner: 'Owner
+      Import: 'Import }
+
+type IResolutionEvent<'Owner, 'T> = IEvent<ResolutionEventArguments<'Owner, 'T>>
+
 type ResolvedModule with
-    [<CLIEvent>] member ModuleResolved : IEvent<ResolvedModule>
+    [<CLIEvent>] member ModuleResolving : IEvent<ModuleResolutionEventArguments<ModuleIdentifier>>
+    [<CLIEvent>] member ModuleResolved : IEvent<ModuleResolutionEventArguments<ResolvedModule>>
+    [<CLIEvent>] member TypeResolving : IResolutionEvent<ResolvedModule, Choice<TypeDefinition, TypeDefinitionImport>>
     [<CLIEvent>] member TypeResolved : IEvent<ResolvedTypeDefinition>
+    [<CLIEvent>] member MethodResolving : IResolutionEvent<ResolvedTypeDefinition, Choice<Method, MethodImport>>
     [<CLIEvent>] member MethodResolved : IEvent<ResolvedMethod>
+    [<CLIEvent>] member FieldResolving : IResolutionEvent<ResolvedTypeDefinition, Choice<Field, FieldImport>>
     [<CLIEvent>] member FieldResolved : IEvent<ResolvedField>
 
     member EntryPoint : ResolvedMethod voption
