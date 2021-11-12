@@ -632,7 +632,26 @@ module private StoreConstant =
 
     let nullObjectReference = Register.ofValue RegisterType.Object ObjectReference.Null
 
-let private interpret
+[<RequireQualifiedAccess>]
+module private ObjectField =
+    let checkCanMutate (field: ResolvedField) (frame: StackFrame) =
+        if not field.IsMutable && not frame.CurrentMethod.IsConstructor then
+            invalidOp "Attempted to modify read-only field outside of constructor or type initializer"
+
+    let address (typeLayoutResolver: TypeLayoutResolver) ty (address: voidptr) field =
+        let { TypeLayout.Fields = layouts } = typeLayoutResolver ty
+        NativePtr.toVoidPtr(NativePtr.add (NativePtr.ofVoidPtr<byte> address) layouts.[field])
+
+    let access typeLayoutResolver (typeSizeResolver: TypeSizeResolver) object field =
+        // TODO: If field contains a struct, perform struct copying
+        let o = InterpretRegister.value<ObjectReference> &object
+        // TODO: Create helper to convert from ObjectType to TypeLayout
+        let address =
+            address typeLayoutResolver (failwith "OBJECT TYPE") (ObjectReference.toVoidPtr o) field
+
+        Span<byte>(address, typeSizeResolver field.DeclaringModule field.FieldType)
+
+let interpret
     (gc: IGarbageCollector)
     maxStackCapacity
     (typeSizeResolver: TypeSizeResolver)
@@ -707,8 +726,6 @@ let private interpret
         let inline branchToTarget (BranchTarget target) =
 #endif
             control.JumpTo target
-
-        //fieldAccessInstruction
 
         //arrayAccessInstruction
 
@@ -824,10 +841,23 @@ let private interpret
                         typeSizeResolver constructor.DeclaringModule ty
                     )
 
+                gc.Roots.Add o
                 let arguments' = Array.zeroCreate(arguments.Length + 1)
                 arguments'.[0] <- Register.ofValue RegisterType.Object o
                 Span(arguments).CopyTo(Span(arguments', 1, arguments.Length))
                 invoke CallFlags.None (ReadOnlyMemory arguments') constructor |> ignore
+            | Obj_fd_ld(Field field, Register object) ->
+                // TODO: If field contains a struct, perform struct copying
+                let source = ObjectField.access typeLayoutResolver typeSizeResolver object field
+                let mutable destination = Register.ofRegisterType (anyTypeToRegisterType field.FieldType)
+                source.CopyTo(Span(Unsafe.AsPointer &destination, sizeof<uint64>))
+                control.TemporaryRegisters.Add destination
+                // TODO: Add to roots of loaded an object ref from field.
+            | Obj_fd_st(Field field, Register object, Register source) ->
+                ObjectField.checkCanMutate field control
+                // TODO: If field contains a struct, source should be an address, so perform struct copying.
+                let destination = ObjectField.access typeLayoutResolver typeSizeResolver object field
+                Span(Unsafe.AsPointer(&Unsafe.AsRef &source), destination.Length).CopyTo destination
             | Obj_arr_new(TypeSignature etype, Register length) ->
                 let array =
                     ArrayObject.allocate
