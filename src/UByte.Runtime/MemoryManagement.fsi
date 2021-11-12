@@ -23,7 +23,7 @@ val inline (|ObjectReference|) : o: ObjectReference -> nativeint
 
 [<RequireQualifiedAccess>]
 module ObjectReference =
-    val inline toBytePtr : o: ObjectReference -> nativeptr<uint8>
+    val inline toNativePtr<'T when 'T : unmanaged> : o: ObjectReference -> nativeptr<'T>
     val inline toVoidPtr : o: ObjectReference -> voidptr
 
 //IGarbageCollectionStrategy

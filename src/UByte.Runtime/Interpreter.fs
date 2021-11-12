@@ -18,7 +18,7 @@ open UByte.Runtime.MemoryManagement
 
 let inline isFlagSet flag value = value &&& flag = flag
 
-[<RequireQualifiedAccess; IsReadOnly; Struct; NoComparison; NoEquality>]
+[<RequireQualifiedAccess; NoComparison; NoEquality>]
 type TypeLayout =
     { /// The size, in bytes, of instances of the type.
       Size: int32
@@ -26,6 +26,7 @@ type TypeLayout =
       /// The offsets to the fields containing object references.
       References: ImmutableArray<int32> }
 
+[<System.Obsolete>]
 let private sizeOfType (md: ResolvedModule) (typeLayoutResolver: ResolvedTypeDefinition -> TypeLayout) ty =
     match ty with
     | AnyType.ValueType(ValueType.Primitive prim) ->
@@ -45,28 +46,40 @@ let private refOrValTypeToAnyType ty =
     | ReferenceOrValueType.Reference t -> AnyType.ReferenceType t
     | ReferenceOrValueType.Value t -> AnyType.ValueType t
 
+type TypeSizeResolver = ResolvedModule -> AnyType -> int32
+type ObjectTypeResolver = ResolvedModule -> AnyType -> ObjectType
+type ObjectTypeLookup = ObjectType -> struct(ResolvedModule * AnyType)
+type TypeLayoutResolver = ResolvedTypeDefinition -> TypeLayout
+
 [<RequireQualifiedAccess>]
 module private ArrayObject =
     type ArrayLength = int32
 
+    /// Returns a (managed/safe) pointer to the first element of the array.
+    let address array =
+        let addr = ObjectReference.toNativePtr<byte> array
+        NativePtr.toVoidPtr(NativePtr.add addr sizeof<ArrayLength>)
+
     let allocate (rm: ResolvedModule) (gc: IGarbageCollector) typeSizeResolver arrayTypeResolver etype length =
         let arrayt = arrayTypeResolver rm (AnyType.ReferenceType(ReferenceType.Vector etype))
-        gc.Allocate(arrayt, sizeof<ArrayLength> + (typeSizeResolver rm (refOrValTypeToAnyType etype) * length))
+        let esize = typeSizeResolver rm (refOrValTypeToAnyType etype) * length
+        let array = gc.Allocate(arrayt, sizeof<ArrayLength> + esize)
+        NativePtr.write (ObjectReference.toNativePtr<ArrayLength> array) length
+        Span<byte>(address array, esize).Clear()
+        array
 
     let length array =
         ObjectReference.toVoidPtr array
         |> NativePtr.ofVoidPtr<ArrayLength>
         |> NativePtr.read
 
-    /// Returns a (managed/safe) pointer to the first element of the array.
-    let address (ObjectReference addr) =
-        addr + nativeint sizeof<int32>
-        |> NativePtr.ofNativeInt<byte>
-        |> NativePtr.toVoidPtr
+    let getElementType (gc: IGarbageCollector) (objectTypeLookup: ObjectTypeLookup) array =
+        let struct(md, arrayt) = objectTypeLookup(gc.TypeOf array)
+        match arrayt with
+        | AnyType.ReferenceType(ReferenceType.Vector etype) -> struct(md, refOrValTypeToAnyType etype)
+        | bad -> invalidArg (nameof array) (sprintf "Expected an array reference, but got %A" bad)
 
-    let getElementType (gc: IGarbageCollector) (objectTypeLookup: _ -> struct(ResolvedModule * AnyType)) array =
-        objectTypeLookup(gc.TypeOf array)
-
+    // NOTE: This function may be inefficient in loops, as the size of each element is looked up each time.
     let item gc objectTypeLookup typeSizeResolver array index =
         let struct(md, ty) = getElementType gc objectTypeLookup array
         let size = typeSizeResolver md ty
@@ -523,24 +536,39 @@ module private RegisterComparison =
     let isLessOrEqual xreg yreg = comparison (<=) (<=) (<=) (<=) (<=) (<=) (<=) (<=) (<=) (<=) (<=) (<=) xreg yreg
     let isGreaterOrEqual xreg yreg = comparison (>=) (>=) (>=) (>=) (>=) (<=) (<=) (<=) (<=) (<=) (<=) (<=) xreg yreg
 
+type ExternalCallHandler =
+    delegate of IGarbageCollector * TypeSizeResolver * ObjectTypeResolver * ObjectTypeLookup * TypeLayoutResolver * StackFrame ->
+        unit
+
 [<RequireQualifiedAccess>]
 module ExternalCode =
     [<Literal>]
     let private InternalCall = "runmdl"
 
-    let private lookup = Dictionary<struct(string * string), _ -> _ -> _ -> _ -> StackFrame -> unit>()
+    let private lookup = Dictionary<struct(string * string), ExternalCallHandler>()
 
-    let private println _ _ _ _ (frame: StackFrame) =
-        failwith "TODO: How to print some other thing"
+    let private println gc _ objectTypeResolver objectTypeLookup _ (frame: StackFrame) =
+        let arg = frame.ArgumentRegisters.[0]
+        match arg.Type with
+        | RegisterType.Object ->
+            let str = InterpretRegister.value<ObjectReference> &arg
+            let length = ArrayObject.length str
+            let address = ArrayObject.address str
+            match ArrayObject.getElementType gc objectTypeLookup str with
+            | _, AnyType.ValueType(ValueType.Primitive PrimitiveType.Char32) ->
+                for rune in Span<System.Text.Rune>(address, length) do stdout.Write(rune.ToString())
+            | _, bad ->
+                raise(ArgumentException(sprintf "%A is not a valid character type" bad))
+        | bad -> raise(ArgumentException(sprintf "%A is not a valid message argument" bad))
         stdout.WriteLine()
 
-    do lookup.[(InternalCall, "testhelperprintln")] <- println
-    do lookup.[(InternalCall, "break")] <- fun _ _ _ _ _ -> System.Diagnostics.Debugger.Launch() |> ignore
+    do lookup.[(InternalCall, "testhelperprintln")] <- ExternalCallHandler println
+    do lookup.[(InternalCall, "break")] <- ExternalCallHandler(fun _ _ _ _ _ _ -> System.Diagnostics.Debugger.Launch() |> ignore)
 
     let call library name =
         match lookup.TryGetValue(struct(library, name)) with
         | true, call' -> call'
-        | false, _ -> fun _ -> failwithf "TODO: Handle external calls to %s in %s" library name
+        | false, _ -> raise(NotImplementedException(sprintf "TODO: Handle external calls to %s in %s" library name))
 
 let private setupStackFrame (method: ResolvedMethod) (frame: StackFrame voption ref) (runExternalCode: byref<_ voption>) =
     let inline createRegisterList (indices: ImmutableArray<_>) = Array.init indices.Length <| fun i ->
@@ -603,15 +631,15 @@ module private StoreConstant =
 let private interpret
     (gc: IGarbageCollector)
     maxStackCapacity
-    typeSizeResolver
-    objectTypeResolver
-    (objectTypeLookup: ObjectType -> struct(ResolvedModule * AnyType))
-    typeLayoutResolver
+    (typeSizeResolver: TypeSizeResolver)
+    (objectTypeResolver: ObjectTypeResolver)
+    (objectTypeLookup: ObjectTypeLookup)
+    (typeLayoutResolver: TypeLayoutResolver)
     (arguments: ImmutableArray<Register>)
     (entrypoint: ResolvedMethod)
     =
     let mutable frame: StackFrame voption ref = ref ValueNone
-    let mutable runExternalCode: (_ -> _ -> _ -> _ -> StackFrame -> unit) voption = ValueNone
+    let mutable runExternalCode: _ voption = ValueNone
     let mutable ex = ValueNone
     use stack = new ValueStack(maxStackCapacity)
 
@@ -812,7 +840,7 @@ let private interpret
             | ValueSome run ->
                 let runtimeStackFrame = frame.Value.Value
                 try
-                    run typeSizeResolver objectTypeResolver objectTypeLookup typeLayoutResolver runtimeStackFrame
+                    run.Invoke(gc, typeSizeResolver, objectTypeResolver, objectTypeLookup, typeLayoutResolver, runtimeStackFrame)
                     // TODO: Avoid code duplication with ret.
                     frame.Value <- runtimeStackFrame.Previous
                     stack.FreeAllocations()
@@ -850,7 +878,7 @@ let moduleImportResolver (loader: ModuleIdentifier -> Module voption) =
         | ValueNone -> raise(ModuleNotFoundException(id, "Unable to find module " + string id))
     resolver.Value
 
-let objectTypeResolver() =
+let objectTypeResolver(): struct(ObjectTypeResolver * ObjectTypeLookup) =
     let objectTypeLookup = Dictionary<struct(ResolvedModule * AnyType), ObjectType>()
     let reverseTypeLookup = Dictionary<ObjectType, _>()
     let tresolver owner ty =
@@ -864,7 +892,7 @@ let objectTypeResolver() =
             i
     struct(tresolver, fun ty -> reverseTypeLookup.[ty])
 
-let typeSizeResolver (typeLayoutResolver: _ -> TypeLayout) (objectTypeResolver: ResolvedModule -> AnyType -> _) =
+let typeSizeResolver (typeLayoutResolver: TypeLayoutResolver) (objectTypeResolver: ObjectTypeResolver): TypeSizeResolver =
     let lookup = Dictionary<ObjectType, int32>()
     fun owner ty ->
         let i = objectTypeResolver owner ty
@@ -885,7 +913,7 @@ let typeSizeResolver (typeLayoutResolver: _ -> TypeLayout) (objectTypeResolver: 
             lookup.Add(i, size)
             size
 
-let typeLayoutResolver() =
+let typeLayoutResolver(): TypeLayoutResolver =
     let lookup = Dictionary<ResolvedTypeDefinition, TypeLayout>()
     let rec inner ty =
         match lookup.TryGetValue ty with

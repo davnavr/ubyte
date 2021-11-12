@@ -28,8 +28,8 @@ let inline (|ObjectReference|) (o: ObjectReference) = o.Address
 
 [<RequireQualifiedAccess>]
 module ObjectReference =
-    let inline toBytePtr (ObjectReference addr) = NativePtr.ofNativeInt<byte> addr
-    let inline toVoidPtr o = NativePtr.toVoidPtr(toBytePtr o)
+    let inline toNativePtr<'T when 'T : unmanaged> (ObjectReference addr) = NativePtr.ofNativeInt<'T> addr
+    let inline toVoidPtr o = NativePtr.toVoidPtr(toNativePtr<byte> o)
 
     [<RequiresExplicitTypeArguments>]
     let header<'Header when 'Header : unmanaged> (ObjectReference addr) =
