@@ -130,6 +130,21 @@ let private anyTypeToRefOrValType ty =
     | AnyType.SafePointer _ -> invalidOp "Unexpected pointer type"
 
 [<RequireQualifiedAccess>]
+module TypeLayout =
+    let ofAnyType (typeLayoutResolver: TypeLayoutResolver) (rm: ResolvedModule) ty =
+        match ty with
+        | AnyType.ReferenceType(ReferenceType.Defined tdef)
+        | AnyType.ValueType(ValueType.Defined tdef | ValueType.UnsafePointer(ValueType.Defined tdef))
+        | AnyType.SafePointer(ReferenceOrValueType.Reference(ReferenceType.Defined tdef))
+        | AnyType.SafePointer(ReferenceOrValueType.Value(ValueType.Defined tdef | ValueType.UnsafePointer(ValueType.Defined tdef))) ->
+            typeLayoutResolver(rm.TypeAt tdef)
+        | _ -> invalidOp(sprintf "Cannot retrieve type layout for type %A" ty)
+
+    let ofObjectReference (gc: IGarbageCollector) (objectTypeLookup: ObjectTypeLookup) typeLayoutResolver o =
+        let struct(rm, ty) = objectTypeLookup(gc.TypeOf o)
+        ofAnyType typeLayoutResolver rm ty
+
+[<RequireQualifiedAccess>]
 module Register =
     let ofRegisterType rtype = { Register.Value = Unchecked.defaultof<uint64>; Register.Type = rtype }
 
@@ -638,18 +653,28 @@ module private ObjectField =
         if not field.IsMutable && not frame.CurrentMethod.IsConstructor then
             invalidOp "Attempted to modify read-only field outside of constructor or type initializer"
 
-    let address (typeLayoutResolver: TypeLayoutResolver) ty (address: voidptr) field =
-        let { TypeLayout.Fields = layouts } = typeLayoutResolver ty
+    let address { TypeLayout.Fields = layouts } (address: voidptr) field =
         NativePtr.toVoidPtr(NativePtr.add (NativePtr.ofVoidPtr<byte> address) layouts.[field])
 
-    let access typeLayoutResolver (typeSizeResolver: TypeSizeResolver) object field =
-        // TODO: If field contains a struct, perform struct copying
-        let o = InterpretRegister.value<ObjectReference> &object
-        // TODO: Create helper to convert from ObjectType to TypeLayout
-        let address =
-            address typeLayoutResolver (failwith "OBJECT TYPE") (ObjectReference.toVoidPtr o) field
+    let access gc objectTypeLookup typeLayoutResolver (typeSizeResolver: TypeSizeResolver) (object: Register) field =
+        match object.Type with
+        | RegisterType.Object ->
+            // TODO: If field contains a struct, perform struct copying
+            let o = InterpretRegister.value<ObjectReference> &object
+            // TODO: Create helper to convert from ObjectType to TypeLayout
+            let addr =
+                address
+                    (TypeLayout.ofObjectReference gc objectTypeLookup typeLayoutResolver o)
+                    (ObjectReference.toVoidPtr o)
+                    field
 
-        Span<byte>(address, typeSizeResolver field.DeclaringModule field.FieldType)
+            Span<byte>(addr, typeSizeResolver field.DeclaringModule field.FieldType)
+        | RegisterType.Pointer ->
+            raise(NotImplementedException "TODO: Accessing of fields using pointers is not yet supported")
+            Span()
+        | RegisterType.Primitive _ ->
+            invalidOp "Cannot access field using a primitive value"
+            Span()
 
 let interpret
     (gc: IGarbageCollector)
@@ -695,7 +720,7 @@ let interpret
     while cont() do
         match ex with
         | ValueSome e ->
-            raise(NotImplementedException("TODO: Reimplement exception handling, with support for moving back up the call stack", e))
+            raise(NotImplementedException("TODO: Reimplement exception handling, with support for moving back up the call stack:\n" + frame.Value.Value.StackTrace, e))
         | ValueNone -> ()
 
         let control = frame.Value.Value
@@ -846,9 +871,10 @@ let interpret
                 arguments'.[0] <- Register.ofValue RegisterType.Object o
                 Span(arguments).CopyTo(Span(arguments', 1, arguments.Length))
                 invoke CallFlags.None (ReadOnlyMemory arguments') constructor |> ignore
+                control.TemporaryRegisters.Add(Register.ofValue RegisterType.Object o)
             | Obj_fd_ld(Field field, Register object) ->
                 // TODO: If field contains a struct, perform struct copying
-                let source = ObjectField.access typeLayoutResolver typeSizeResolver object field
+                let source = ObjectField.access gc objectTypeLookup typeLayoutResolver typeSizeResolver object field
                 let mutable destination = Register.ofRegisterType (anyTypeToRegisterType field.FieldType)
                 source.CopyTo(Span(Unsafe.AsPointer &destination, sizeof<uint64>))
                 control.TemporaryRegisters.Add destination
@@ -856,7 +882,7 @@ let interpret
             | Obj_fd_st(Field field, Register object, Register source) ->
                 ObjectField.checkCanMutate field control
                 // TODO: If field contains a struct, source should be an address, so perform struct copying.
-                let destination = ObjectField.access typeLayoutResolver typeSizeResolver object field
+                let destination = ObjectField.access gc objectTypeLookup typeLayoutResolver typeSizeResolver object field
                 Span(Unsafe.AsPointer(&Unsafe.AsRef &source), destination.Length).CopyTo destination
             | Obj_arr_new(TypeSignature etype, Register length) ->
                 let array =
@@ -992,6 +1018,8 @@ let typeLayoutResolver (typeSizeResolver: TypeSizeResolver): TypeLayoutResolver 
 
             for defined in ty.DefinedFields do
                 let fsize = typeSizeResolver ty.DeclaringModule defined.FieldType
+
+                fields.[defined] <- size
 
                 match defined.FieldType with
                 | AnyType.ReferenceType _ -> references.Add size
