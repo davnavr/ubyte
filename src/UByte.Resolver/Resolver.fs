@@ -96,6 +96,7 @@ and [<Sealed>] ResolvedTypeDefinition =
     member this.BaseTypes = this.specifiedInheritedTypes.Value
     member this.VTable = this.vtable.Value :> IReadOnlyDictionary<_, _>
     member this.Name = this.DeclaringModule.IdentifierAt this.source.TypeName
+    member this.Index = this.index
     member this.Namespace = this.DeclaringModule.NamespaceAt this.source.TypeNamespace
     member this.DefinedFields = this.fields.Value
 

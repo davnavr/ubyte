@@ -61,6 +61,7 @@ module private ArrayObject =
         NativePtr.toVoidPtr(NativePtr.add addr sizeof<ArrayLength>)
 
     let allocate (rm: ResolvedModule) (gc: IGarbageCollector) typeSizeResolver arrayTypeResolver etype length =
+        if length < 0 then invalidArg (nameof length) "Cannot allocate an array with a negative length"
         let arrayt = arrayTypeResolver rm (AnyType.ReferenceType(ReferenceType.Vector etype))
         let esize = typeSizeResolver rm (refOrValTypeToAnyType etype) * length
         let array = gc.Allocate(arrayt, sizeof<ArrayLength> + esize)
@@ -547,7 +548,7 @@ module ExternalCode =
 
     let private lookup = Dictionary<struct(string * string), ExternalCallHandler>()
 
-    let private println gc _ objectTypeResolver objectTypeLookup _ (frame: StackFrame) =
+    let private println gc _ _ objectTypeLookup _ (frame: StackFrame) =
         let arg = frame.ArgumentRegisters.[0]
         match arg.Type with
         | RegisterType.Object ->
@@ -557,12 +558,15 @@ module ExternalCode =
             match ArrayObject.getElementType gc objectTypeLookup str with
             | _, AnyType.ValueType(ValueType.Primitive PrimitiveType.Char32) ->
                 for rune in Span<System.Text.Rune>(address, length) do stdout.Write(rune.ToString())
+            | _, AnyType.ValueType(ValueType.Primitive PrimitiveType.Char16) ->
+                for c in Span<char>(address, length) do stdout.Write c
             | _, bad ->
                 raise(ArgumentException(sprintf "%A is not a valid character type" bad))
         | bad -> raise(ArgumentException(sprintf "%A is not a valid message argument" bad))
         stdout.WriteLine()
 
     do lookup.[(InternalCall, "testhelperprintln")] <- ExternalCallHandler println
+    //do lookup.[(InternalCall, "gc_collect")] <- ExternalCallHandler(fun gc _ _ _ _ _ -> gc.Collect())
     do lookup.[(InternalCall, "break")] <- ExternalCallHandler(fun _ _ _ _ _ _ -> System.Diagnostics.Debugger.Launch() |> ignore)
 
     let call library name =
@@ -782,7 +786,6 @@ let private interpret
             | Call(flags, Method method, LookupRegisterArray arguments) ->
                 invoke flags (ReadOnlyMemory arguments) method |> ignore
             //| Call_virt
-
             | Ret(LookupRegisterArray results) ->
                 if results.Length < control.ReturnRegisters.Length then
                     sprintf "Expected to return %i values but only returned %i values"
@@ -812,7 +815,30 @@ let private interpret
                 branchToTarget (if RegisterComparison.isGreaterOrEqual x y then ttrue else tfalse)
             | Br_true(Register condition, ttrue, tfalse) ->
                 branchToTarget (if RegisterComparison.isTrueValue condition then ttrue else tfalse)
+            | Obj_new(Method constructor, LookupRegisterArray arguments) ->
+                let o =
+                    // TODO: Cache these AnyType instances used by obj.new
+                    let ty = AnyType.ReferenceType(ReferenceType.Defined constructor.DeclaringType.Index)
+                    gc.Allocate (
+                        objectTypeResolver constructor.DeclaringModule ty,
+                        typeSizeResolver constructor.DeclaringModule ty
+                    )
 
+                let arguments' = Array.zeroCreate(arguments.Length + 1)
+                arguments'.[0] <- Register.ofValue RegisterType.Object o
+                Span(arguments).CopyTo(Span(arguments', 1, arguments.Length))
+                invoke CallFlags.None (ReadOnlyMemory arguments') constructor |> ignore
+            | Obj_arr_new(TypeSignature etype, Register length) ->
+                let array =
+                    ArrayObject.allocate
+                        control.CurrentModule
+                        gc
+                        typeSizeResolver
+                        objectTypeResolver
+                        (anyTypeToRefOrValType etype)
+                        (ConvertRegister.s32 length)
+
+                control.TemporaryRegisters.Add(Register.ofValue RegisterType.Object array)
             | Obj_arr_const(TypeSignature etype, Data data) ->
                 let esize = typeSizeResolver control.CurrentModule etype
 #if DEBUG

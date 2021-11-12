@@ -40,6 +40,7 @@ type ResolvedField =
 type ResolvedTypeDefinition =
     //member Namespace : ImmutableArray<string>
     member Name : string
+    member Index : TypeDefinitionIndex
     member DeclaringModule : ResolvedModule
     /// The types that the current type directly inherits from.
     member BaseTypes : ImmutableArray<ResolvedTypeDefinition>
