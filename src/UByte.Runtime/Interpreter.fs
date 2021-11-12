@@ -49,9 +49,9 @@ let private refOrValTypeToAnyType ty =
 module private ArrayObject =
     type ArrayLength = int32
 
-    let allocate rm (gc: IGarbageCollector) typeLayoutResolver arrayTypeResolver etype length =
+    let allocate (rm: ResolvedModule) (gc: IGarbageCollector) typeSizeResolver arrayTypeResolver etype length =
         let arrayt = arrayTypeResolver rm (AnyType.ReferenceType(ReferenceType.Vector etype))
-        gc.Allocate(arrayt, sizeof<ArrayLength> + (sizeOfType rm typeLayoutResolver (refOrValTypeToAnyType etype) * length))
+        gc.Allocate(arrayt, sizeof<ArrayLength> + (typeSizeResolver rm (refOrValTypeToAnyType etype) * length))
 
     let length array =
         ObjectReference.toVoidPtr array
@@ -64,8 +64,14 @@ module private ArrayObject =
         |> NativePtr.ofNativeInt<byte>
         |> NativePtr.toVoidPtr
 
-    let item array index =
-        failwith "TODO: Return address to item"
+    let getElementType (gc: IGarbageCollector) (objectTypeLookup: _ -> struct(ResolvedModule * AnyType)) array =
+        objectTypeLookup(gc.TypeOf array)
+
+    let item gc objectTypeLookup typeSizeResolver array index =
+        let struct(md, ty) = getElementType gc objectTypeLookup array
+        let size = typeSizeResolver md ty
+        let addr = NativePtr.ofVoidPtr<byte>(address array)
+        NativePtr.add addr (index * size) |> NativePtr.toVoidPtr
 
 [<RequireQualifiedAccess; Struct; NoComparison; NoEquality>]
 type Register =
@@ -522,14 +528,14 @@ module ExternalCode =
     [<Literal>]
     let private InternalCall = "runmdl"
 
-    let private lookup = Dictionary<struct(string * string), StackFrame -> unit>()
+    let private lookup = Dictionary<struct(string * string), _ -> _ -> _ -> _ -> StackFrame -> unit>()
 
-    let private println (frame: StackFrame) =
+    let private println _ _ _ _ (frame: StackFrame) =
         failwith "TODO: How to print some other thing"
         stdout.WriteLine()
 
     do lookup.[(InternalCall, "testhelperprintln")] <- println
-    do lookup.[(InternalCall, "break")] <- fun _ -> System.Diagnostics.Debugger.Launch() |> ignore
+    do lookup.[(InternalCall, "break")] <- fun _ _ _ _ _ -> System.Diagnostics.Debugger.Launch() |> ignore
 
     let call library name =
         match lookup.TryGetValue(struct(library, name)) with
@@ -597,13 +603,15 @@ module private StoreConstant =
 let private interpret
     (gc: IGarbageCollector)
     maxStackCapacity
+    typeSizeResolver
     objectTypeResolver
+    (objectTypeLookup: ObjectType -> struct(ResolvedModule * AnyType))
     typeLayoutResolver
     (arguments: ImmutableArray<Register>)
     (entrypoint: ResolvedMethod)
     =
     let mutable frame: StackFrame voption ref = ref ValueNone
-    let mutable runExternalCode: (StackFrame -> unit) voption = ValueNone
+    let mutable runExternalCode: (_ -> _ -> _ -> _ -> StackFrame -> unit) voption = ValueNone
     let mutable ex = ValueNone
     use stack = new ValueStack(maxStackCapacity)
 
@@ -787,7 +795,7 @@ let private interpret
                     ArrayObject.allocate
                         control.CurrentModule
                         gc
-                        typeLayoutResolver
+                        typeSizeResolver
                         objectTypeResolver
                         (anyTypeToRefOrValType etype)
                         (data.Length / esize)
@@ -804,7 +812,7 @@ let private interpret
             | ValueSome run ->
                 let runtimeStackFrame = frame.Value.Value
                 try
-                    run runtimeStackFrame
+                    run typeSizeResolver objectTypeResolver objectTypeLookup typeLayoutResolver runtimeStackFrame
                     // TODO: Avoid code duplication with ret.
                     frame.Value <- runtimeStackFrame.Previous
                     stack.FreeAllocations()
@@ -843,15 +851,39 @@ let moduleImportResolver (loader: ModuleIdentifier -> Module voption) =
     resolver.Value
 
 let objectTypeResolver() =
-    let lookup = Dictionary<struct(ResolvedModule * AnyType), ObjectType>()
-    fun owner ty ->
+    let objectTypeLookup = Dictionary<struct(ResolvedModule * AnyType), ObjectType>()
+    let reverseTypeLookup = Dictionary<ObjectType, _>()
+    let tresolver owner ty =
         let key = struct(owner, ty)
-        match lookup.TryGetValue key with
+        match objectTypeLookup.TryGetValue key with
         | true, existing -> existing
         | false, _ ->
-            let i = ObjectType(uint32 lookup.Count)
-            lookup.Add(key, i)
+            let i = ObjectType(uint32 objectTypeLookup.Count)
+            reverseTypeLookup.Add(i, key)
+            objectTypeLookup.Add(key, i)
             i
+    struct(tresolver, fun ty -> reverseTypeLookup.[ty])
+
+let typeSizeResolver (typeLayoutResolver: _ -> TypeLayout) (objectTypeResolver: ResolvedModule -> AnyType -> _) =
+    let lookup = Dictionary<ObjectType, int32>()
+    fun owner ty ->
+        let i = objectTypeResolver owner ty
+        match lookup.TryGetValue i with
+        | true, size -> size
+        | false, _ ->
+            let size =
+                match ty with
+                | AnyType.ValueType(ValueType.Primitive(PrimitiveType.Bool | PrimitiveType.S8 | PrimitiveType.U8)) -> 1
+                | AnyType.ValueType(ValueType.Primitive(PrimitiveType.S16 | PrimitiveType.U16 | PrimitiveType.Char16)) -> 2
+                | AnyType.ValueType(ValueType.Primitive(PrimitiveType.S32 | PrimitiveType.U32 | PrimitiveType.Char32 | PrimitiveType.F32)) -> 4
+                | AnyType.ValueType(ValueType.Primitive(PrimitiveType.S64 | PrimitiveType.U64 | PrimitiveType.F64)) -> 8
+                | AnyType.ValueType(ValueType.Primitive(PrimitiveType.SNative | PrimitiveType.UNative))
+                | AnyType.ValueType(ValueType.UnsafePointer _)
+                | AnyType.SafePointer _ -> sizeof<nativeint>
+                | AnyType.ValueType(ValueType.Defined tindex) -> typeLayoutResolver(owner.TypeAt tindex).Size
+                | AnyType.ReferenceType _ -> sizeof<ObjectReference>
+            lookup.Add(i, size)
+            size
 
 let typeLayoutResolver() =
     let lookup = Dictionary<ResolvedTypeDefinition, TypeLayout>()
@@ -899,8 +931,9 @@ type Runtime
     )
     =
     let program = ResolvedModule(program, moduleImportResolver moduleImportLoader)
-    let types = objectTypeResolver()
+    let struct(tresolver, tlookup) = objectTypeResolver()
     let layouts = typeLayoutResolver()
+    let sizes = typeSizeResolver layouts tresolver
 
     static member Initialize
         (
@@ -917,7 +950,10 @@ type Runtime
 
     member _.Program = program
 
-    member _.InvokeEntryPoint(argv: string[], ?maxStackCapacity) =
+    member private _.AllocateArray(etype, length) =
+        ArrayObject.allocate program garbageCollectorStrategy sizes tresolver etype length
+
+    member runtime.InvokeEntryPoint(argv: string[], ?maxStackCapacity) =
         match program.EntryPoint with
         | ValueSome main ->
             if main.DeclaringModule <> program then
@@ -930,7 +966,7 @@ type Runtime
                 | 1 ->
                     match program.TypeSignatureAt parameters.[0] with
                     | AnyType.ReferenceType(ReferenceType.Vector(ReferenceOrValueType.Reference(ReferenceType.Vector tchar) as tstr)) ->
-                        let argv' = ArrayObject.allocate program garbageCollectorStrategy layouts types tstr argv.Length
+                        let argv' = runtime.AllocateArray(tstr, argv.Length)
                         garbageCollectorStrategy.Roots.Add argv'
 
                         match tchar with
@@ -941,9 +977,7 @@ type Runtime
                                 buffer.Clear()
                                 buffer.AddRange(argv.[i].EnumerateRunes())
 
-                                let argument =
-                                    ArrayObject.allocate program garbageCollectorStrategy layouts types tchar buffer.Count
-
+                                let argument = runtime.AllocateArray(tchar, buffer.Count)
                                 garbageCollectorStrategy.Roots.Add argument
                                 NativePtr.write (NativePtr.add start i) argument
 
@@ -963,7 +997,9 @@ type Runtime
                 interpret
                     garbageCollectorStrategy
                     (defaultArg maxStackCapacity DefaultStackCapacity)
-                    types
+                    sizes
+                    tresolver
+                    tlookup
                     layouts
                     arguments
                     main
