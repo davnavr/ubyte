@@ -448,10 +448,12 @@ module Interpreter =
             | RegisterType.Primitive PrimitiveType.Char32 -> destination.WriteRaw<uint32>(0, opu32(value.ReadRaw<uint32> 0))
             | RegisterType.Primitive PrimitiveType.S64 -> destination.WriteRaw<int64>(0, ops64(value.ReadRaw<int64> 0))
             | RegisterType.Primitive PrimitiveType.U64 -> destination.WriteRaw<uint64>(0, opu64(value.ReadRaw<uint64> 0))
-            | RegisterType.Primitive PrimitiveType.SNative -> destination.WriteRaw<nativeint>(0, opsnative(value.ReadRaw<nativeint> 0))
+            | RegisterType.Primitive PrimitiveType.SNative | RegisterType.Pointer ->
+                destination.WriteRaw<nativeint>(0, opsnative(value.ReadRaw<nativeint> 0))
             | RegisterType.Primitive PrimitiveType.UNative -> destination.WriteRaw<unativeint>(0, opunative(value.ReadRaw<unativeint> 0))
             | RegisterType.Primitive PrimitiveType.F32 -> destination.WriteRaw<single>(0, opf32(value.ReadRaw<single> 0))
             | RegisterType.Primitive PrimitiveType.F64 -> destination.WriteRaw<double>(0, opf64(value.ReadRaw<double> 0))
+            | RegisterType.Object -> noReferenceType()
 
         let add vtype xreg yreg (destination: inref<_>) =
             binop (+) (+) (+) (+) (+) (+) (+) (+) (+) (+) (+) (+) vtype xreg yreg &destination

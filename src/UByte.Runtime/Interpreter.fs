@@ -814,7 +814,7 @@ let private interpret
                 branchToTarget (if RegisterComparison.isTrueValue condition then ttrue else tfalse)
 
             | Obj_arr_const(TypeSignature etype, Data data) ->
-                let esize = sizeOfType control.CurrentModule typeLayoutResolver etype
+                let esize = typeSizeResolver control.CurrentModule etype
 #if DEBUG
                 if data.Length % esize <> 0 then
                     raise(NotImplementedException "TODO: How to handle mismatch in constant data array length?")
@@ -913,7 +913,7 @@ let typeSizeResolver (typeLayoutResolver: TypeLayoutResolver) (objectTypeResolve
             lookup.Add(i, size)
             size
 
-let typeLayoutResolver(): TypeLayoutResolver =
+let typeLayoutResolver (typeSizeResolver: TypeSizeResolver): TypeLayoutResolver =
     let lookup = Dictionary<ResolvedTypeDefinition, TypeLayout>()
     let rec inner ty =
         match lookup.TryGetValue ty with
@@ -935,7 +935,7 @@ let typeLayoutResolver(): TypeLayoutResolver =
                 size <- size + inheritedLayout.Size
 
             for defined in ty.DefinedFields do
-                let fsize = sizeOfType ty.DeclaringModule inner defined.FieldType
+                let fsize = typeSizeResolver ty.DeclaringModule defined.FieldType
 
                 match defined.FieldType with
                 | AnyType.ReferenceType _ -> references.Add size
@@ -960,8 +960,9 @@ type Runtime
     =
     let program = ResolvedModule(program, moduleImportResolver moduleImportLoader)
     let struct(tresolver, tlookup) = objectTypeResolver()
-    let layouts = typeLayoutResolver()
-    let sizes = typeSizeResolver layouts tresolver
+    let sizes = ref Unchecked.defaultof<TypeSizeResolver>
+    let layouts = typeLayoutResolver(fun md ty -> sizes.Value md ty)
+    do sizes.Value <- typeSizeResolver layouts tresolver
 
     static member Initialize
         (
@@ -979,7 +980,7 @@ type Runtime
     member _.Program = program
 
     member private _.AllocateArray(etype, length) =
-        ArrayObject.allocate program garbageCollectorStrategy sizes tresolver etype length
+        ArrayObject.allocate program garbageCollectorStrategy sizes.Value tresolver etype length
 
     member runtime.InvokeEntryPoint(argv: string[], ?maxStackCapacity) =
         match program.EntryPoint with
@@ -1025,7 +1026,7 @@ type Runtime
                 interpret
                     garbageCollectorStrategy
                     (defaultArg maxStackCapacity DefaultStackCapacity)
-                    sizes
+                    sizes.Value
                     tresolver
                     tlookup
                     layouts
