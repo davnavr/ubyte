@@ -11,8 +11,6 @@
     <Compile Include="MemoryManagement.fs" />
     <Compile Include="Interpreter.fsi" />
     <Compile Include="Interpreter.fs" />
-    <Compile Include="Runtime.fsi" />
-    <Compile Include="Runtime.fs" />
 
     <ProjectReference Include="$(RootDirectory)\src\UByte.Format\UByte.Format.fsproj" />
     <ProjectReference Include="$(RootDirectory)\src\UByte.Resolver\UByte.Resolver.fsproj" />
