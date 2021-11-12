@@ -82,7 +82,7 @@ and [<Sealed>] ResolvedModule =
     member this.NamespaceAt(ItemIndex i: NamespaceIndex): string =
         this.source.Namespaces.[i] |> Seq.map this.IdentifierAt |> String.concat "::" // TODO: Cache namespaces
 
-    override this.ToString() = sprintf "(%s, v%O)" this.Name this.Identifier.Version
+    override this.ToString() = this.source.Header.Module.ToString()
 
 and [<Sealed>] ResolvedTypeDefinition =
     val private rmodule : ResolvedModule

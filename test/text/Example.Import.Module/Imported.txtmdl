@@ -17,7 +17,7 @@
 .code @code_helper {
     .arguments ($a0)
     .block $ENTRY {
-        %t_result = incr s32 $a0
+        %t_result = incr @sig_int32 $a0
         ret %t_result
     }
 }

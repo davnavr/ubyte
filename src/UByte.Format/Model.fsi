@@ -1091,6 +1091,8 @@ type ModuleIdentifier =
     { ModuleName: Name
       Version: VersionNumbers }
 
+    override ToString : unit -> string
+
     interface IEquatable<ModuleIdentifier>
 
 [<Flags>]

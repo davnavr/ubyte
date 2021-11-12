@@ -462,7 +462,10 @@ type Code = { LocalCount: uvarint; Blocks: vector<CodeBlock> }
 type Debug = unit
 
 [<NoComparison; StructuralEquality>]
-type ModuleIdentifier = { ModuleName: Name; Version: VersionNumbers }
+type ModuleIdentifier =
+    { ModuleName: Name; Version: VersionNumbers }
+
+    override this.ToString() = sprintf "(%O, v%O)" this.ModuleName this.Version
 
 [<Flags>]
 type ModuleHeaderFlags =

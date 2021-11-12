@@ -38,25 +38,26 @@ module Logger =
     open UByte.Resolver
 
     let logn (loggers: List<struct(bool * TextWriter)>) (message: string) =
-        let now = System.DateTime.UtcNow
-        for struct(_, logger) in loggers do
-            logger.Write '['
-            logger.Write now
-            logger.Write "] "
-            logger.WriteLine message
+        if loggers.Count > 0 then
+            let now = System.DateTime.UtcNow.ToString("s")
+            for struct(_, logger) in loggers do
+                logger.Write '['
+                logger.Write now
+                logger.Write "] "
+                logger.WriteLine message
 
     let logfn loggers format = Printf.kprintf (logn loggers) format
 
     let setupResolutionLogger loggers =
         let rec inner (rm: ResolvedModule) =
             rm.ModuleResolving.Add <| fun args ->
-                logfn loggers "Loading module %O imported by %O" args.Import args.Originator
+                logfn loggers "Resolving module %O referenced by %O" args.Import args.Originator
             rm.TypeResolving.Add <| fun args ->
-                logfn loggers "Loading type definition TYPE NAME in %O from %O" args.Owner args.Originator
+                logfn loggers "Resolving type definition TYPE NAME in %O from %O" args.Owner args.Originator
             rm.MethodResolving.Add <| fun args ->
-                logfn loggers "Loading method METHOD NAME in %O from %O" args.Owner args.Originator
+                logfn loggers "Resolving method METHOD NAME in %O from %O" args.Owner args.Originator
             rm.FieldResolving.Add <| fun args ->
-                logfn loggers "Loading field FIELD NAME in %O from %O" args.Owner args.Originator
+                logfn loggers "Resolving field FIELD NAME in %O from %O" args.Owner args.Originator
         inner
 
 [<EntryPoint>]
