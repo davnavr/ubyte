@@ -724,8 +724,8 @@ module private ObjectField =
         if not field.IsMutable && not frame.CurrentMethod.IsConstructor then
             invalidOp "Attempted to modify read-only field outside of constructor or type initializer"
 
-    let address { TypeLayout.Fields = layouts } (address: voidptr) field =
-        NativePtr.toVoidPtr(NativePtr.add (NativePtr.ofVoidPtr<byte> address) layouts.[field])
+    let address { TypeLayout.Fields = layouts } (object: voidptr) field =
+        NativePtr.toVoidPtr(NativePtr.add (NativePtr.ofVoidPtr<byte> object) layouts.[field])
 
     let access gc objectTypeLookup typeLayoutResolver (typeSizeResolver: TypeSizeResolver) (object: Register) field =
         match object.Type with
@@ -980,6 +980,12 @@ let interpret
                 // TODO: If field contains a struct, source should be an address, so perform struct copying.
                 let destination = ObjectField.access gc objectTypeLookup typeLayoutResolver typeSizeResolver object field
                 Span(Unsafe.AsPointer(&Unsafe.AsRef &source), destination.Length).CopyTo destination
+            | Obj_fd_addr(ValidFlags.MemoryAccess MemoryAccessFlags.ElementAccessValidMask _, Field field, Register object) ->
+                // TODO: Prevent throwing of exception for when field does not contain object in obj.fd.addr
+                let o = InterpretRegister.value<ObjectReference> &object
+                let layout = TypeLayout.ofObjectReference gc objectTypeLookup typeLayoutResolver o
+                let source = ObjectField.address layout (ObjectReference.toVoidPtr o) field
+                control.TemporaryRegisters.Add(Register.ofValue RegisterType.Pointer (NativePtr.ofVoidPtr<byte> source))
             | Obj_arr_new(TypeSignature etype, Register length) ->
                 let array =
                     ArrayObject.allocate
@@ -1003,6 +1009,15 @@ let interpret
                 then StoreConstant.Checked.integer ty length
                 else StoreConstant.integer ty length
                 |> control.TemporaryRegisters.Add
+            | Obj_arr_addr(ValidFlags.MemoryAccess MemoryAccessFlags.ElementAccessValidMask flags, Register array, Register index) ->
+                let o = InterpretRegister.value<ObjectReference> &array
+                let i = ConvertRegister.s32 index
+
+                if isFlagSet MemoryAccessFlags.ThrowOnInvalidAccess flags && i >= ArrayObject.length o then
+                    raise(IndexOutOfRangeException(sprintf "Attempt to access array element out of bounds for %O" array))
+
+                let address = ArrayObject.item gc objectTypeLookup typeSizeResolver o i
+                control.TemporaryRegisters.Add(Register.ofValue RegisterType.Pointer (NativePtr.ofVoidPtr<byte> address))
             | Obj_arr_const(TypeSignature etype, Data data) ->
                 let esize = typeSizeResolver control.CurrentModule etype
 #if DEBUG
