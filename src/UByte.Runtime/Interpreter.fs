@@ -747,6 +747,22 @@ module private ObjectField =
             invalidOp "Cannot access field using a primitive value"
             Span()
 
+[<RequireQualifiedAccess>]
+module private MemoryOperations =
+    let access (typeSizeResolver: TypeSizeResolver) rm ty (address: voidptr) (size: outref<int32>) =
+        size <- typeSizeResolver rm ty
+        Span<byte>(address, size)
+
+    let alloca (stack: ValueStack) flags size count =
+        // TODO: If multiple object references are allocated on the stack, don't forget to root them.
+        let success, address = stack.TryAllocate(Checked.(*) size count)
+        if success then
+            address
+        elif isFlagSet AllocationFlags.ThrowOnFailure flags then
+            invalidOp "Failed to allocate on stack, maximum capacity exceeded"
+        else
+            raise(NotImplementedException "How to handle failing stack allocations without exceptions? Return null?")
+
 [<Sealed>]
 type EventSource () =
     let called = Event<StackFrame>()
@@ -845,7 +861,15 @@ let interpret
 #endif
             control.JumpTo target
 
-        //arrayAccessInstruction
+#if DEBUG
+        let setupConstructorArguments arguments o =
+#else
+        let inline setupConstructorArguments arguments o =
+#endif
+            let arguments' = Array.zeroCreate(Array.length arguments)
+            arguments'.[0] <- Register.ofValue RegisterType.Object o
+            Span(arguments).CopyTo(Span(arguments', 1, arguments.Length))
+            arguments'
 
         try
             let instr = control.CurrentBlock.Instructions.[control.InstructionIndex]
@@ -963,10 +987,7 @@ let interpret
                     )
 
                 gc.Roots.Add o
-                let arguments' = Array.zeroCreate(arguments.Length + 1)
-                arguments'.[0] <- Register.ofValue RegisterType.Object o
-                Span(arguments).CopyTo(Span(arguments', 1, arguments.Length))
-                invoke CallFlags.None (ReadOnlyMemory arguments') constructor |> ignore
+                invoke CallFlags.None (ReadOnlyMemory(setupConstructorArguments arguments o)) constructor |> ignore
                 control.TemporaryRegisters.Add(Register.ofValue RegisterType.Object o)
             | Obj_fd_ld(Field field, Register object) ->
                 // TODO: If field contains a struct, perform struct copying
@@ -1037,7 +1058,39 @@ let interpret
                 // NOTE: Creation of array from constant data might not work when endianness of data and runtime is different.
                 data.AsSpan().CopyTo(Span(ArrayObject.address a, data.Length))
                 control.TemporaryRegisters.Add(Register.ofValue RegisterType.Object a)
+            | Mem_st(ValidFlags.MemoryAccess MemoryAccessFlags.RawAccessValidMask _, Register src, TypeSignature t, Register addr) ->
+                // TODO: If type is a struct, source is a register containing an address, so perform struct copying when storing into memory.
+                // TODO: Throw exception on invalid memory store.
+                let address = InterpretRegister.value<nativeptr<byte>> &addr
+                let mutable size = Unchecked.defaultof<_>
+                let destination = MemoryOperations.access typeSizeResolver control.CurrentModule t (NativePtr.toVoidPtr address) &size
+                if size > sizeof<uint64> then raise(NotImplementedException "TODO: Storing of structs into memory is not yet supported")
+                failwith "TODO: Store the thing"
+            | Mem_ld(ValidFlags.MemoryAccess MemoryAccessFlags.RawAccessValidMask _, TypeSignature t, Register addr) ->
+                // TODO: If type is a struct, source is a register containing an address, so perform struct copying when storing into memory.
+                // TODO: Throw exception on invalid memory store.
+                let address = InterpretRegister.value<nativeptr<byte>> &addr
+                let mutable size = Unchecked.defaultof<_>
+                let source = MemoryOperations.access typeSizeResolver control.CurrentModule t (NativePtr.toVoidPtr address) &size
+                if size > sizeof<uint64> then raise(NotImplementedException "TODO: Storing of structs into memory is not yet supported")
+                failwith "TODO: Load the thing"
+            | Alloca(ValidFlags.Allocation flags, Register count, TypeSignature ty) -> // TODO: Have alloca-like instructions return a boolean indicating success instead.
+                MemoryOperations.alloca stack flags (typeSizeResolver control.CurrentModule ty) (ConvertRegister.s32 count)
+                |> NativePtr.ofVoidPtr<byte>
+                |> Register.ofValue RegisterType.Pointer
+                |> control.TemporaryRegisters.Add
+            | Alloca_obj(ValidFlags.Allocation flags, Method ctor, LookupRegisterArray arguments) -> // TODO: Rename alloca.obj instruction (maybe obj.new.alloca)
+                let o =
+                    MemoryOperations.alloca stack flags (typeLayoutResolver ctor.DeclaringType).Size 1
+                    |> NativePtr.ofVoidPtr<byte>
+                    |> Register.ofValue RegisterType.Pointer
 
+                invoke CallFlags.None (ReadOnlyMemory(setupConstructorArguments arguments o)) ctor |> ignore
+                control.TemporaryRegisters.Add o
+            //| Mem_init ->
+            //| Mem_init_const(ValidFlags.MemoryAccess MemoryAccessFlags.RawAccessValidMask _, Register count, TypeSignature t, Register address, Register value) ->
+            //    failwith "BAD"
+            //| Mem_cpy ->
             | Nop -> ()
 
             match runExternalCode with

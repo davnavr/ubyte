@@ -20,12 +20,12 @@
 .code @code_main {
     .block $ENTRY {
         %t_zero = const.zero s32
-        %t_count = const.s s32 7
+        %t_count = const.i s32 7
         %t_memory = alloca throw.fail %t_count @sig_char
         mem.init.const throw.invalid @sig_char at %t_memory with @data_message
-        %t_offset_end = const.s s32 6
+        %t_offset_end = const.i s32 6
         %t_memory_end = add @sig_string %t_memory %t_offset_end
-        %t_exp = const.s char32 33 // !
+        %t_exp = const.i char32 33 // !
         mem.st throw.invalid %t_exp @sig_char into %t_memory_end
         call @method_println (%t_memory)
         ret %t_zero
