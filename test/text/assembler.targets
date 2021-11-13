@@ -42,6 +42,7 @@
       <ScriptContents>
         <![CDATA[
 param (
+  [string]$Configuration,
   [switch]$LaunchInterpreterDebugger,
   [switch]$Trace,
   [string[]]$ApplicationArguments
@@ -50,12 +51,13 @@ param (
 Import-Module "$(ScriptHelpersPath)" -Scope Local
 
 $params = @{
-    Interpreter = [IO.FileInfo]"$(InterpreterExecutable)"
-    Module = [IO.FileInfo]"%(Compile.OutputPath)"
-    ImportedDirectories = @([IO.DirectoryInfo]"$(OutputDirectory)")
-    LaunchInterpreterDebugger = $LaunchInterpreterDebugger
-    Trace = $Trace
-    ApplicationArguments = $ApplicationArguments
+  Interpreter = [IO.FileInfo]"$(InterpreterExecutable)"
+  Module = [IO.FileInfo]"%(Compile.OutputPath)"
+  Configuration = $Configuration
+  ImportedDirectories = @([IO.DirectoryInfo]"$(OutputDirectory)")
+  LaunchInterpreterDebugger = $LaunchInterpreterDebugger
+  Trace = $Trace
+  ApplicationArguments = $ApplicationArguments
 }
 
 Invoke-Interpreter @params
