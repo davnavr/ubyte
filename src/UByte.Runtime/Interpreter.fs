@@ -51,36 +51,39 @@ type ObjectTypeResolver = ResolvedModule -> AnyType -> ObjectType
 type ObjectTypeLookup = ObjectType -> struct(ResolvedModule * AnyType)
 type TypeLayoutResolver = ResolvedTypeDefinition -> TypeLayout
 
+[<IsReadOnly; Struct; NoComparison; NoEquality>]
+type RegisterValue =
+    val private largest : uint64 // Type of the largest value a register is expected to hold.
+
 [<RequireQualifiedAccess; Struct; NoComparison; NoEquality>]
 type Register =
-    { // Assumes that all integer types can fit in 64-bits.
-      mutable Value: uint64
+    { mutable Value: RegisterValue
       Type: RegisterType }
 
     override this.ToString() =
         match this.Type with
         | RegisterType.Primitive prim ->
             match prim with
-            | PrimitiveType.Bool -> sprintf "%b" (this.Value = 0UL)
-            | PrimitiveType.U8 -> sprintf "%iuy" (uint8 this.Value)
-            | PrimitiveType.S8 -> sprintf "%iy" (int8 this.Value)
-            | PrimitiveType.U16 -> sprintf "%ius" (uint16 this.Value)
-            | PrimitiveType.S16 -> sprintf "%is" (int16 this.Value)
-            | PrimitiveType.Char16 -> string(char this.Value)
-            | PrimitiveType.U32 -> sprintf "%iu" (uint32 this.Value)
-            | PrimitiveType.S32 -> string(int32 this.Value)
-            | PrimitiveType.Char32 -> System.Text.Rune(int32 this.Value).ToString()
-            | PrimitiveType.U64 -> sprintf "%iUL" this.Value
-            | PrimitiveType.S64 -> sprintf "%iL" (int64 this.Value)
-            | PrimitiveType.UNative -> sprintf "%iun" (unativeint this.Value)
-            | PrimitiveType.SNative -> sprintf "%in" (nativeint this.Value)
+            | PrimitiveType.Bool -> if Unsafe.As<_, bool> &this.Value then "true" else "false"
+            | PrimitiveType.U8 -> sprintf "%iuy" (Unsafe.As<_, uint8> &this.Value)
+            | PrimitiveType.S8 -> sprintf "%iy" (Unsafe.As<_, int8> &this.Value)
+            | PrimitiveType.U16 -> sprintf "%ius" (Unsafe.As<_, uint16> &this.Value)
+            | PrimitiveType.S16 -> sprintf "%is" (Unsafe.As<_, int16> &this.Value)
+            | PrimitiveType.Char16 -> string(Unsafe.As<_, char> &this.Value)
+            | PrimitiveType.U32 -> sprintf "%iu" (Unsafe.As<_, uint32> &this.Value)
+            | PrimitiveType.S32 -> string(Unsafe.As<_, int32> &this.Value)
+            | PrimitiveType.Char32 -> (Unsafe.As<_, System.Text.Rune> &this.Value).ToString()
+            | PrimitiveType.U64 -> sprintf "%iUL" (Unsafe.As<_, uint64> &this.Value)
+            | PrimitiveType.S64 -> sprintf "%iL" (Unsafe.As<_, int64> &this.Value)
+            | PrimitiveType.UNative -> sprintf "%iun" (Unsafe.As<_, unativeint> &this.Value)
+            | PrimitiveType.SNative -> sprintf "%in" (Unsafe.As<_, nativeint> &this.Value)
             | PrimitiveType.F32 -> string(Unsafe.As<_, single> &this.Value)
             | PrimitiveType.F64 -> string(Unsafe.As<_, double> &this.Value)
-        | RegisterType.Object | RegisterType.Pointer -> sprintf "0x%016X" this.Value
+        | RegisterType.Object | RegisterType.Pointer -> sprintf "0x%016X" (Unsafe.As<_, nativeint> &this.Value)
 
 [<RequireQualifiedAccess>]
 module Register =
-    let ofRegisterType rtype = { Register.Value = Unchecked.defaultof<uint64>; Register.Type = rtype }
+    let ofRegisterType rtype = { Register.Value = RegisterValue(); Register.Type = rtype }
 
     let ofTypeIndex (rm: ResolvedModule) typei =
         rm.TypeSignatureAt typei
@@ -89,7 +92,7 @@ module Register =
 
     let ofValue<'Value when 'Value : unmanaged> rtype (value: 'Value) =
         let mutable register = ofRegisterType rtype
-        Unsafe.As<uint64, 'Value> &register.Value <- value
+        Unsafe.As<RegisterValue, 'Value> &register.Value <- value
         register
 
     let ofValueAddress<'Value when 'Value : unmanaged> rtype address =
@@ -352,7 +355,7 @@ module private ConvertRegister =
         | RegisterType.Primitive PrimitiveType.Char32
         | RegisterType.Primitive PrimitiveType.U32 -> u32(InterpretRegister.value<uint32> &register)
         | RegisterType.Primitive PrimitiveType.S32 -> s32(InterpretRegister.value<int32> &register)
-        | RegisterType.Primitive PrimitiveType.U64 -> u64 register.Value
+        | RegisterType.Primitive PrimitiveType.U64 -> u64(InterpretRegister.value<uint64> &register)
         | RegisterType.Primitive PrimitiveType.S64 -> s64(InterpretRegister.value<int64> &register)
         | RegisterType.Primitive PrimitiveType.F32 -> f32(InterpretRegister.value<single> &register)
         | RegisterType.Primitive PrimitiveType.F64 -> f64(InterpretRegister.value<double> &register)
@@ -554,7 +557,22 @@ module private RegisterArithmetic =
 /// Contains functions for comparing the values stored in registers.
 [<RequireQualifiedAccess>]
 module private RegisterComparison =
-    let isTrueValue (register: Register) = register.Value <> LanguagePrimitives.GenericZero
+    let isTrueValue (register: Register) =
+        match register.Type with
+        | RegisterType.Primitive PrimitiveType.Bool -> InterpretRegister.value<bool> &register
+        | RegisterType.Primitive PrimitiveType.U8 -> InterpretRegister.value<uint8> &register <> 0uy
+        | RegisterType.Primitive PrimitiveType.S8 -> InterpretRegister.value<int8> &register <> 0y
+        | RegisterType.Primitive(PrimitiveType.U16 | PrimitiveType.Char16) -> InterpretRegister.value<uint16> &register <> 0us
+        | RegisterType.Primitive PrimitiveType.S16 -> InterpretRegister.value<int16> &register <> 0s
+        | RegisterType.Primitive(PrimitiveType.U32 | PrimitiveType.Char32)
+        | RegisterType.Primitive PrimitiveType.F32 -> InterpretRegister.value<uint32> &register <> 0u
+        | RegisterType.Primitive PrimitiveType.S32 -> InterpretRegister.value<int32> &register <> 0
+        | RegisterType.Primitive(PrimitiveType.U64 | PrimitiveType.F64) -> InterpretRegister.value<uint64> &register <> 0UL
+        | RegisterType.Primitive PrimitiveType.S64 -> InterpretRegister.value<int64> &register <> 0L
+        | RegisterType.Primitive PrimitiveType.UNative
+        | RegisterType.Pointer -> InterpretRegister.value<unativeint> &register <> 0un
+        | RegisterType.Primitive PrimitiveType.SNative -> InterpretRegister.value<nativeint> &register <> 0n
+        | RegisterType.Object -> InterpretRegister.value<ObjectReference> &register <> ObjectReference.Null
 
     let inline private comparison s8 u8 s16 u16 s32 u32 s64 u64 snative unative f32 f64 (xreg: Register) (yreg: Register) =
         match xreg.Type, yreg.Type with
@@ -749,19 +767,68 @@ module private ObjectField =
 
 [<RequireQualifiedAccess>]
 module private MemoryOperations =
-    let access (typeSizeResolver: TypeSizeResolver) rm ty (address: voidptr) (size: outref<int32>) =
-        size <- typeSizeResolver rm ty
-        Span<byte>(address, size)
-
     let alloca (stack: ValueStack) flags size count =
         // TODO: If multiple object references are allocated on the stack, don't forget to root them.
-        let success, address = stack.TryAllocate(Checked.(*) size count)
-        if success then
+        let mutable address = Unchecked.defaultof<_>
+        if stack.TryAllocate(Checked.(*) size count, &address) then
             address
         elif isFlagSet AllocationFlags.ThrowOnFailure flags then
             invalidOp "Failed to allocate on stack, maximum capacity exceeded"
         else
-            raise(NotImplementedException "How to handle failing stack allocations without exceptions? Return null?")
+            Unchecked.defaultof<voidptr>
+
+    let store (typeSizeResolver: TypeSizeResolver) destination (source: Register) (rm: ResolvedModule) ty =
+        let inline write value = NativePtr.write (NativePtr.ofVoidPtr destination) value
+        match ty, source.Type with
+        | AnyType.ValueType(ValueType.Primitive prim), RegisterType.Primitive _ ->
+            match prim with
+            | PrimitiveType.Bool | PrimitiveType.U8 -> write(ConvertRegister.u8 source)
+            | PrimitiveType.S8 -> write(ConvertRegister.s8 source)
+            | PrimitiveType.U16 | PrimitiveType.Char16 -> write(ConvertRegister.u16 source)
+            | PrimitiveType.S16 -> write(ConvertRegister.s16 source)
+            | PrimitiveType.U32 | PrimitiveType.Char32 -> write(ConvertRegister.u32 source)
+            | PrimitiveType.S32 -> write(ConvertRegister.s32 source)
+            | PrimitiveType.U64 -> write(ConvertRegister.u64 source)
+            | PrimitiveType.S64 -> write(ConvertRegister.s64 source)
+            | PrimitiveType.UNative -> write(ConvertRegister.unative source)
+            | PrimitiveType.SNative -> write(ConvertRegister.snative source)
+            | PrimitiveType.F32 -> write(ConvertRegister.f32 source)
+            | PrimitiveType.F64 -> write(ConvertRegister.f64 source)
+        | (AnyType.SafePointer _ | AnyType.ReferenceType _ | AnyType.ValueType(ValueType.UnsafePointer _)), (RegisterType.Pointer | RegisterType.Object) ->
+            write(InterpretRegister.value<nativeptr<byte>> &source)
+        | AnyType.ValueType(ValueType.Defined _), (RegisterType.Pointer | RegisterType.Object) ->
+            let size = typeSizeResolver rm ty
+            let address = NativePtr.toVoidPtr(InterpretRegister.value<nativeptr<byte>> &source)
+            Span<byte>(address, size).CopyTo(Span<byte>(destination, size))
+        | _ ->
+            invalidOp(sprintf "Cannot store a value stored in a register of type %A into a destination containing a %A" ty source.Type)
+
+    let load stack (typeSizeResolver: TypeSizeResolver) source rm ty =
+        let inline read() = NativePtr.read (NativePtr.ofVoidPtr source)
+        match ty with
+        | AnyType.ValueType(ValueType.Primitive prim) ->
+            let rtype = RegisterType.Primitive prim
+            match prim with
+            | PrimitiveType.Bool | PrimitiveType.U8 | PrimitiveType.S8 ->
+                Register.ofValue<uint8> rtype (read())
+            | PrimitiveType.U16 | PrimitiveType.Char16 | PrimitiveType.S16 ->
+                Register.ofValue<uint16> rtype (read())
+            | PrimitiveType.U32 | PrimitiveType.Char32 | PrimitiveType.S32 | PrimitiveType.F32 ->
+                Register.ofValue<uint32> rtype (read())
+            | PrimitiveType.U64 | PrimitiveType.S64 | PrimitiveType.F64 ->
+                Register.ofValue<uint64> rtype (read())
+            | PrimitiveType.UNative | PrimitiveType.SNative ->
+                Register.ofValue<unativeint> rtype (read())
+        | AnyType.ValueType(ValueType.UnsafePointer _)
+        | AnyType.SafePointer _ ->
+            Register.ofValue<nativeptr<byte>> RegisterType.Pointer (read())
+        | AnyType.ReferenceType _ ->
+            Register.ofValue<ObjectReference> RegisterType.Object (read())
+        | AnyType.ValueType(ValueType.Defined _) ->
+            let size = typeSizeResolver rm ty
+            let destination = alloca stack AllocationFlags.None size 1
+            Span<byte>(source, size).CopyTo(Span<byte>(destination, size))
+            Register.ofValue<nativeptr<byte>> RegisterType.Pointer (NativePtr.ofVoidPtr destination)
 
 [<Sealed>]
 type EventSource () =
@@ -1058,22 +1125,15 @@ let interpret
                 // NOTE: Creation of array from constant data might not work when endianness of data and runtime is different.
                 data.AsSpan().CopyTo(Span(ArrayObject.address a, data.Length))
                 control.TemporaryRegisters.Add(Register.ofValue RegisterType.Object a)
-            | Mem_st(ValidFlags.MemoryAccess MemoryAccessFlags.RawAccessValidMask _, Register src, TypeSignature t, Register addr) ->
-                // TODO: If type is a struct, source is a register containing an address, so perform struct copying when storing into memory.
+            | Mem_st(ValidFlags.MemoryAccess MemoryAccessFlags.RawAccessValidMask _, Register src, TypeSignature ty, Register addr) ->
                 // TODO: Throw exception on invalid memory store.
                 let address = InterpretRegister.value<nativeptr<byte>> &addr
-                let mutable size = Unchecked.defaultof<_>
-                let destination = MemoryOperations.access typeSizeResolver control.CurrentModule t (NativePtr.toVoidPtr address) &size
-                if size > sizeof<uint64> then raise(NotImplementedException "TODO: Storing of structs into memory is not yet supported")
-                failwith "TODO: Store the thing"
-            | Mem_ld(ValidFlags.MemoryAccess MemoryAccessFlags.RawAccessValidMask _, TypeSignature t, Register addr) ->
-                // TODO: If type is a struct, source is a register containing an address, so perform struct copying when storing into memory.
-                // TODO: Throw exception on invalid memory store.
+                MemoryOperations.store typeSizeResolver (NativePtr.toVoidPtr address) src control.CurrentModule ty
+            | Mem_ld(ValidFlags.MemoryAccess MemoryAccessFlags.RawAccessValidMask _, TypeSignature ty, Register addr) ->
+                // TODO: If type is a struct, source is a register containing an address, so perform struct copying when loading from memory.
+                // TODO: Throw exception on invalid memory load.
                 let address = InterpretRegister.value<nativeptr<byte>> &addr
-                let mutable size = Unchecked.defaultof<_>
-                let source = MemoryOperations.access typeSizeResolver control.CurrentModule t (NativePtr.toVoidPtr address) &size
-                if size > sizeof<uint64> then raise(NotImplementedException "TODO: Storing of structs into memory is not yet supported")
-                failwith "TODO: Load the thing"
+                control.TemporaryRegisters.Add(MemoryOperations.load stack typeSizeResolver (NativePtr.toVoidPtr address) control.CurrentModule ty)
             | Alloca(ValidFlags.Allocation flags, Register count, TypeSignature ty) -> // TODO: Have alloca-like instructions return a boolean indicating success instead.
                 MemoryOperations.alloca stack flags (typeSizeResolver control.CurrentModule ty) (ConvertRegister.s32 count)
                 |> NativePtr.ofVoidPtr<byte>
@@ -1295,7 +1355,7 @@ type Runtime
                     arguments
                     main
 
-            if Array.isEmpty results then 0 else int32 results.[0].Value
+            if Array.isEmpty results then 0 else ConvertRegister.s32 results.[0]
         | ValueNone ->
             raise(MissingEntryPointException "The entry point method of the module is not defined")
 
