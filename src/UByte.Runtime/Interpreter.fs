@@ -26,30 +26,131 @@ type TypeLayout =
       /// The offsets to the fields containing object references.
       References: ImmutableArray<int32> }
 
-[<System.Obsolete>]
-let private sizeOfType (md: ResolvedModule) (typeLayoutResolver: ResolvedTypeDefinition -> TypeLayout) ty =
-    match ty with
-    | AnyType.ValueType(ValueType.Primitive prim) ->
-        match prim with
-        | PrimitiveType.Bool | PrimitiveType.S8 | PrimitiveType.U8 -> 1
-        | PrimitiveType.S16 | PrimitiveType.U16 | PrimitiveType.Char16 -> 2
-        | PrimitiveType.S32 | PrimitiveType.U32 | PrimitiveType.Char32 | PrimitiveType.F32 -> 4
-        | PrimitiveType.S64 | PrimitiveType.U64 | PrimitiveType.F64 -> 8
-        | PrimitiveType.SNative | PrimitiveType.UNative -> sizeof<nativeint>
-    | AnyType.ValueType(ValueType.Defined tindex) ->
-        (md.TypeAt tindex |> typeLayoutResolver).Size
-    | AnyType.ReferenceType _ -> sizeof<ObjectReference>
-    | AnyType.ValueType(ValueType.UnsafePointer _) | AnyType.SafePointer _ -> sizeof<voidptr>
-
 let private refOrValTypeToAnyType ty =
     match ty with
     | ReferenceOrValueType.Reference t -> AnyType.ReferenceType t
     | ReferenceOrValueType.Value t -> AnyType.ValueType t
 
+let private anyTypeToRegisterType ty =
+    match ty with
+    | AnyType.ValueType(ValueType.Primitive prim) ->
+        RegisterType.Primitive prim
+    | AnyType.ReferenceType _ ->
+        RegisterType.Object
+    | AnyType.SafePointer _ | AnyType.ValueType(ValueType.Defined _ | ValueType.UnsafePointer _) ->
+        RegisterType.Pointer
+
+let private anyTypeToRefOrValType ty =
+    match ty with
+    | AnyType.ReferenceType t ->  ReferenceOrValueType.Reference t
+    | AnyType.ValueType t -> ReferenceOrValueType.Value t
+    | AnyType.SafePointer _ -> invalidOp "Unexpected pointer type"
+
 type TypeSizeResolver = ResolvedModule -> AnyType -> int32
 type ObjectTypeResolver = ResolvedModule -> AnyType -> ObjectType
 type ObjectTypeLookup = ObjectType -> struct(ResolvedModule * AnyType)
 type TypeLayoutResolver = ResolvedTypeDefinition -> TypeLayout
+
+[<RequireQualifiedAccess; Struct; NoComparison; NoEquality>]
+type Register =
+    { // Assumes that all integer types can fit in 64-bits.
+      mutable Value: uint64
+      Type: RegisterType }
+
+    override this.ToString() =
+        match this.Type with
+        | RegisterType.Primitive prim ->
+            match prim with
+            | PrimitiveType.Bool -> sprintf "%b" (this.Value = 0UL)
+            | PrimitiveType.U8 -> sprintf "%iuy" (uint8 this.Value)
+            | PrimitiveType.S8 -> sprintf "%iy" (int8 this.Value)
+            | PrimitiveType.U16 -> sprintf "%ius" (uint16 this.Value)
+            | PrimitiveType.S16 -> sprintf "%is" (int16 this.Value)
+            | PrimitiveType.Char16 -> string(char this.Value)
+            | PrimitiveType.U32 -> sprintf "%iu" (uint32 this.Value)
+            | PrimitiveType.S32 -> string(int32 this.Value)
+            | PrimitiveType.Char32 -> System.Text.Rune(int32 this.Value).ToString()
+            | PrimitiveType.U64 -> sprintf "%iUL" this.Value
+            | PrimitiveType.S64 -> sprintf "%iL" (int64 this.Value)
+            | PrimitiveType.UNative -> sprintf "%iun" (unativeint this.Value)
+            | PrimitiveType.SNative -> sprintf "%in" (nativeint this.Value)
+            | PrimitiveType.F32 -> string(Unsafe.As<_, single> &this.Value)
+            | PrimitiveType.F64 -> string(Unsafe.As<_, double> &this.Value)
+        | RegisterType.Object | RegisterType.Pointer -> sprintf "0x%016X" this.Value
+
+[<RequireQualifiedAccess>]
+module Register =
+    let ofRegisterType rtype = { Register.Value = Unchecked.defaultof<uint64>; Register.Type = rtype }
+
+    let ofTypeIndex (rm: ResolvedModule) typei =
+        rm.TypeSignatureAt typei
+        |> anyTypeToRegisterType
+        |> ofRegisterType
+
+    let ofValue<'Value when 'Value : unmanaged> rtype (value: 'Value) =
+        let mutable register = ofRegisterType rtype
+        Unsafe.As<uint64, 'Value> &register.Value <- value
+        register
+
+    let ofValueAddress<'Value when 'Value : unmanaged> rtype address =
+        NativePtr.ofVoidPtr address
+        |> NativePtr.read<'Value>
+        |> ofValue<'Value> rtype
+
+[<RequireQualifiedAccess>]
+module private StoreConstant =
+    let inline private primitive u8 s8 u16 s16 u32 s32 u64 s64 unative snative f32 f64 itype value =
+        let rtype = RegisterType.Primitive itype
+        match itype with
+        | PrimitiveType.Bool | PrimitiveType.U8 -> Register.ofValue rtype (u8 value)
+        | PrimitiveType.S8 -> Register.ofValue rtype (s8 value)
+        | PrimitiveType.U16 | PrimitiveType.Char16 -> Register.ofValue rtype (u16 value)
+        | PrimitiveType.S16 -> Register.ofValue rtype (s16 value)
+        | PrimitiveType.U32 | PrimitiveType.Char32 -> Register.ofValue rtype (u32 value)
+        | PrimitiveType.S32 -> Register.ofValue rtype (s32 value)
+        | PrimitiveType.U64 -> Register.ofValue rtype (u64 value)
+        | PrimitiveType.S64 -> Register.ofValue rtype (s64 value)
+        | PrimitiveType.UNative -> Register.ofValue rtype (unative value)
+        | PrimitiveType.SNative -> Register.ofValue rtype (snative value)
+        | PrimitiveType.F32 -> Register.ofValue rtype (f32 value)
+        | PrimitiveType.F64 -> Register.ofValue rtype (f64 value)
+
+    let integer itype value =
+        primitive uint8 int8 uint16 int16 uint32 int32 uint64 int64 unativeint nativeint single double itype value
+
+    let nullObjectReference = Register.ofValue RegisterType.Object ObjectReference.Null
+
+    let fromVoidPtr ty address =
+        match ty with
+        | RegisterType.Primitive(PrimitiveType.U8 | PrimitiveType.Bool) -> Register.ofValueAddress<uint8> ty address
+        | RegisterType.Primitive PrimitiveType.S8 -> Register.ofValueAddress<int8> ty address
+        | RegisterType.Primitive(PrimitiveType.U16 | PrimitiveType.Char16) -> Register.ofValueAddress<uint16> ty address
+        | RegisterType.Primitive PrimitiveType.S16 -> Register.ofValueAddress<int16> ty address
+        | RegisterType.Primitive(PrimitiveType.U32 | PrimitiveType.Char32) -> Register.ofValueAddress<uint32> ty address
+        | RegisterType.Primitive PrimitiveType.S32 -> Register.ofValueAddress<int32> ty address
+        | RegisterType.Primitive PrimitiveType.U64 -> Register.ofValueAddress<uint64> ty address
+        | RegisterType.Primitive PrimitiveType.S64 -> Register.ofValueAddress<int64> ty address
+        | RegisterType.Primitive PrimitiveType.F32 -> Register.ofValueAddress<single> ty address
+        | RegisterType.Primitive PrimitiveType.F64 -> Register.ofValueAddress<double> ty address
+        | RegisterType.Pointer | RegisterType.Primitive PrimitiveType.SNative -> Register.ofValueAddress<nativeint> ty address
+        | RegisterType.Object -> Register.ofValueAddress<ObjectReference> ty address
+        | RegisterType.Primitive PrimitiveType.UNative -> Register.ofValueAddress<unativeint> ty address
+
+    [<RequireQualifiedAccess>]
+    module Checked =
+        open Microsoft.FSharp.Core.Operators.Checked
+
+        let integer itype value =
+            primitive uint8 int8 uint16 int16 uint32 int32 uint64 int64 unativeint nativeint single double itype value
+
+/// Contains functions for retrieving values from registers.
+[<RequireQualifiedAccess>]
+module private InterpretRegister =
+    let inline value<'Value when 'Value : unmanaged> (register: inref<Register>) =
+        Unsafe.As<_, 'Value>(&Unsafe.AsRef(&register).Value)
+
+    let copyValueTo<'Value when 'Value : unmanaged> (destination: voidptr) (register: inref<Register>) =
+        NativePtr.write (NativePtr.ofVoidPtr<'Value> destination) (value<'Value> &register)
 
 [<RequireQualifiedAccess>]
 module private ArrayObject =
@@ -81,53 +182,59 @@ module private ArrayObject =
         | bad -> invalidArg (nameof array) (sprintf "Expected an array reference, but got %A" bad)
 
     // NOTE: This function may be inefficient in loops, as the size of each element is looked up each time.
-    let item gc objectTypeLookup typeSizeResolver array index =
+    let item gc objectTypeLookup (typeSizeResolver: TypeSizeResolver) array index =
         let struct(md, ty) = getElementType gc objectTypeLookup array
         let size = typeSizeResolver md ty
         let addr = NativePtr.ofVoidPtr<byte>(address array)
         NativePtr.add addr (index * size) |> NativePtr.toVoidPtr
 
-[<RequireQualifiedAccess; Struct; NoComparison; NoEquality>]
-type Register =
-    { // Assumes that all integer types can fit in 64-bits.
-      mutable Value: uint64
-      Type: RegisterType }
+    let get gc objectTypeLookup typeSizeResolver array index =
+        // TODO: If array contains structs, perform struct copying, and return a register containing an address.
+        let address = item gc objectTypeLookup typeSizeResolver array index
+        let rtype =
+            match getElementType gc objectTypeLookup array with
+            | _, AnyType.ValueType(ValueType.Defined _) ->
+                raise(NotImplementedException "TODO: Retrieval of structs from arrays is not yet supported")
+            | _, ty -> anyTypeToRegisterType ty
 
-    override this.ToString() =
-        match this.Type with
-        | RegisterType.Primitive prim ->
-            match prim with
-            | PrimitiveType.Bool -> sprintf "%b" (this.Value = 0UL)
-            | PrimitiveType.U8 -> sprintf "%iuy" (uint8 this.Value)
-            | PrimitiveType.S8 -> sprintf "%iy" (int8 this.Value)
-            | PrimitiveType.U16 -> sprintf "%ius" (uint16 this.Value)
-            | PrimitiveType.S16 -> sprintf "%is" (int16 this.Value)
-            | PrimitiveType.Char16 -> string(char this.Value)
-            | PrimitiveType.U32 -> sprintf "%iu" (uint32 this.Value)
-            | PrimitiveType.S32 -> string(int32 this.Value)
-            | PrimitiveType.Char32 -> System.Text.Rune(int32 this.Value).ToString()
-            | PrimitiveType.U64 -> sprintf "%iUL" this.Value
-            | PrimitiveType.S64 -> sprintf "%iL" (int64 this.Value)
-            | PrimitiveType.UNative -> sprintf "%iun" (unativeint this.Value)
-            | PrimitiveType.SNative -> sprintf "%in" (nativeint this.Value)
-            | PrimitiveType.F32 -> string(Unsafe.As<_, single> &this.Value)
-            | PrimitiveType.F64 -> string(Unsafe.As<_, double> &this.Value)
-        | RegisterType.Object | RegisterType.Pointer -> sprintf "0x%016X" this.Value
+        StoreConstant.fromVoidPtr rtype address
 
-let private anyTypeToRegisterType ty =
-    match ty with
-    | AnyType.ValueType(ValueType.Primitive prim) ->
-        RegisterType.Primitive prim
-    | AnyType.ReferenceType _ ->
-        RegisterType.Object
-    | AnyType.SafePointer _ | AnyType.ValueType(ValueType.Defined _ | ValueType.UnsafePointer _) ->
-        RegisterType.Pointer
+    let set gc objectTypeLookup typeSizeResolver array (source: inref<Register>) index =
+        // TODO: If array contains structs, source register contains an address, so perform struct copying.
+        let address = item gc objectTypeLookup typeSizeResolver array index
+        let rtype =
+            match getElementType gc objectTypeLookup array with
+            | _, AnyType.ValueType(ValueType.Defined _) ->
+                raise(NotImplementedException "TODO: Storing of structs into arrays is not yet supported")
+            | _, ty -> anyTypeToRegisterType ty
 
-let private anyTypeToRefOrValType ty =
-    match ty with
-    | AnyType.ReferenceType t ->  ReferenceOrValueType.Reference t
-    | AnyType.ValueType t -> ReferenceOrValueType.Value t
-    | AnyType.SafePointer _ -> invalidOp "Unexpected pointer type"
+        match rtype with
+        | RegisterType.Primitive(PrimitiveType.U8 | PrimitiveType.Bool) ->
+            InterpretRegister.copyValueTo<uint8> address &source
+        | RegisterType.Primitive PrimitiveType.S8 ->
+            InterpretRegister.copyValueTo<int8> address &source
+        | RegisterType.Primitive(PrimitiveType.U16 | PrimitiveType.Char16) ->
+            InterpretRegister.copyValueTo<uint16> address &source
+        | RegisterType.Primitive PrimitiveType.S16 ->
+            InterpretRegister.copyValueTo<int16> address &source
+        | RegisterType.Primitive(PrimitiveType.U32 | PrimitiveType.Char32) ->
+            InterpretRegister.copyValueTo<int32> address &source
+        | RegisterType.Primitive PrimitiveType.S32 ->
+            InterpretRegister.copyValueTo<uint32> address &source
+        | RegisterType.Primitive PrimitiveType.U64 ->
+            InterpretRegister.copyValueTo<uint64> address &source
+        | RegisterType.Primitive PrimitiveType.S64 ->
+            InterpretRegister.copyValueTo<int64> address &source
+        | RegisterType.Primitive PrimitiveType.F32 ->
+            InterpretRegister.copyValueTo<single> address &source
+        | RegisterType.Primitive PrimitiveType.F64 ->
+            InterpretRegister.copyValueTo<double> address &source
+        | RegisterType.Primitive PrimitiveType.UNative ->
+            InterpretRegister.copyValueTo<unativeint> address &source
+        | RegisterType.Pointer | RegisterType.Primitive PrimitiveType.SNative ->
+            InterpretRegister.copyValueTo<nativeint> address &source
+        | RegisterType.Object ->
+            InterpretRegister.copyValueTo<ObjectReference> address &source
 
 [<RequireQualifiedAccess>]
 module TypeLayout =
@@ -143,20 +250,6 @@ module TypeLayout =
     let ofObjectReference (gc: IGarbageCollector) (objectTypeLookup: ObjectTypeLookup) typeLayoutResolver o =
         let struct(rm, ty) = objectTypeLookup(gc.TypeOf o)
         ofAnyType typeLayoutResolver rm ty
-
-[<RequireQualifiedAccess>]
-module Register =
-    let ofRegisterType rtype = { Register.Value = Unchecked.defaultof<uint64>; Register.Type = rtype }
-
-    let ofTypeIndex (rm: ResolvedModule) typei =
-        rm.TypeSignatureAt typei
-        |> anyTypeToRegisterType
-        |> ofRegisterType
-
-    let ofValue<'Value when 'Value : unmanaged> rtype (value: 'Value) =
-        let mutable register = ofRegisterType rtype
-        Unsafe.As<uint64, 'Value> &register.Value <- value
-        register
 
 [<Sealed>]
 type StackFrame
@@ -242,12 +335,6 @@ type StackFrame
             current <- current'.Previous
             if current.IsSome then trace.Append Environment.NewLine |> ignore
         trace.ToString()
-
-/// Contains functions for retrieving values from registers.
-[<RequireQualifiedAccess>]
-module private InterpretRegister =
-    let inline value<'Value when 'Value : unmanaged> (register: inref<Register>) =
-        Unsafe.As<_, 'Value>(&Unsafe.AsRef(&register).Value)
 
 /// Contains functions for converting values stored in registers.
 [<RequireQualifiedAccess>]
@@ -632,26 +719,6 @@ module private ValidFlags =
         flags
 
 [<RequireQualifiedAccess>]
-module private StoreConstant =
-    let integer itype value =
-        let rtype = RegisterType.Primitive itype
-        match itype with
-        | PrimitiveType.Bool | PrimitiveType.U8 -> Register.ofValue rtype (uint8 value)
-        | PrimitiveType.S8 -> Register.ofValue rtype (int8 value)
-        | PrimitiveType.U16 | PrimitiveType.Char16 -> Register.ofValue rtype (uint16 value)
-        | PrimitiveType.S16 -> Register.ofValue rtype (int16 value)
-        | PrimitiveType.U32 | PrimitiveType.Char32 -> Register.ofValue rtype (uint32 value)
-        | PrimitiveType.S32 -> Register.ofValue rtype (int32 value)
-        | PrimitiveType.U64 -> Register.ofValue rtype (uint64 value)
-        | PrimitiveType.S64 -> Register.ofValue rtype (int64 value)
-        | PrimitiveType.UNative -> Register.ofValue rtype (unativeint value)
-        | PrimitiveType.SNative -> Register.ofValue rtype (nativeint value)
-        | PrimitiveType.F32 -> Register.ofValue rtype (single value)
-        | PrimitiveType.F64 -> Register.ofValue rtype (double value)
-
-    let nullObjectReference = Register.ofValue RegisterType.Object ObjectReference.Null
-
-[<RequireQualifiedAccess>]
 module private ObjectField =
     let checkCanMutate (field: ResolvedField) (frame: StackFrame) =
         if not field.IsMutable && not frame.CurrentMethod.IsConstructor then
@@ -924,6 +991,18 @@ let interpret
                         (ConvertRegister.s32 length)
 
                 control.TemporaryRegisters.Add(Register.ofValue RegisterType.Object array)
+            | Obj_arr_get(Register array, Register index) ->
+                let o = InterpretRegister.value<ObjectReference> &array
+                control.TemporaryRegisters.Add(ArrayObject.get gc objectTypeLookup typeSizeResolver o (ConvertRegister.s32 index))
+            | Obj_arr_set(Register array, Register index, Register source) ->
+                let o = InterpretRegister.value<ObjectReference> &array
+                ArrayObject.set gc objectTypeLookup typeSizeResolver o &source (ConvertRegister.s32 index)
+            | Obj_arr_len(ValidFlags.Arithmetic flags, ty, Register array) ->
+                let length = ArrayObject.length(InterpretRegister.value<ObjectReference> &array)
+                if isFlagSet ArithmeticFlags.ThrowOnOverflow flags
+                then StoreConstant.Checked.integer ty length
+                else StoreConstant.integer ty length
+                |> control.TemporaryRegisters.Add
             | Obj_arr_const(TypeSignature etype, Data data) ->
                 let esize = typeSizeResolver control.CurrentModule etype
 #if DEBUG
