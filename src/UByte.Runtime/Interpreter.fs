@@ -190,6 +190,10 @@ type StackFrame
     member _.CurrentModule = method.DeclaringModule
     member this.CurrentBlock = blocks.[this.BlockIndex]
     member _.Previous = prev
+    member _.PreviousMethod =
+        match prev with
+        | ValueSome previous -> ValueSome previous.CurrentMethod
+        | ValueNone -> ValueNone
 
     member this.CurrentExceptionHandler = this.CurrentBlock.ExceptionHandler
 
@@ -676,6 +680,19 @@ module private ObjectField =
             invalidOp "Cannot access field using a primitive value"
             Span()
 
+[<Sealed>]
+type EventSource () =
+    let called = Event<StackFrame>()
+    let returned = Event<StackFrame>()
+
+    member val Timer = System.Diagnostics.Stopwatch()
+
+    [<CLIEvent>] member _.MethodCalled = called.Publish
+    [<CLIEvent>] member _.MethodReturned = returned.Publish
+
+    member _.TriggerMethodCall frame = called.Trigger frame
+    member _.TriggetMethodReturn frame = returned.Trigger frame
+
 let interpret
     (gc: IGarbageCollector)
     maxStackCapacity
@@ -683,6 +700,7 @@ let interpret
     (objectTypeResolver: ObjectTypeResolver)
     (objectTypeLookup: ObjectTypeLookup)
     (typeLayoutResolver: TypeLayoutResolver)
+    (interpreterEventHandler: (EventSource -> unit) option)
     (arguments: ImmutableArray<Register>)
     (entrypoint: ResolvedMethod)
     =
@@ -691,12 +709,22 @@ let interpret
     let mutable ex = ValueNone
     use stack = new ValueStack(maxStackCapacity)
 
+    let events =
+        match interpreterEventHandler with
+        | Some handler ->
+            let source = EventSource()
+            handler source
+            ValueSome source
+        | None -> ValueNone
+
     let invoke flags (arguments: ReadOnlyMemory<Register>) (method: ResolvedMethod) =
         if isFlagSet CallFlags.RequiresTailCallOptimization flags then
             raise(NotImplementedException "Tail call optimization is not yet supported")
+
         stack.SaveAllocations()
         setupStackFrame method frame &runExternalCode
         let current = frame.Value.Value
+        if events.IsSome then events.Value.TriggerMethodCall current
         let arguments' = current.ArgumentRegisters
         if arguments.Length < arguments'.Length then
             invalidOp(sprintf "Expected %i arguments but only %i were provided" arguments'.Length arguments.Length)
@@ -704,6 +732,8 @@ let interpret
         // TODO: Check that argument register types match.
         arguments.Span.CopyTo(Span arguments')
         current.ReturnRegisters
+
+    if events.IsSome then events.Value.Timer.Start()
 
     let entryPointResults = invoke CallFlags.None (arguments.AsMemory()) entrypoint
 
@@ -836,6 +866,9 @@ let interpret
                     |> invalidOp
 
                 Span(results).CopyTo(Span control.ReturnRegisters) // TODO: Maybe Register could be a reference type? Ensuring registers are copied correctly may be confusing.
+
+                if events.IsSome then events.Value.TriggetMethodReturn control
+
                 frame.Value <- control.Previous
 
                 match control.Previous with
@@ -1066,7 +1099,7 @@ type Runtime
     member private _.AllocateArray(etype, length) =
         ArrayObject.allocate program garbageCollectorStrategy sizes.Value tresolver etype length
 
-    member runtime.InvokeEntryPoint(argv: string[], ?maxStackCapacity) =
+    member runtime.InvokeEntryPoint(argv: string[], ?maxStackCapacity, ?interpreterEventHandler) =
         match program.EntryPoint with
         | ValueSome main ->
             if main.DeclaringModule <> program then
@@ -1114,6 +1147,7 @@ type Runtime
                     tresolver
                     tlookup
                     layouts
+                    interpreterEventHandler
                     arguments
                     main
 
