@@ -953,6 +953,7 @@ let interpret
                 try
                     run.Invoke(gc, typeSizeResolver, objectTypeResolver, objectTypeLookup, typeLayoutResolver, runtimeStackFrame)
                     // TODO: Avoid code duplication with ret.
+                    if events.IsSome then events.Value.TriggetMethodReturn control
                     frame.Value <- runtimeStackFrame.Previous
                     stack.FreeAllocations()
                 finally
