@@ -19,6 +19,7 @@ type Argument =
     | Log_Events of LogEventTypes list
     | Log_To_File of ``log.txt``: string
     | Log_To_Stdout
+    | [<Unique>] Trace of ``trace.speedscope.json``: string option
 
     interface IArgParserTemplate with
         member this.Usage =
@@ -30,6 +31,7 @@ type Argument =
             | Log_Events _ -> "enables logging for the specified events"
             | Log_To_File _ -> "specify a path to a file that log messages are written to"
             | Log_To_Stdout -> "specify that log messages should also be written to standard output"
+            | Trace _ -> "specify a path to a file that will contain profiling information in speedscope format, defaults to a file named after the program in the current directory"
 
 let interpreterArgumentParser = ArgumentParser.Create<Argument>()
 
@@ -109,7 +111,15 @@ let main argv =
     let loggers = List<struct(bool * TextWriter)>()
 
     try
+        use runtime =
+            Interpreter.Runtime.Initialize ( // TODO: Use actual constructor so caller knows Runtime is disposable?
+                UByte.Format.ParseModule.fromPath program.FullName,
+                moduleImportResolver
+                // TODO: Allow selection of a GC strategy from command line options
+            )
+
         let logEventCategories = HashSet<LogEventTypes>()
+        let mutable interpreterTraceHandler = None
 
         List.iter
             (function
@@ -118,20 +128,17 @@ let main argv =
             | Log_To_Stdout ->
                 loggers.Add(struct(false, stdout))
             | Log_Events types -> for ty in types do logEventCategories.Add ty |> ignore
+            | Trace destination ->
+                interpreterTraceHandler <- Some(fun (source: Interpreter.EventSource) ->
+                    source.MethodCalled.Add <| fun frame -> printfn "Called %O" frame.CurrentMethod
+                    ())
             | _ -> ())
             fullArgumentList
-
-        use runtime =
-            Interpreter.Runtime.Initialize ( // TODO: Use actual constructor so caller knows Runtime is disposable?
-                UByte.Format.ParseModule.fromPath program.FullName,
-                moduleImportResolver
-                // TODO: Allow selection of a GC strategy from command line options
-            )
 
         if logEventCategories.Contains LogEventTypes.Resolution then
             setupResolutionLogger loggers runtime.Program
 
-        runtime.InvokeEntryPoint pargs
+        runtime.InvokeEntryPoint(pargs, ?interpreterEventHandler = interpreterTraceHandler)
     finally
         for struct(dispose, logger) in loggers do
             if dispose && logger <> null then logger.Close()

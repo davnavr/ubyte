@@ -43,6 +43,7 @@
         <![CDATA[
 param (
   [switch]$LaunchInterpreterDebugger,
+  [switch]$Trace,
   [string[]]$ApplicationArguments
 )
 
@@ -53,6 +54,7 @@ $params = @{
     Module = [IO.FileInfo]"%(Compile.OutputPath)"
     ImportedDirectories = @([IO.DirectoryInfo]"$(OutputDirectory)")
     LaunchInterpreterDebugger = $LaunchInterpreterDebugger
+    Trace = $Trace
     ApplicationArguments = $ApplicationArguments
 }
 

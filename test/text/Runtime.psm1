@@ -16,6 +16,7 @@ function Invoke-Interpreter {
         [IO.FileInfo]$Module,
         [IO.DirectoryInfo[]]$ImportedDirectories,
         [switch]$LaunchInterpreterDebugger,
+        [switch]$Trace,
         [string[]]$ApplicationArguments
     )
 
@@ -23,6 +24,7 @@ function Invoke-Interpreter {
 
     foreach ($dir in $ImportedDirectories) { $arguments += @("--import-directory") + $dir }
     if ($LaunchInterpreterDebugger) { $arguments += "--launch-interpreter-debugger" }
+    if ($Trace) { $arguments += @("--trace", [IO.Path]::ChangeExtension($Module, ".speedscope.json")) }
     if ($ApplicationArguments.Length -ge 0) { $arguments += @("--") + $ApplicationArguments }
 
     Invoke-DotNet -Command run -Arguments $arguments
