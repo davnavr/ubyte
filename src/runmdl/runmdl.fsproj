@@ -7,6 +7,8 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="Speedscope.fsi" />
+    <Compile Include="Speedscope.fs" />
     <Compile Include="Program.fs" />
 
     <PackageReference Include="Argu" Version="6.1.1" />

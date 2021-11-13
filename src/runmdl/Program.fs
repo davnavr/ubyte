@@ -1,6 +1,7 @@
 ﻿module UByte.Interpreter.Program
 
 open System.Collections.Generic
+open System.Diagnostics
 open System.IO
 
 open Argu
@@ -74,7 +75,7 @@ let main argv =
     let iargs' = interpreterArgumentParser.Parse(inputs = iargs)
     let fullArgumentList = iargs'.GetAllResults()
 
-    if iargs'.Contains <@ Launch_Interpreter_Debugger @> then System.Diagnostics.Debugger.Launch() |> ignore
+    if iargs'.Contains <@ Launch_Interpreter_Debugger @> then Debugger.Launch() |> ignore
 
     let program = FileInfo(iargs'.GetResult <@ Program @>)
 
@@ -119,7 +120,8 @@ let main argv =
             )
 
         let logEventCategories = HashSet<LogEventTypes>()
-        let mutable interpreterTraceHandler = None
+        let mutable interpreterTraceHandler, interpreterTraceOutput = None, None
+        let timer = ref None
 
         List.iter
             (function
@@ -129,16 +131,50 @@ let main argv =
                 loggers.Add(struct(false, stdout))
             | Log_Events types -> for ty in types do logEventCategories.Add ty |> ignore
             | Trace destination ->
-                interpreterTraceHandler <- Some(fun (source: Interpreter.EventSource) ->
-                    source.MethodCalled.Add <| fun frame -> printfn "Called %O" frame.CurrentMethod
-                    ())
+                let destination' =
+                    Path.ChangeExtension(program.FullName, ".speedscope.json")
+                    |> defaultArg destination
+                    |> FileInfo
+
+                let events = System.Collections.Immutable.ImmutableArray.CreateBuilder<Speedscope.FrameEvent>()
+
+                interpreterTraceOutput <- Some(destination', events)
+
+                interpreterTraceHandler <- Some <| fun (source: Interpreter.EventSource) ->
+                    timer.Value <- Some(Stopwatch())
+                    let timer = timer.Value.Value
+                    source.MethodCalled.Add <| fun frame ->
+                        if not timer.IsRunning then timer.Start()
+                        let time = timer.Elapsed
+                        events.Add
+                            { Speedscope.Time = time
+                              Speedscope.Type = Speedscope.OpenFrame
+                              Speedscope.Frame = frame }
+                    source.MethodReturned.Add <| fun frame ->
+                        let time = timer.Elapsed
+                        events.Add
+                            { Speedscope.Time = time
+                              Speedscope.Type = Speedscope.CloseFrame
+                              Speedscope.Frame = frame }
             | _ -> ())
             fullArgumentList
 
         if logEventCategories.Contains LogEventTypes.Resolution then
             setupResolutionLogger loggers runtime.Program
 
-        runtime.InvokeEntryPoint(pargs, ?interpreterEventHandler = interpreterTraceHandler)
+        let result = runtime.InvokeEntryPoint(pargs, ?interpreterEventHandler = interpreterTraceHandler)
+
+        if timer.Value.IsSome then
+            let timer = timer.Value.Value
+            timer.Stop()
+
+            match interpreterTraceOutput with
+            | Some(destination, events) ->
+                use output = destination.Open(FileMode.Create)
+                Speedscope.writeToStream output (events.ToImmutable()) (System.TimeSpan.Zero) timer.Elapsed program.Name
+            | None -> ()
+
+        result
     finally
         for struct(dispose, logger) in loggers do
             if dispose && logger <> null then logger.Close()

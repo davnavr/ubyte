@@ -685,8 +685,6 @@ type EventSource () =
     let called = Event<StackFrame>()
     let returned = Event<StackFrame>()
 
-    member val Timer = System.Diagnostics.Stopwatch()
-
     [<CLIEvent>] member _.MethodCalled = called.Publish
     [<CLIEvent>] member _.MethodReturned = returned.Publish
 
@@ -732,8 +730,6 @@ let interpret
         // TODO: Check that argument register types match.
         arguments.Span.CopyTo(Span arguments')
         current.ReturnRegisters
-
-    if events.IsSome then events.Value.Timer.Start()
 
     let entryPointResults = invoke CallFlags.None (arguments.AsMemory()) entrypoint
 
