@@ -689,7 +689,7 @@ type EventSource () =
     [<CLIEvent>] member _.MethodReturned = returned.Publish
 
     member _.TriggerMethodCall frame = called.Trigger frame
-    member _.TriggetMethodReturn frame = returned.Trigger frame
+    member _.TriggerMethodReturn frame = returned.Trigger frame
 
 let interpret
     (gc: IGarbageCollector)
@@ -863,7 +863,7 @@ let interpret
 
                 Span(results).CopyTo(Span control.ReturnRegisters) // TODO: Maybe Register could be a reference type? Ensuring registers are copied correctly may be confusing.
 
-                if events.IsSome then events.Value.TriggetMethodReturn control
+                if events.IsSome then events.Value.TriggerMethodReturn control
 
                 frame.Value <- control.Previous
 
@@ -953,7 +953,7 @@ let interpret
                 try
                     run.Invoke(gc, typeSizeResolver, objectTypeResolver, objectTypeLookup, typeLayoutResolver, runtimeStackFrame)
                     // TODO: Avoid code duplication with ret.
-                    if events.IsSome then events.Value.TriggetMethodReturn control
+                    if events.IsSome then events.Value.TriggerMethodReturn runtimeStackFrame
                     frame.Value <- runtimeStackFrame.Previous
                     stack.FreeAllocations()
                 finally
