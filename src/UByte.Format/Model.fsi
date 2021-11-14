@@ -280,12 +280,6 @@ module InstructionSet =
         | ThrowOnNullThis = 0b1000_0000uy
 
     [<Flags>]
-    type AllocationFlags =
-        | None = 0uy
-        | ThrowOnFailure = 1uy
-        | ValidMask = 1uy
-
-    [<Flags>]
     type MemoryAccessFlags =
         | None = 0uy
         | ThrowOnInvalidAccess = 1uy
@@ -793,25 +787,14 @@ module InstructionSet =
         // TODO: How to allocate an "array" of object references? Maybe have a separate RegisterType type?
         /// <summary>
         /// <para>
-        /// <c>&lt;result&gt; = alloca [throw.fail] &lt;count&gt; &lt;type&gt;</c>
+        /// <c>&lt;result&gt; = alloca &lt;count&gt; &lt;type&gt;</c>
         /// </para>
         /// <para>
         /// Allocates a contiguous region of memory enough to hold the specified number of instances of the specified types, and
         /// returns a pointer to the region of memory.
         /// </para>
         /// </summary>
-        | Alloca of AllocationFlags * count: RegisterIndex * TypeSignatureIndex
-        /// <summary>
-        /// <para>
-        /// <c>&lt;result&gt; = alloca.obj [throw.fail] &lt;constructor&gt; (&lt;argument1&gt;, &lt;argument2&gt;, ...)</c>
-        /// </para>
-        /// <para>
-        /// Allocates a region of memory to contain an instance of a type, calls the specified <paramref name="constructor"/>
-        /// providing a pointer to the region of memory along with the specified <paramref name="arguments"/>, and returns a
-        /// pointer to the region of memory.
-        /// </para>
-        /// </summary>
-        | Alloca_obj of AllocationFlags * constructor: MethodIndex * arguments: vector<RegisterIndex> // TODO: How to support VTable for some instances, add a new alloca instruction?
+        | Alloca of count: RegisterIndex * TypeSignatureIndex
 
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
 type IdentifierSection = // TODO: Rename to something else

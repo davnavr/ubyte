@@ -285,16 +285,10 @@ let instruction instr dest =
         opcode Opcode.``obj.arr.const`` dest
         index etype dest
         index data dest
-    | Alloca(flags, count, ty) ->
+    | Alloca(count, ty) ->
         opcode Opcode.alloca dest
-        bits1 flags dest
         index count dest
         index ty dest
-    | Alloca_obj(flags, ctor, args) ->
-        opcode Opcode.``alloca.obj`` dest
-        bits1 flags dest
-        index ctor dest
-        vector index args dest
 
 let localRegisterMapping (struct(tindex: TemporaryIndex, lindex: LocalIndex)) dest =
     index tindex dest

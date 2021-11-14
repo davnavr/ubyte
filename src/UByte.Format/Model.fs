@@ -209,12 +209,6 @@ module InstructionSet =
         | ThrowOnNullThis = 0b1000_0000uy
 
     [<Flags>]
-    type AllocationFlags =
-        | None = 0uy
-        | ThrowOnFailure = 1uy
-        | ValidMask = 1uy
-
-    [<Flags>]
     type MemoryAccessFlags =
         | None = 0uy
         | ThrowOnInvalidAccess = 1uy
@@ -273,8 +267,7 @@ module InstructionSet =
         | Obj_arr_set of array: RegisterIndex * index: RegisterIndex * source: RegisterIndex
         | Obj_arr_addr of MemoryAccessFlags * array: RegisterIndex * index: RegisterIndex
         | Obj_arr_const of etype: TypeSignatureIndex * data: DataIndex
-        | Alloca of AllocationFlags * count: RegisterIndex * TypeSignatureIndex
-        | Alloca_obj of AllocationFlags * constructor: MethodIndex * arguments: vector<RegisterIndex>
+        | Alloca of count: RegisterIndex * TypeSignatureIndex
 
 [<RequireQualifiedAccess>]
 type IdentifierSection =

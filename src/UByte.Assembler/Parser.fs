@@ -660,23 +660,12 @@ let code: Parser<ParsedCode, _> =
         }
         |> addInstructionParser "obj.fd.addr"
 
-        let memoryAllocationFlags = optattributes [
-            "throw.fail", InstructionSet.AllocationFlags.ThrowOnFailure
-        ]
-
-        pipe3 memoryAllocationFlags localCodeRegister symbol <| fun flags creg ty rlookup resolver errors _ -> voptional {
+        pipe2 localCodeRegister symbol <| fun creg ty rlookup resolver errors _ -> voptional {
             let! creg' = lookupRegisterName rlookup errors creg
             let! tindex = lookupTypeSignature resolver errors ty
-            return InstructionSet.Alloca(flags, creg', tindex)
+            return InstructionSet.Alloca(creg', tindex)
         }
         |> addInstructionParser "alloca"
-
-        pipe3 memoryAllocationFlags symbol codeRegisterList <| fun flags ctor args rlookup resolver errors _ -> voptional {
-            let! ctor' = lookupMethodName resolver errors ctor
-            let! args' = lookupRegisterList rlookup errors args
-            return InstructionSet.Alloca_obj(flags, ctor', args')
-        }
-        |> addInstructionParser "alloca.obj"
 
         getPosition .>>. codeInstructionName .>> whitespace >>= fun (pos, name) ->
             match instructions.TryGetValue name with

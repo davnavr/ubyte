@@ -803,11 +803,6 @@ module private ValidFlags =
             failwithf "TODO: Bad arithmetic flags %A" flags
         flags
 
-    let (|Allocation|) (flags: AllocationFlags) =
-        if flags &&& (~~~AllocationFlags.ValidMask) <> AllocationFlags.None then
-            failwithf "TODO: Bad allocation flags %A" flags
-        flags
-
     let (|MemoryAccess|) mask (flags: MemoryAccessFlags) =
         if flags &&& (~~~mask) <> MemoryAccessFlags.None then
             failwithf "TODO: Bad memory access flags %A" flags
@@ -844,13 +839,11 @@ module private ObjectField =
 
 [<RequireQualifiedAccess>]
 module private MemoryOperations =
-    let alloca (stack: ValueStack) flags size count =
+    let alloca (stack: ValueStack) size count =
         // TODO: If multiple object references are allocated on the stack, don't forget to root them.
         let mutable address = Unchecked.defaultof<_>
         if stack.TryAllocate(Checked.(*) size count, &address) then
             address
-        elif isFlagSet AllocationFlags.ThrowOnFailure flags then
-            invalidOp "Failed to allocate on stack, maximum capacity exceeded"
         else
             Unchecked.defaultof<voidptr>
 
@@ -906,7 +899,7 @@ module private MemoryOperations =
             Register.ofValue<ObjectReference> RegisterType.Object (read())
         | AnyType.ValueType(ValueType.Defined _) ->
             let size = typeSizeResolver rm ty
-            let destination = alloca stack AllocationFlags.None size 1
+            let destination = alloca stack size 1
             Span<byte>(source, size).CopyTo(Span<byte>(destination, size))
             Register.ofValue<nativeptr<byte>> (RegisterType.Pointer(uint32 size)) (NativePtr.ofVoidPtr destination)
 
@@ -1220,18 +1213,13 @@ let interpret
                 // TODO: Throw exception on invalid memory load.
                 let address = InterpretRegister.value<nativeptr<byte>> &addr
                 control.TemporaryRegisters.Add(MemoryOperations.load stack typeSizeResolver (NativePtr.toVoidPtr address) control.CurrentModule ty)
-            | Alloca(ValidFlags.Allocation flags, Register count, TypeSignature ty) -> // TODO: Have alloca-like instructions return null if allocation failed.
+            | Alloca(Register count, TypeSignature ty) ->
                 // TODO: Have flag to skip 0 init.
                 let size = typeSizeResolver control.CurrentModule ty
-                MemoryOperations.alloca stack flags size (ConvertRegister.s32 &count)
+                MemoryOperations.alloca stack size (ConvertRegister.s32 &count)
                 |> NativePtr.ofVoidPtr<byte>
                 |> Register.ofValue(RegisterType.Pointer(uint32 size))
                 |> control.TemporaryRegisters.Add
-            | Alloca_obj(ValidFlags.Allocation flags, Method ctor, LookupRegisterArray arguments) -> // TODO: Rename alloca.obj instruction (maybe obj.new.alloca)
-                let size = (typeLayoutResolver ctor.DeclaringType).Size
-                let o = NativePtr.ofVoidPtr<byte>(MemoryOperations.alloca stack flags size 1)
-                invoke CallFlags.None (ReadOnlyMemory(setupConstructorArguments arguments o)) ctor |> ignore
-                control.TemporaryRegisters.Add(Register.ofValue (RegisterType.Pointer(uint32 size)) o)
             //| Mem_init ->
             | Mem_init_const(ValidFlags.MemoryAccess MemoryAccessFlags.RawAccessValidMask _, TypeSignature ty, Register address, Data data) ->
 #if DEBUG // NOTE: For mem.init.const, type signature might not be needed a simple copying of bytes is performed. Could be kept in order to check that the data.Length makes sense.
