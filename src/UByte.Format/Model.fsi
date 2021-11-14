@@ -162,10 +162,11 @@ type PrimitiveType =
 
     interface IEquatable<PrimitiveType>
 
-[<RequireQualifiedAccess; IsReadOnly; Struct>]
+[<RequireQualifiedAccess; NoComparison; StructuralEquality>]
 type RegisterType =
     | Primitive of PrimitiveType
-    | Pointer
+    /// A pointer to instances of a type with the specified size.
+    | Pointer of size: uint32
     | Object
 
 module InstructionSet =
@@ -295,10 +296,6 @@ module InstructionSet =
 
     /// <remarks>
     /// <para>
-    /// Instructions that store integer constants into a register <c>const.</c> are followed by the integer constants in the
-    /// endianness specified in the module header.
-    /// </para>
-    /// <para>
     /// For instructions that take a vector of registers, such as <c>ret</c> or <c>call</c>, the length of the vector is
     /// included as usual to simplify parsing.
     /// </para>
@@ -308,11 +305,11 @@ module InstructionSet =
     /// of temporary registers introduced is equal to the number of return values.
     /// </para>
     /// </remarks>
-    /// <seealso cref="T:UByte.Format.Model.InstructionSet.CallFlags" />
     [<NoComparison; NoEquality>]
     type Instruction =
         // NOTE: If efficiency is needed, could theoretically omit length integers from Ret and Call instructions
-        // TODO: Add FieldIndex/RegisterIndex that points to exception to throw in the event that an instruction throws an exception (e.g. add throw.ovf @my_exception_value ...)
+        // TODO: Add FieldIndex/RegisterIndex that points to exception to throw in the event that an instruction throws an exception (e.g. %result = add throw.ovf @my_exception_value ...)
+        // TODO: Instead of above, could have optional flag that introduces a success register (e.g. (%success, %result) = add check.ovf ...)
         /// <summary>
         /// <para>
         /// <c>nop</c>
@@ -1189,6 +1186,11 @@ module VersionNumbers =
 [<RequireQualifiedAccess>]
 module MethodSignature =
     val empty : MethodSignature
+
+[<RequireQualifiedAccess>]
+module RegisterType =
+    val primitive : PrimitiveType -> RegisterType
+    val pointer : size: uint32 -> RegisterType
 
 [<RequireQualifiedAccess>]
 module Name =

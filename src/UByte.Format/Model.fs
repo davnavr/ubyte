@@ -1,6 +1,7 @@
 ﻿module UByte.Format.Model
 
 open System
+open System.Collections.Generic
 open System.Collections.Immutable
 open System.Runtime.CompilerServices
 open System.Text
@@ -129,8 +130,8 @@ type PrimitiveType =
     | F32
     | F64
 
-[<RequireQualifiedAccess; Struct>]
-type RegisterType = | Primitive of PrimitiveType | Pointer | Object
+[<RequireQualifiedAccess>]
+type RegisterType = | Primitive of PrimitiveType | Pointer of size: uint32 | Object
 
 module InstructionSet =
     type BlockOffset = varint
@@ -541,6 +542,27 @@ module MethodSignature =
     let empty =
         { ReturnTypes = ImmutableArray.Empty
           ParameterTypes = ImmutableArray.Empty }
+
+module RegisterType =
+    let private primitives = Dictionary()
+
+    let primitive t =
+        match primitives.TryGetValue t with
+        | true, existing -> existing
+        | false, _ ->
+            let rtype = RegisterType.Primitive t
+            primitives.[t] <- rtype
+            rtype
+
+    let private pointerTypeSizes = Dictionary()
+
+    let pointer size =
+        match pointerTypeSizes.TryGetValue size with
+        | true, existing -> existing
+        | false, _ ->
+            let rtype = RegisterType.Pointer size
+            pointerTypeSizes.[size] <- rtype
+            rtype
 
 module VersionNumbers =
     let empty = VersionNumbers ImmutableArray.Empty
