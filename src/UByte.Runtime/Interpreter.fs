@@ -141,9 +141,9 @@ module private StoreConstant =
         | RegisterType.Primitive PrimitiveType.S64 -> Register.ofValueAddress<int64> ty address
         | RegisterType.Primitive PrimitiveType.F32 -> Register.ofValueAddress<single> ty address
         | RegisterType.Primitive PrimitiveType.F64 -> Register.ofValueAddress<double> ty address
-        | RegisterType.Pointer _ | RegisterType.Primitive PrimitiveType.SNative -> Register.ofValueAddress<nativeint> ty address
+        | RegisterType.Primitive PrimitiveType.SNative -> Register.ofValueAddress<nativeint> ty address
         | RegisterType.Object -> Register.ofValueAddress<ObjectReference> ty address
-        | RegisterType.Primitive PrimitiveType.UNative -> Register.ofValueAddress<unativeint> ty address
+        | RegisterType.Pointer _ | RegisterType.Primitive PrimitiveType.UNative -> Register.ofValueAddress<unativeint> ty address
 
     [<RequireQualifiedAccess>]
     module Checked =
@@ -239,9 +239,9 @@ module private ArrayObject =
             InterpretRegister.copyValueTo<single> address &source
         | RegisterType.Primitive PrimitiveType.F64 ->
             InterpretRegister.copyValueTo<double> address &source
-        | RegisterType.Primitive PrimitiveType.UNative ->
+        | RegisterType.Pointer _ | RegisterType.Primitive PrimitiveType.UNative ->
             InterpretRegister.copyValueTo<unativeint> address &source
-        | RegisterType.Pointer _ | RegisterType.Primitive PrimitiveType.SNative ->
+        | RegisterType.Primitive PrimitiveType.SNative ->
             InterpretRegister.copyValueTo<nativeint> address &source
         | RegisterType.Object ->
             InterpretRegister.copyValueTo<ObjectReference> address &source
@@ -366,9 +366,9 @@ module private ConvertRegister =
         | RegisterType.Primitive PrimitiveType.S64 -> s64(InterpretRegister.value<int64> &register)
         | RegisterType.Primitive PrimitiveType.F32 -> f32(InterpretRegister.value<single> &register)
         | RegisterType.Primitive PrimitiveType.F64 -> f64(InterpretRegister.value<double> &register)
-        | RegisterType.Primitive PrimitiveType.UNative -> unative(InterpretRegister.value<unativeint> &register)
-        | RegisterType.Primitive PrimitiveType.SNative | RegisterType.Pointer _ ->
-            snative(InterpretRegister.value<nativeint> &register)
+        | RegisterType.Primitive PrimitiveType.UNative | RegisterType.Pointer _ ->
+            unative(InterpretRegister.value<unativeint> &register)
+        | RegisterType.Primitive PrimitiveType.SNative-> snative(InterpretRegister.value<nativeint> &register)
         | RegisterType.Object -> noObjectReference()
 
     let u8 (register: inref<_>) =
@@ -412,6 +412,13 @@ module private ConvertRegister =
 module private RegisterArithmetic = // TODO: Fix, pointer arithmetic does not take into account the size of the type pointed to
     let private noObjectReferences() = invalidOp "Cannot use object reference in an arithmetic operation"
 
+    let private pointerSizeMismatch expected actual =
+        sprintf
+            "Attempt to perform pointer arithmetic with mismatching pointee size, expected %i but got %i"
+            expected
+            actual
+        |> invalidOp
+
     let inline private binop opu8 ops8 opu16 ops16 opu32 ops32 opu64 ops64 opunative opsnative opf32 opf64 rtype (xreg: inref<_>) (yreg: inref<_>) =
         match rtype with
         | RegisterType.Primitive(PrimitiveType.U8 | PrimitiveType.Bool) ->
@@ -432,13 +439,29 @@ module private RegisterArithmetic = // TODO: Fix, pointer arithmetic does not ta
             Register.ofValue rtype (ops64 (ConvertRegister.s64 &xreg) (ConvertRegister.s64 &yreg))
         | RegisterType.Primitive PrimitiveType.UNative ->
             Register.ofValue rtype (opunative (ConvertRegister.unative &xreg) (ConvertRegister.unative &yreg))
-        | RegisterType.Primitive PrimitiveType.SNative | RegisterType.Pointer _ ->
-            failwith "TODO: Handle pointer arithmetic"
+        | RegisterType.Primitive PrimitiveType.SNative ->
             Register.ofValue rtype (opsnative (ConvertRegister.snative &xreg) (ConvertRegister.snative &yreg))
         | RegisterType.Primitive PrimitiveType.F32 ->
             Register.ofValue rtype (opf32 (ConvertRegister.f32 &xreg) (ConvertRegister.f32 &yreg))
         | RegisterType.Primitive PrimitiveType.F64 ->
             Register.ofValue rtype (opf64 (ConvertRegister.f64 &xreg) (ConvertRegister.f64 &yreg))
+        | RegisterType.Pointer size ->
+            match xreg.Type, yreg.Type with
+            | RegisterType.Pointer _, RegisterType.Pointer _ ->
+                invalidOp "Arithmetic operations with multiple pointer types are prohibited"
+            | RegisterType.Pointer xsize, _ when xsize = size ->
+                let x = InterpretRegister.value<unativeint> &xreg
+                let y = Checked.(*) (ConvertRegister.unative &yreg) (unativeint size)
+                Register.ofValue rtype (opunative x y)
+            | _, RegisterType.Pointer ysize when ysize = size ->
+                let x = Checked.(*) (ConvertRegister.unative &xreg) (unativeint size)
+                let y = InterpretRegister.value<unativeint> &yreg
+                Register.ofValue rtype (opunative x y)
+            | RegisterType.Pointer bad, _
+            | _, RegisterType.Pointer bad ->
+                pointerSizeMismatch size bad
+            | _, _ ->
+                Register.ofValue rtype (opunative (ConvertRegister.unative &xreg) (ConvertRegister.unative &yreg))
         | RegisterType.Object -> noObjectReferences()
 
     let add rtype (xreg: inref<_>) (yreg: inref<_>) = binop (+) (+) (+) (+) (+) (+) (+) (+) (+) (+) (+) (+) rtype &xreg &yreg
@@ -480,9 +503,9 @@ module private RegisterArithmetic = // TODO: Fix, pointer arithmetic does not ta
             Register.ofValue rtype (opu64 (ConvertRegister.u64 &xreg) (ConvertRegister.u64 &yreg))
         | RegisterType.Primitive PrimitiveType.S64 ->
             Register.ofValue rtype (ops64 (ConvertRegister.s64 &xreg) (ConvertRegister.s64 &yreg))
-        | RegisterType.Primitive PrimitiveType.UNative ->
+        | RegisterType.Primitive PrimitiveType.UNative | RegisterType.Pointer _ ->
             Register.ofValue rtype (opunative (ConvertRegister.unative &xreg) (ConvertRegister.unative &yreg))
-        | RegisterType.Primitive PrimitiveType.SNative | RegisterType.Pointer _ ->
+        | RegisterType.Primitive PrimitiveType.SNative ->
             Register.ofValue rtype (opsnative (ConvertRegister.snative &xreg) (ConvertRegister.snative &yreg))
         | RegisterType.Object -> noObjectReferences()
 
@@ -497,8 +520,7 @@ module private RegisterArithmetic = // TODO: Fix, pointer arithmetic does not ta
 
     let inline private unop opu8 ops8 opu16 ops16 opu32 ops32 opu64 ops64 opunative opsnative opf32 opf64 rtype (register: inref<_>) =
         match rtype with
-        | RegisterType.Pointer _ | RegisterType.Primitive PrimitiveType.SNative ->
-            failwith "TODO: Handle pointer arithmetic"
+        | RegisterType.Primitive PrimitiveType.SNative ->
             Register.ofValue rtype (opsnative(InterpretRegister.value<nativeint> &register))
         | RegisterType.Primitive(PrimitiveType.Bool | PrimitiveType.U8) ->
             Register.ofValue rtype (opu8(InterpretRegister.value<uint8> &register))
@@ -523,6 +545,14 @@ module private RegisterArithmetic = // TODO: Fix, pointer arithmetic does not ta
         | RegisterType.Primitive PrimitiveType.F64 ->
             Register.ofValue rtype (opf64(InterpretRegister.value<double> &register))
         | RegisterType.Object -> noObjectReferences()
+        | RegisterType.Pointer size ->
+            match register.Type with
+            | RegisterType.Pointer rsize when size = rsize ->
+                Register.ofValue rtype (opunative(Checked.(*) (InterpretRegister.value<unativeint> &register) (unativeint size)))
+            | _ ->
+                Register.ofValue rtype (opunative(InterpretRegister.value<unativeint> &register))
+            | RegisterType.Pointer rsize ->
+                pointerSizeMismatch size rsize
 
     let inline private oneop (op: _ -> _ -> _) = op LanguagePrimitives.GenericOne
 
@@ -533,8 +563,6 @@ module private RegisterArithmetic = // TODO: Fix, pointer arithmetic does not ta
 
     let inline private bunop opu8 ops8 opu16 ops16 opu32 ops32 opu64 ops64 opunative opsnative rtype (register: inref<_>) =
         match rtype with
-        | RegisterType.Pointer _ | RegisterType.Primitive PrimitiveType.SNative ->
-            Register.ofValue rtype (opsnative(InterpretRegister.value<nativeint> &register))
         | RegisterType.Primitive(PrimitiveType.Bool | PrimitiveType.U8) ->
             Register.ofValue rtype (opu8(InterpretRegister.value<uint8> &register))
         | RegisterType.Primitive PrimitiveType.S8 ->
@@ -551,8 +579,10 @@ module private RegisterArithmetic = // TODO: Fix, pointer arithmetic does not ta
             Register.ofValue rtype (opu64(InterpretRegister.value<uint64> &register))
         | RegisterType.Primitive PrimitiveType.S64 ->
             Register.ofValue rtype (ops64(InterpretRegister.value<int64> &register))
-        | RegisterType.Primitive PrimitiveType.UNative ->
+        | RegisterType.Pointer _ | RegisterType.Primitive PrimitiveType.UNative ->
             Register.ofValue rtype (opunative(InterpretRegister.value<unativeint> &register))
+        | RegisterType.Primitive PrimitiveType.SNative ->
+            Register.ofValue rtype (opsnative(InterpretRegister.value<nativeint> &register))
         | RegisterType.Object -> noObjectReferences()
 
     let ``not`` rtype (register: inref<_>) =
