@@ -1148,8 +1148,14 @@ let interpret
                 invoke CallFlags.None (ReadOnlyMemory(setupConstructorArguments arguments o)) ctor |> ignore
                 control.TemporaryRegisters.Add o
             //| Mem_init ->
-            //| Mem_init_const(ValidFlags.MemoryAccess MemoryAccessFlags.RawAccessValidMask _, Register count, TypeSignature t, Register address, Register value) ->
-            //    failwith "BAD"
+            | Mem_init_const(ValidFlags.MemoryAccess MemoryAccessFlags.RawAccessValidMask _, TypeSignature ty, Register address, Data data) ->
+#if DEBUG // NOTE: For mem.init.const, type signature might not be needed a simple copying of bytes is performed. Could be kept in order to check that the data.Length makes sense.
+                let esize = typeSizeResolver control.CurrentModule ty
+                if data.Length % esize <> 0 then // Duplicated from obj.arr.const
+                    raise(NotImplementedException "TODO: How to handle mismatch in constant data array length?")
+#endif
+                let destination = NativePtr.toVoidPtr(InterpretRegister.value<nativeptr<byte>> &address)
+                data.AsSpan().CopyTo(Span<byte>(destination, data.Length))
             //| Mem_cpy ->
             | Nop -> ()
 
@@ -1172,7 +1178,10 @@ let interpret
         | e -> ex <- ValueSome e
 
     match ex with
-    | ValueSome e -> raise e
+    | ValueSome e ->
+        match frame.Value with
+        | ValueSome existing -> raise(NotImplementedException(existing.StackTrace, e))
+        | ValueNone -> raise e
     | ValueNone -> ()
 
     match frame.contents with
