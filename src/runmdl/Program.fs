@@ -11,6 +11,7 @@ open UByte.Runtime
 [<System.Runtime.CompilerServices.IsReadOnly; Struct; RequireQualifiedAccess>]
 type LogEventTypes =
     | Resolution
+    | Allocation
 
 type Argument =
     | [<ExactlyOnce>] Program of ``program.binmdl``: string
@@ -162,7 +163,22 @@ let main argv =
         if logEventCategories.Contains LogEventTypes.Resolution then
             setupResolutionLogger loggers runtime.Program
 
-        let result = runtime.InvokeEntryPoint(pargs, ?interpreterEventHandler = interpreterTraceHandler)
+        let stackEventHandler =
+            if logEventCategories.Contains LogEventTypes.Allocation then
+                Some <| fun (stack: MemoryManagement.ValueStack) ->
+                    stack.Allocated.Add <| fun arg ->
+                        logfn loggers "Allocated %i bytes at 0x%08X" arg.Size arg.Address
+                    stack.Freed.Add <| fun arg ->
+                        logfn loggers "Freed %i bytes" arg
+            else
+                None
+
+        let result =
+            runtime.InvokeEntryPoint (
+                argv = pargs,
+                ?interpreterEventHandler = interpreterTraceHandler,
+                ?stackEventHandler = stackEventHandler
+            )
 
         if timer.Value.IsSome then
             let timer = timer.Value.Value

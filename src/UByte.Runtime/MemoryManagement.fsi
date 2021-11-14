@@ -53,11 +53,14 @@ type CollectionStrategies =
 type ValueStack =
     /// <summary>Constructs a new stack to store values with the specified size.</summary>
     /// <param name="capacity">The maximum capacity of the stack, in bytes.</param>
-    new: capacity: int32 -> ValueStack
+    internal new: capacity: int32 -> ValueStack
 
-    member TryAllocate : size: int32 * address: outref<voidptr> -> bool
-    member SaveAllocations: unit -> unit
-    member FreeAllocations: unit -> unit
+    member internal TryAllocate : size: int32 * address: outref<voidptr> -> bool
+    member internal SaveAllocations: unit -> unit
+    member internal FreeAllocations: unit -> unit
+
+    [<CLIEvent>] member Allocated : IEvent<struct {| Size: nativeint; Address: nativeint |}>
+    [<CLIEvent>] member Freed : IEvent<nativeint>
 
     override Finalize : unit -> unit
 

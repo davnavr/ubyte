@@ -922,6 +922,7 @@ let interpret
     (objectTypeLookup: ObjectTypeLookup)
     (typeLayoutResolver: TypeLayoutResolver)
     (interpreterEventHandler: (EventSource -> unit) option)
+    (stackEventHandler: _ option)
     (arguments: ImmutableArray<Register>)
     (entrypoint: ResolvedMethod)
     =
@@ -929,6 +930,9 @@ let interpret
     let mutable runExternalCode: _ voption = ValueNone
     let mutable ex = ValueNone
     use stack = new ValueStack(maxStackCapacity)
+
+    if stackEventHandler.IsSome then
+        stackEventHandler.Value stack
 
     let events =
         match interpreterEventHandler with
@@ -1385,7 +1389,7 @@ type Runtime
     member private _.AllocateArray(etype, length) =
         ArrayObject.allocate program garbageCollectorStrategy sizes.Value tresolver etype length
 
-    member runtime.InvokeEntryPoint(argv: string[], ?maxStackCapacity, ?interpreterEventHandler) =
+    member runtime.InvokeEntryPoint(argv: string[], ?maxStackCapacity, ?interpreterEventHandler, ?stackEventHandler) =
         match program.EntryPoint with
         | ValueSome main ->
             if main.DeclaringModule <> program then
@@ -1434,6 +1438,7 @@ type Runtime
                     tlookup
                     layouts
                     interpreterEventHandler
+                    stackEventHandler
                     arguments
                     main
 

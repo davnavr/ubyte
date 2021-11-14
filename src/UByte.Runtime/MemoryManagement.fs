@@ -175,17 +175,30 @@ type ValueStack (capacity: int32) =
     let mutable disposed = false
     let mutable remaining = capacity
 
+    let allocated = Event<_>()
+    let freed = Event<_>()
+
     member _.TryAllocate(size, address: outref<_>) =
         let size = nativeint size
         if size < 0n then raise(ArgumentOutOfRangeException(nameof size, size, "The size to allocate cannot be negative"))
         if remaining >= size then
-            address <- NativePtr.ofNativeInt<byte>(start + capacity - remaining) |> NativePtr.toVoidPtr
+            let addr = NativePtr.ofNativeInt<byte>(start + capacity - remaining)
+            address <- NativePtr.toVoidPtr addr
+            allocated.Trigger(struct {| Size = size; Address = NativePtr.toNativeInt addr |})
             remaining <- remaining - size
             true
         else false
 
-    member _.SaveAllocations() = previous.Push remaining
-    member _.FreeAllocations() = remaining <- previous.Pop()
+    member _.SaveAllocations() =
+        previous.Push remaining
+
+    member _.FreeAllocations() =
+        let current = remaining
+        remaining <- previous.Pop()
+        freed.Trigger(remaining - current)
+
+    [<CLIEvent>] member _.Allocated = allocated.Publish
+    [<CLIEvent>] member _.Freed = freed.Publish
 
     override stack.Finalize() = (stack :> IDisposable).Dispose()
 

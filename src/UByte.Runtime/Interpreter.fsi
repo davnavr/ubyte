@@ -43,11 +43,13 @@ type Runtime =
     /// <param name="argv">The arguments to pass to the entry-point method of the program.</param>
     /// <param name="maxStackCapacity">Specifies the size, in bytes, of the stack.</param>
     /// <param name="interpreterEventHandler" />
+    /// <param name="stackEventHandler" />
     /// <returns>The integer exit code returned by the program.</returns>
     /// <exception cref="T:UByte.Runtime.Interpreter.MissingEntryPointException" />
     member InvokeEntryPoint :
         argv: string[] *
         ?maxStackCapacity: int32 *
-        ?interpreterEventHandler: (EventSource -> unit) -> int32
+        ?interpreterEventHandler: (EventSource -> unit) *
+        ?stackEventHandler: (ValueStack -> unit) -> int32
 
     interface System.IDisposable
