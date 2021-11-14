@@ -167,18 +167,20 @@ type CollectionStrategies =
     static member NaiveMarkAndSweep() = CollectionStrategies.NaiveMarkAndSweep(0xFFFu)
 
 [<Sealed>]
-type ValueStack (size: int32) =
-    do if size <= 0 then raise(ArgumentOutOfRangeException(nameof size, size, "The size of the stack must be positive"))
-    let start = Marshal.AllocHGlobal size
+type ValueStack (capacity: int32) =
+    let capacity = nativeint capacity
+    do if capacity <= 0n then raise(ArgumentOutOfRangeException(nameof capacity, capacity, "The capacity of the stack must be positive"))
+    let start = Marshal.AllocHGlobal capacity
     let previous = Stack<nativeint>()
     let mutable disposed = false
-    let mutable remaining = nativeint size
+    let mutable remaining = capacity
 
     member _.TryAllocate(size, address: outref<_>) =
         let size = nativeint size
         if size < 0n then raise(ArgumentOutOfRangeException(nameof size, size, "The size to allocate cannot be negative"))
         if remaining >= size then
-            address <- NativePtr.ofNativeInt<byte>(start + size - remaining) |> NativePtr.toVoidPtr
+            address <- NativePtr.ofNativeInt<byte>(start + capacity - remaining) |> NativePtr.toVoidPtr
+            remaining <- remaining - size
             true
         else false
 

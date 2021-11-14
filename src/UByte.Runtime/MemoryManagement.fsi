@@ -52,8 +52,8 @@ type CollectionStrategies =
 [<Sealed>]
 type ValueStack =
     /// <summary>Constructs a new stack to store values with the specified size.</summary>
-    /// <param name="size">The maximum capacity of the stack, in bytes.</param>
-    new: size: int32 -> ValueStack
+    /// <param name="capacity">The maximum capacity of the stack, in bytes.</param>
+    new: capacity: int32 -> ValueStack
 
     member TryAllocate : size: int32 * address: outref<voidptr> -> bool
     member SaveAllocations: unit -> unit
