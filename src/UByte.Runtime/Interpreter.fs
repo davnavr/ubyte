@@ -1251,7 +1251,13 @@ let interpret
                 |> NativePtr.ofVoidPtr<byte>
                 |> Register.ofValue(RegisterType.Pointer(uint32 size))
                 |> control.TemporaryRegisters.Add
-            //| Mem_init ->
+            | Mem_init(ValidFlags.MemoryAccess MemoryAccessFlags.RawAccessValidMask _, Register count, TypeSignature ty, Register address, Register value) ->
+                // TODO: Could be more efficient with mem.init, don't need to calculate size and other things with each store.
+                let start = InterpretRegister.value<nativeptr<byte>> &address
+                let size = typeSizeResolver control.CurrentModule ty
+                for i = 0 to ConvertRegister.s32 &count do
+                    let address = NativePtr.add start (i * size)
+                    MemoryOperations.store typeSizeResolver (NativePtr.toVoidPtr address) &value control.CurrentModule ty
             | Mem_init_const(ValidFlags.MemoryAccess MemoryAccessFlags.RawAccessValidMask _, TypeSignature ty, Register address, Data data) ->
 #if DEBUG // NOTE: For mem.init.const, type signature might not be needed a simple copying of bytes is performed. Could be kept in order to check that the data.Length makes sense.
                 let esize = typeSizeResolver control.CurrentModule ty
