@@ -207,6 +207,8 @@ module InstructionSet =
         | NoTailCallOptimization = 1uy
         | RequiresTailCallOptimization = 0b0000_0010uy
         | ThrowOnNullThis = 0b1000_0000uy
+        | DefaultValidMask = 0b0000_0011uy
+        | VirtualValidMask = 0b1000_0011uy
 
     [<Flags>]
     type MemoryAccessFlags =

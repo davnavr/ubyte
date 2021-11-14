@@ -808,6 +808,11 @@ module private ValidFlags =
             failwithf "TODO: Bad memory access flags %A" flags
         flags
 
+    let (|Call|) mask (flags: CallFlags) =
+        if flags &&& (~~~mask) <> CallFlags.None then
+            failwithf "TODO: Bad call flags %A" flags
+        flags
+
 [<RequireQualifiedAccess>]
 module private ObjectField =
     let checkCanMutate (field: ResolvedField) (frame: StackFrame) =
@@ -1006,11 +1011,11 @@ let interpret
             control.JumpTo target
 
 #if DEBUG
-        let setupConstructorArguments arguments o =
+        let insertThisArgument arguments o =
 #else
-        let inline setupConstructorArguments arguments o =
+        let inline insertThisArgument arguments o =
 #endif
-            let arguments' = Array.zeroCreate(Array.length arguments)
+            let arguments' = Array.zeroCreate(Array.length arguments + 1)
             arguments'.[0] <- Register.ofValue RegisterType.Object o
             Span(arguments).CopyTo(Span(arguments', 1, arguments.Length))
             arguments'
@@ -1086,9 +1091,30 @@ let interpret
             | Const_f64 _ ->
                 raise(NotImplementedException "TODO: Storing of constant floating point integers is not yet supported")
 
-            | Call(flags, Method method, LookupRegisterArray arguments) ->
+            | Call(ValidFlags.Call CallFlags.DefaultValidMask flags, Method method, LookupRegisterArray arguments) ->
                 invoke flags (ReadOnlyMemory arguments) method |> ignore
-            //| Call_virt
+            | Call_virt(ValidFlags.Call CallFlags.VirtualValidMask flags, Method method, Register this, LookupRegisterArray arguments) ->
+                match this.Type with
+                | RegisterType.Object ->
+                    let o = InterpretRegister.value<ObjectReference> &this
+                    if o.IsNull then
+                        if not(isFlagSet CallFlags.ThrowOnNullThis flags) then
+                            invalidOp "Calling virtual method without checking for null object reference is not supported"
+                        else
+                            invalidOp "Cannot call virtual method with a null reference, cannot deduce the type and method to call"
+                    else
+                        match objectTypeLookup(gc.TypeOf o) with
+                        | rm, AnyType.ReferenceType(ReferenceType.Defined idef) ->
+                            let vtable = rm.TypeAt(idef).VTable
+                            invoke flags (ReadOnlyMemory(insertThisArgument arguments o)) vtable.[method] |> ignore
+                        | _, AnyType.ReferenceType(ReferenceType.Vector _) ->
+                            invalidOp "Cannot call virtual method with an array object reference"
+                        | _, bad ->
+                            invalidOp(sprintf "Invalid 'this' type %A" bad)
+                | RegisterType.Pointer _ ->
+                    invalidOp "Cannot use pointer when calling a virtual method, since the type containing the method to call cannot be deduced"
+                | RegisterType.Primitive _ ->
+                    invalidOp "Cannot use primitive value as the 'this' argument when calling a virtual method"
             | Ret(LookupRegisterArray results) ->
                 if results.Length < control.ReturnRegisters.Length then
                     sprintf "Expected to return %i values but only returned %i values"
@@ -1133,8 +1159,9 @@ let interpret
                     )
 
                 gc.Roots.Add o
-                invoke CallFlags.None (ReadOnlyMemory(setupConstructorArguments arguments o)) constructor |> ignore
+                invoke CallFlags.None (ReadOnlyMemory(insertThisArgument arguments o)) constructor |> ignore
                 control.TemporaryRegisters.Add(Register.ofValue RegisterType.Object o)
+                // TODO: Check that calling constructor does not return any values (ensure no new temps are added), since the object above has already been added.
             | Obj_fd_ld(Field field, Register object) ->
                 // TODO: If field contains a struct, perform struct copying
                 let source = ObjectField.access gc objectTypeLookup typeLayoutResolver typeSizeResolver &object field

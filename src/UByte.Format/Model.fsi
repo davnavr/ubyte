@@ -278,6 +278,8 @@ module InstructionSet =
         /// object reference is <see langword="null"/>.
         /// </summary>
         | ThrowOnNullThis = 0b1000_0000uy
+        | DefaultValidMask = 0b0000_0011uy
+        | VirtualValidMask = 0b1000_0011uy
 
     [<Flags>]
     type MemoryAccessFlags =
