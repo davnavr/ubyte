@@ -1260,7 +1260,12 @@ let interpret
 #endif
                 let destination = NativePtr.toVoidPtr(InterpretRegister.value<nativeptr<byte>> &address)
                 data.AsSpan().CopyTo(Span<byte>(destination, data.Length))
-            //| Mem_cpy ->
+            | Mem_cpy(ValidFlags.MemoryAccess MemoryAccessFlags.RawAccessValidMask _, Register count, TypeSignature ty, Register source, Register destination) ->
+                let esize = typeSizeResolver control.CurrentModule ty
+                let src = InterpretRegister.value<nativeptr<byte>> &source
+                let dest = InterpretRegister.value<nativeptr<byte>> &destination
+                let length = esize * ConvertRegister.s32 &count
+                Span<byte>(NativePtr.toVoidPtr src, length).CopyTo(Span<byte>(NativePtr.toVoidPtr dest, length))
             | Nop -> ()
 
             match runExternalCode with
