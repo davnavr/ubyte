@@ -13,17 +13,19 @@ open Microsoft.FSharp.NativeInterop
 [<Struct>]
 type ObjectType = ObjectType of uint32
 
+let private getAddressString (address: nativeint) = sprintf "0x%08X" address
+
 [<Struct>]
 type ObjectReference =
     val Address : nativeint
 
-    new (addr) = { Address = addr }
+    new (address) = { Address = address }
 
     member o.IsNull = o.Address = 0n
 
     static member Null = Unchecked.defaultof<ObjectReference>
 
-    override o.ToString() = sprintf "0x%08X" o.Address
+    override o.ToString() = getAddressString o.Address
 
 let inline (|ObjectReference|) (o: ObjectReference) = o.Address
 
@@ -149,7 +151,6 @@ type MarkAndSweep (threshold: uint32) =
     let mutable first = ObjectReference.Null
     let mutable allocated = 0u
     let mutable threshold = threshold
-    let roots = HashSet()
     let unmarked = Stack()
 
     override _.Allocate(ty, size) =
@@ -178,7 +179,7 @@ type MarkAndSweep (threshold: uint32) =
     override gc.Collect(getReferencedObjects, _) =
         // Mark
         unmarked.Clear()
-        for root in roots do unmarked.Push root
+        failwith "for root in roots do unmarked.Push root"
 
         while unmarked.Count > 0 do
             let o = unmarked.Pop()
@@ -257,3 +258,27 @@ type ValueStack (capacity: int32) =
                 remaining <- 0n
                 disposed <- true
             GC.SuppressFinalize stack
+
+[<Struct; StructuralComparison; StructuralEquality>]
+type StackPointer<'T when 'T : unmanaged> =
+    val Address : nativeint
+
+    new (address) = { Address = address }
+
+    override ptr.ToString() = getAddressString ptr.Address
+
+type stackptr<'T when 'T : unmanaged> = StackPointer<'T>
+
+let inline (|StackPointer|) (address: stackptr<'T>) = address.Address
+
+[<RequireQualifiedAccess>]
+module StackPtr =
+    let inline toNativePtr (StackPointer address: stackptr<'T>) = NativePtr.ofNativeInt<'T> address
+    let inline toNativeInt (StackPointer address: stackptr<'T>) = address
+    let inline toVoidPtr (address: stackptr<'T>) = NativePtr.toVoidPtr<'T>(toNativePtr address)
+
+    let ofNativeInt<'T when 'T : unmanaged> address = stackptr<'T> address
+    let ofNativePtr<'T when 'T : unmanaged> address = ofNativeInt<'T>(NativePtr.toNativeInt<'T> address)
+    let ofVoidPtr address = ofNativePtr<'T>(NativePtr.ofVoidPtr<'T> address)
+
+    let inline read (address: stackptr<'T>) = NativePtr.read(toNativePtr address)

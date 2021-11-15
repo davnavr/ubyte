@@ -7,7 +7,8 @@ open System.Runtime.CompilerServices
 [<IsReadOnly; Struct; StructuralComparison; StructuralEquality>]
 type ObjectType = ObjectType of uint32
 
-[<IsReadOnly; Struct; StructuralComparison; StructuralEquality>]
+/// Represents a pointer to an object managed by a garbage collector, and may or may not be moved.
+[<RequireQualifiedAccess; IsReadOnly; Struct; StructuralComparison; StructuralEquality>]
 type ObjectReference =
     val Address : nativeint
 
@@ -17,7 +18,7 @@ type ObjectReference =
 
     override ToString : unit -> string
 
-    interface System.IEquatable<ObjectReference>
+    interface IEquatable<ObjectReference>
 
 val inline (|ObjectReference|) : o: ObjectReference -> nativeint
 
@@ -73,3 +74,28 @@ type ValueStack =
     override Finalize : unit -> unit
 
     interface IDisposable
+
+[<RequireQualifiedAccess; IsReadOnly; Struct; StructuralComparison; StructuralEquality>]
+type StackPointer<'T when 'T : unmanaged> =
+    val Address : nativeint
+
+    override ToString : unit -> string
+
+    interface IEquatable<StackPointer<'T>>
+
+/// Represents a pointer to a value on the stack.
+type stackptr<'T when 'T : unmanaged> = StackPointer<'T>
+
+val inline (|StackPointer|) : address: stackptr<'T> -> nativeint when 'T : unmanaged
+
+[<RequireQualifiedAccess>]
+module StackPtr =
+    val inline toNativePtr<'T when 'T : unmanaged> : address: stackptr<'T> -> nativeptr<'T>
+    val inline toNativeInt<'T when 'T : unmanaged> : address: stackptr<'T> -> nativeint
+    val inline toVoidPtr<'T when 'T : unmanaged> : address: stackptr<'T> -> voidptr
+
+    val internal ofNativePtr<'T when 'T : unmanaged> : address: nativeptr<'T> -> stackptr<'T>
+    val internal ofVoidPtr<'T when 'T : unmanaged> : address: voidptr -> stackptr<'T>
+    val internal ofNativeInt<'T when 'T : unmanaged> : address: nativeint -> stackptr<'T>
+
+    val inline internal read<'T when 'T : unmanaged> : address: stackptr<'T> -> 'T

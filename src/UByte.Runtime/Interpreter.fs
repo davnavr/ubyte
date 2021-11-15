@@ -919,6 +919,51 @@ type EventSource () =
     member _.TriggerMethodCall frame = called.Trigger frame
     member _.TriggerMethodReturn frame = returned.Trigger frame
 
+[<RequireQualifiedAccess; Struct; NoComparison; NoEquality>]
+type RootObjects =
+    val mutable Temporaries: List<ObjectReference>
+    val mutable Locals: List<ObjectReference>
+    val mutable Addressed: List<stackptr<ObjectReference>>
+
+[<Sealed>]
+type RootObjectCollection () =
+    let roots = ImmutableArray.CreateBuilder<RootObjects>()
+
+    let enumerated = seq {
+        for i = 0 to roots.Count - 1 do
+            let objects = roots.ItemRef i
+            if objects.Temporaries <> null then yield! objects.Temporaries
+            if objects.Locals <> null then yield! objects.Locals
+            if objects.Addressed <> null then
+                for address in objects.Addressed do yield StackPtr.read address
+    }
+
+    member private _.Current = &roots.ItemRef(roots.Count - 1)
+    member private this.CurrentRef = &Unsafe.AsRef &this.Current // Not safe if roots were resized.
+
+    member this.RootTemporary o =
+        if isNull this.Current.Temporaries then this.CurrentRef.Temporaries <- List()
+        this.Current.Temporaries.Add o
+
+    member this.ClearTemporaries() =
+        if this.Current.Temporaries <> null then this.Current.Temporaries.Clear()
+
+    member this.RootLocals locals =
+        if isNull this.Current.Locals
+        then this.CurrentRef.Locals <- locals
+        else this.Current.Locals.AddRange locals
+
+    /// Includes an object reference on the stack as a root.
+    member this.RootAddress address =
+        if isNull this.Current.Addressed then this.CurrentRef.Addressed <- List()
+        this.Current.Addressed.Add address
+
+    member _.PopRoots() = roots.RemoveAt(roots.Count - 1)
+    member _.PushRoots() = roots.Add(RootObjects())
+
+    member _.GetEnumerator() = // TODO: Create a custom struct root enumerator to avoid large allocations every single time the interpreter's GC is run.
+        enumerated.GetEnumerator()
+
 let interpret
     (gc: IGarbageCollector)
     maxStackCapacity
@@ -935,6 +980,7 @@ let interpret
     let mutable runExternalCode: _ voption = ValueNone
     let mutable ex = ValueNone
     use stack = new ValueStack(maxStackCapacity)
+    failwith "TODO: Integrate RootObjectCollection with the garbage collector//////////////////////////////"
 
     if stackEventHandler.IsSome then
         stackEventHandler.Value stack
