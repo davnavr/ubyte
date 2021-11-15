@@ -150,6 +150,7 @@ type MarkAndSweep (threshold: uint32) =
     inherit ValidatedCollector()
 
     let mutable first = ObjectReference.Null
+    let mutable last = ObjectReference.Null
     let mutable allocated = 0u
     let mutable threshold = threshold
     let unmarked = Stack()
@@ -167,6 +168,8 @@ type MarkAndSweep (threshold: uint32) =
             threshold <- allocated
 
         if first.IsNull then first <- o
+        if not last.IsNull then markAndSweepNext last <- o
+        last <- o
         o
 
     override _.TypeOf o =
@@ -203,6 +206,7 @@ type MarkAndSweep (threshold: uint32) =
 
             if isNotMarked header.Flags then
                 if current = first then first <- header.Next
+                if current = last then last <- previous
                 gc.Free current
                 if not previous.IsNull then markAndSweepNext previous <- next
             else
