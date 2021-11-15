@@ -56,12 +56,20 @@ module Logger =
         let rec inner (rm: ResolvedModule) =
             rm.ModuleResolving.Add <| fun args ->
                 logfn loggers "Resolving module %O referenced by %O" args.Import args.Originator
+            rm.ModuleResolved.Add <| fun args ->
+                logfn loggers "Successfully resolved module %O imported by %O" args.Import args.Originator
             rm.TypeResolving.Add <| fun args ->
                 logfn loggers "Resolving type definition TYPE NAME in %O from %O" args.Owner args.Originator
+            rm.TypeResolved.Add <| fun ty ->
+                logfn loggers "Successfully resolved type definition %O" ty
             rm.MethodResolving.Add <| fun args ->
                 logfn loggers "Resolving method METHOD NAME in %O from %O" args.Owner args.Originator
+            rm.MethodResolved.Add <| fun method ->
+                logfn loggers "Successfully resolved method %O" method
             rm.FieldResolving.Add <| fun args ->
                 logfn loggers "Resolving field FIELD NAME in %O from %O" args.Owner args.Originator
+            rm.FieldResolved.Add <| fun field ->
+                logfn loggers "Successfully resolved field %O" field
         inner
 
 [<EntryPoint>]
