@@ -170,11 +170,19 @@ module private ArrayObject =
         let addr = ObjectReference.toNativePtr<byte> array
         NativePtr.toVoidPtr(NativePtr.add addr sizeof<ArrayLength>)
 
-    let allocate (rm: ResolvedModule) (gc: IGarbageCollector) typeSizeResolver arrayTypeResolver etype length =
+    let allocate
+        rm
+        (gc: IGarbageCollector)
+        garbageCollectionState
+        (typeSizeResolver: TypeSizeResolver)
+        (arrayTypeResolver: ObjectTypeResolver)
+        etype
+        length
+        =
         if length < 0 then invalidArg (nameof length) "Cannot allocate an array with a negative length"
         let arrayt = arrayTypeResolver rm (AnyType.ReferenceType(ReferenceType.Vector etype))
         let esize = typeSizeResolver rm (refOrValTypeToAnyType etype) * length
-        let array = gc.Allocate(arrayt, sizeof<ArrayLength> + esize)
+        let array = gc.Allocate(garbageCollectionState, arrayt, sizeof<ArrayLength> + esize)
         NativePtr.write (ObjectReference.toNativePtr<ArrayLength> array) length
         Span<byte>(address array, esize).Clear()
         array
@@ -964,8 +972,80 @@ type RootObjectCollection () =
     member _.GetEnumerator() = // TODO: Create a custom struct root enumerator to avoid large allocations every single time the interpreter's GC is run.
         enumerated.GetEnumerator()
 
+let private noAnyObject() = invalidOp "Unexpected object reference of unspecified type"
+
+let private expectedReferenceType actual = invalidOp(sprintf "Expected object reference to be of a reference type, but got %A" actual)
+
+[<Sealed>]
+type GarbageCollectionState
+    (
+        typeSizeResolver: TypeSizeResolver,
+        objectTypeLookup: ObjectTypeLookup,
+        typeLayoutResolver: TypeLayoutResolver
+    )
+    =
+    member val Roots = RootObjectCollection()
+
+    member private _.GetReferencedObjects(gc: IGarbageCollector, o) =
+        let struct(rm, ty) = objectTypeLookup(gc.TypeOf o)
+        match ty with
+        | AnyType.ReferenceType(ReferenceType.Defined typei)
+        | AnyType.ReferenceType(ReferenceType.BoxedValueType(ValueType.Defined typei)) ->
+            let layout = typeLayoutResolver(rm.TypeAt typei)
+            if not layout.References.IsDefaultOrEmpty then
+                let (ObjectReference address) = o
+                let mutable references = Array.zeroCreate layout.References.Length
+                for i = 0 to references.Length - 1 do
+                    references.[i] <-
+                        address + nativeint layout.References.[i]
+                        |> NativePtr.ofNativeInt<ObjectReference>
+                        |> NativePtr.read
+                Unsafe.As<ObjectReference[], _> &references
+            else
+                ImmutableArray<ObjectReference>.Empty
+        | AnyType.ReferenceType(ReferenceType.Vector(ReferenceOrValueType.Reference _)) ->
+            match ArrayObject.length o with
+            | 0 -> ImmutableArray.Empty
+            | length ->
+                let mutable elements = Array.zeroCreate length
+                let address = NativePtr.ofVoidPtr<ObjectReference>(ArrayObject.address o)
+                for offset = 0 to length - 1 do elements.[offset] <- NativePtr.read(NativePtr.add address offset)
+                Unsafe.As<ObjectReference[], _> &elements
+        | AnyType.ReferenceType(ReferenceType.Vector(ReferenceOrValueType.Value(ValueType.Defined typei))) ->
+            let layout = typeLayoutResolver(rm.TypeAt typei)
+            match layout.References.Length, ArrayObject.length o with
+            | 0, _ | _, 0 -> ImmutableArray.Empty
+            | reflen, arrlen ->
+                let mutable references = Array.zeroCreate(arrlen * reflen)
+                let start = NativePtr.ofVoidPtr<byte>(ArrayObject.address o)
+                for i = 0 to arrlen - 1 do
+                    let element = NativePtr.add start (i * layout.Size)
+                    for offset = 0 to reflen - 1 do
+                        references.[i + offset] <-
+                            NativePtr.toNativeInt element + nativeint layout.References.[offset]
+                            |> NativePtr.ofNativeInt<ObjectReference>
+                            |> NativePtr.read
+                Unsafe.As<ObjectReference[], _> &references
+        | AnyType.ReferenceType(ReferenceType.Vector(ReferenceOrValueType.Value(ValueType.Primitive _ | ValueType.UnsafePointer _)))
+        | AnyType.ReferenceType(ReferenceType.BoxedValueType(ValueType.Primitive _ | ValueType.UnsafePointer _)) ->
+            ImmutableArray<ObjectReference>.Empty
+        | AnyType.ReferenceType ReferenceType.Any ->
+            noAnyObject()
+        | AnyType.ValueType _ | AnyType.SafePointer _ ->
+            expectedReferenceType ty
+
+    interface IGarbageCollectionState<IEnumerator<ObjectReference>> with
+        member state.EnumerateRoots() = state.Roots.GetEnumerator()
+
+        member _.GetTypeSize otype =
+            let struct(rm, ty) = objectTypeLookup otype
+            typeSizeResolver rm ty
+
+        member state.GetReferencedObjects(gc, o) = state.GetReferencedObjects(gc, o)
+
 let interpret
     (gc: IGarbageCollector)
+    (garbageCollectionState: GarbageCollectionState)
     maxStackCapacity
     (typeSizeResolver: TypeSizeResolver)
     (objectTypeResolver: ObjectTypeResolver)
@@ -980,7 +1060,7 @@ let interpret
     let mutable runExternalCode: _ voption = ValueNone
     let mutable ex = ValueNone
     use stack = new ValueStack(maxStackCapacity)
-    failwith "TODO: Integrate RootObjectCollection with the garbage collector//////////////////////////////"
+    failwith "TODO: Don't forget to add calls to garbageCollectionState.Roots"
 
     if stackEventHandler.IsSome then
         stackEventHandler.Value stack
@@ -1200,6 +1280,7 @@ let interpret
                     let rtype = AnyType.ReferenceType(ReferenceType.Defined typei)
                     let vtype = AnyType.ValueType(ValueType.Defined typei)
                     gc.Allocate (
+                        garbageCollectionState,
                         objectTypeResolver constructor.DeclaringModule rtype,
                         typeSizeResolver constructor.DeclaringModule vtype
                     )
@@ -1233,6 +1314,7 @@ let interpret
                     ArrayObject.allocate
                         control.CurrentModule
                         gc
+                        garbageCollectionState
                         typeSizeResolver
                         objectTypeResolver
                         (anyTypeToRefOrValType etype)
@@ -1272,6 +1354,7 @@ let interpret
                     ArrayObject.allocate
                         control.CurrentModule
                         gc
+                        garbageCollectionState
                         typeSizeResolver
                         objectTypeResolver
                         (anyTypeToRefOrValType etype)
@@ -1470,14 +1553,16 @@ type Runtime
 
     member _.Program = program
 
-    member private _.AllocateArray(etype, length) =
-        ArrayObject.allocate program garbageCollectorStrategy sizes.Value tresolver etype length
+    member private _.AllocateArray(garbageCollectionState, etype, length) =
+        ArrayObject.allocate program garbageCollectorStrategy garbageCollectionState sizes.Value tresolver etype length
 
     member runtime.InvokeEntryPoint(argv: string[], ?maxStackCapacity, ?interpreterEventHandler, ?stackEventHandler) =
         match program.EntryPoint with
         | ValueSome main ->
             if main.DeclaringModule <> program then
                 raise(MissingEntryPointException "The entry point method for a module must be defined in the module")
+
+            let garbageCollectionState = GarbageCollectionState(sizes.Value, tlookup, layouts)
 
             let arguments =
                 let parameters = main.Signature.ParameterTypes
@@ -1486,7 +1571,7 @@ type Runtime
                 | 1 ->
                     match program.TypeSignatureAt parameters.[0] with
                     | AnyType.ReferenceType(ReferenceType.Vector(ReferenceOrValueType.Reference(ReferenceType.Vector tchar) as tstr)) ->
-                        let argv' = runtime.AllocateArray(tstr, argv.Length)
+                        let argv' = runtime.AllocateArray(garbageCollectionState, tstr, argv.Length)
                         //garbageCollectorStrategy.Roots.Add argv'
 
                         match tchar with
@@ -1497,7 +1582,7 @@ type Runtime
                                 buffer.Clear()
                                 buffer.AddRange(argv.[i].EnumerateRunes())
 
-                                let argument = runtime.AllocateArray(tchar, buffer.Count)
+                                let argument = runtime.AllocateArray(garbageCollectionState, tchar, buffer.Count)
                                 //garbageCollectorStrategy.Roots.Add argument
                                 NativePtr.write (NativePtr.add start i) argument
 
@@ -1516,6 +1601,7 @@ type Runtime
             let results =
                 interpret
                     garbageCollectorStrategy
+                    garbageCollectionState
                     (defaultArg maxStackCapacity DefaultStackCapacity)
                     sizes.Value
                     tresolver

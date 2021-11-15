@@ -28,19 +28,18 @@ module ObjectReference =
     val inline toVoidPtr : o: ObjectReference -> voidptr
     val inline toNativeInt : o: ObjectReference -> nativeint
 
-type ObjectSizeLookup = ObjectType -> int32
-
 [<Interface>]
 type IGarbageCollector =
     inherit IDisposable
 
     /// <summary>Allocates an object of the specified size, without zeroing out memory.</summary>
+    /// <param name="state">Describes the objects that are currently considered roots.</param>
     /// <param name="size">The size, in bytes, of the object to allocate.</param>
     /// <exception cref="T:System.ArgumentOutOfRangeException">Thrown when the <paramref name="size"/> is negative.</exception>
-    abstract Allocate : ObjectType * size: int32 -> ObjectReference
+    abstract Allocate : state: IGarbageCollectionState<'RootEnumerator> * ObjectType * size: int32 -> ObjectReference
 
     /// Frees all objects that are not referenced by any roots.
-    abstract Collect : ReferencedObjectsLookup * ObjectSizeLookup -> unit
+    abstract Collect : state: IGarbageCollectionState<'RootEnumerator> -> unit
 
     /// Returns a value describing the type of an object.
     abstract TypeOf : ObjectReference -> ObjectType
@@ -51,7 +50,15 @@ type IGarbageCollector =
     [<CLIEvent>]
     abstract Collected : IEvent<nativeint>
 
-and ReferencedObjectsLookup = IGarbageCollector -> ObjectReference -> ImmutableArray<ObjectReference>
+and [<Interface>] IGarbageCollectionState<'RootEnumerator
+    when 'RootEnumerator :> System.Collections.Generic.IEnumerator<ObjectReference>>
+    =
+    /// Returns an enumeration of all objects that are currently in use.
+    abstract EnumerateRoots : unit -> 'RootEnumerator
+
+    abstract GetTypeSize : ObjectType -> int32
+
+    abstract GetReferencedObjects : IGarbageCollector * ObjectReference -> ImmutableArray<ObjectReference>
 
 [<AbstractClass; Sealed>]
 type GarbageCollectors =

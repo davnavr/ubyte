@@ -42,18 +42,19 @@ module ObjectReference =
     [<RequiresExplicitTypeArgumentsAttribute>]
     let getHeaderRef<'Header when 'Header : unmanaged> o = NativePtr.toByRef(getHeaderPtr<'Header> o)
 
-type ObjectSizeLookup = ObjectType -> int32
-
 type IGarbageCollector =
     inherit IDisposable
 
-    abstract Allocate : ObjectType * size: int32 -> ObjectReference
-    abstract Collect : ReferencedObjectsLookup * ObjectSizeLookup -> unit
+    abstract Allocate : state: IGarbageCollectionState<'RootEnumerator> * ObjectType * size: int32 -> ObjectReference
+    abstract Collect : state: IGarbageCollectionState<'RootEnumerator> -> unit
     abstract TypeOf : ObjectReference -> ObjectType
     [<CLIEvent>] abstract Allocated : IEvent<struct(int32 * ObjectReference)>
     [<CLIEvent>] abstract Collected : IEvent<nativeint>
 
-and ReferencedObjectsLookup = IGarbageCollector -> ObjectReference -> ImmutableArray<ObjectReference>
+and IGarbageCollectionState<'RootEnumerator when 'RootEnumerator :> IEnumerator<ObjectReference>> =
+    abstract EnumerateRoots : unit -> 'RootEnumerator
+    abstract GetTypeSize : ObjectType -> int32
+    abstract GetReferencedObjects : IGarbageCollector * ObjectReference -> ImmutableArray<ObjectReference>
 
 [<AbstractClass>]
 type ValidatedCollector () =
@@ -66,9 +67,9 @@ type ValidatedCollector () =
     /// finalizer.
     abstract Deallocate : unit -> unit
 
-    abstract Allocate : ObjectType * size: int32 -> ObjectReference
+    abstract Allocate : state: IGarbageCollectionState<'RootEnumerator> * ObjectType * size: int32 -> ObjectReference
 
-    abstract Collect : ReferencedObjectsLookup * ObjectSizeLookup -> unit
+    abstract Collect : state: IGarbageCollectionState<'RootEnumerator> -> unit
 
     abstract TypeOf : ObjectReference -> ObjectType
 
@@ -81,17 +82,17 @@ type ValidatedCollector () =
                 disposed <- true
             GC.SuppressFinalize gc
 
-        member gc.Allocate(ty, size) =
+        member gc.Allocate(state, ty, size) =
             gc.CheckDisposed()
             if size < 0 then
                 raise(ArgumentOutOfRangeException(nameof size, size, "Cannot allocate an object with a negative size"))
-            let o = gc.Allocate(ty, size)
+            let o = gc.Allocate(state, ty, size)
             allocated.Trigger(struct(size, o))
             o
 
-        member gc.Collect(orefs, osize) =
+        member gc.Collect state =
             gc.CheckDisposed()
-            gc.Collect(orefs, osize)
+            gc.Collect state
 
         member gc.TypeOf o =
             gc.CheckDisposed()
@@ -110,8 +111,8 @@ type PausingCollector<'Collector when 'Collector :> IGarbageCollector> (collecto
 
     interface IGarbageCollector with
         member _.Dispose() = collector.Dispose()
-        member _.Allocate(ty, size) = lock lobj (fun() -> collector.Allocate(ty, size))
-        member _.Collect(orefs, osize) = lock lobj (fun() -> collector.Collect(orefs, osize))
+        member _.Allocate(state, ty, size) = lock lobj (fun() -> collector.Allocate(state, ty, size))
+        member _.Collect state = lock lobj (fun() -> collector.Collect state)
         member _.TypeOf o = collector.TypeOf o
         [<CLIEvent>] member _.Allocated = collector.Allocated
         [<CLIEvent>] member _.Collected = collector.Collected
@@ -153,7 +154,7 @@ type MarkAndSweep (threshold: uint32) =
     let mutable threshold = threshold
     let unmarked = Stack()
 
-    override _.Allocate(ty, size) =
+    override gc.Allocate(state, ty, size) =
         let o = alloch<MarkAndSweepHeader> size
 
         let header = &ObjectReference.getHeaderRef<MarkAndSweepHeader> o
@@ -162,7 +163,7 @@ type MarkAndSweep (threshold: uint32) =
         header.Next <- ObjectReference.Null
 
         if allocated > threshold then
-            failwith "TODO: Make getReferencedObjects function be a field so gc.Collect() can be used in Allocate function"
+            gc.Collect state
             threshold <- allocated
 
         if first.IsNull then first <- o
@@ -176,32 +177,39 @@ type MarkAndSweep (threshold: uint32) =
         freeh<MarkAndSweepHeader> o
         gc.Collected.Trigger(ObjectReference.toNativeInt o)
 
-    override gc.Collect(getReferencedObjects, _) =
+    override gc.Collect state =
+        let inline isNotMarked flags = flags &&& MarkAndSweepFlags.Marked = MarkAndSweepFlags.None
+
         // Mark
         unmarked.Clear()
-        failwith "for root in roots do unmarked.Push root"
+        let mutable objectRootEnumerator = state.EnumerateRoots()
+        while objectRootEnumerator.MoveNext() do
+            let root = objectRootEnumerator.Current
+            if not root.IsNull then unmarked.Push root
 
         while unmarked.Count > 0 do
             let o = unmarked.Pop()
             let oflags = &markAndSweepFlags o
             oflags <- oflags ||| MarkAndSweepFlags.Marked
-            for referenced in getReferencedObjects gc o do
-                if markAndSweepFlags referenced &&& MarkAndSweepFlags.Marked = MarkAndSweepFlags.None then
+            for referenced in state.GetReferencedObjects(gc, o) do
+                if not referenced.IsNull && isNotMarked(markAndSweepFlags referenced) then
                     unmarked.Push referenced
 
         // Sweep
         let mutable current, previous = first, ObjectReference.Null
         while not current.IsNull do
             let header = &ObjectReference.getHeaderRef<MarkAndSweepHeader> current
+            let next = header.Next
 
-            if header.Flags &&& MarkAndSweepFlags.Marked = MarkAndSweepFlags.None then
+            if isNotMarked header.Flags then
                 if current = first then first <- header.Next
                 gc.Free current
-                if not previous.IsNull then markAndSweepNext previous <- header.Next
+                if not previous.IsNull then markAndSweepNext previous <- next
+            else
+                header.Flags <- header.Flags &&& (~~~MarkAndSweepFlags.Marked)
+                previous <- current
 
-            header.Flags <- header.Flags &&& (~~~MarkAndSweepFlags.Marked)
-            previous <- current
-            current <- header.Next
+            current <- next
 
     override gc.Deallocate() =
         let mutable current = first
@@ -231,9 +239,11 @@ type ValueStack (capacity: int32) =
         let size = nativeint size
         if size < 0n then raise(ArgumentOutOfRangeException(nameof size, size, "The size to allocate cannot be negative"))
         if remaining >= size then
-            let addr = NativePtr.ofNativeInt<byte>(start + capacity - remaining)
-            address <- NativePtr.toVoidPtr addr
-            allocated.Trigger(struct {| Size = size; Address = NativePtr.toNativeInt addr |})
+            let addr = start + capacity - remaining
+            assert(addr >= start)
+            assert(start + addr < start + capacity)
+            address <- NativePtr.toVoidPtr(NativePtr.ofNativeInt<byte> addr)
+            allocated.Trigger(struct {| Size = size; Address = addr |})
             remaining <- remaining - size
             true
         else false
