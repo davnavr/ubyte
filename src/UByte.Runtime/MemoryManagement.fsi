@@ -26,7 +26,8 @@ module ObjectReference =
     val inline toNativePtr<'T when 'T : unmanaged> : o: ObjectReference -> nativeptr<'T>
     val inline toVoidPtr : o: ObjectReference -> voidptr
 
-//IGarbageCollectionStrategy
+type ObjectSizeLookup = ObjectType -> int32
+
 [<Interface>]
 type IGarbageCollector =
     inherit IDisposable
@@ -35,25 +36,31 @@ type IGarbageCollector =
     /// <param name="size">The size, in bytes, of the object to allocate.</param>
     /// <exception cref="T:System.ArgumentOutOfRangeException">Thrown when the <paramref name="size"/> is negative.</exception>
     abstract Allocate : ObjectType * size: int32 -> ObjectReference
+
     /// Frees all objects that are not referenced by any roots.
-    abstract Collect : (IGarbageCollector -> ObjectReference -> ImmutableArray<ObjectReference>) -> unit
+    abstract Collect : ReferencedObjectsLookup * ObjectSizeLookup -> unit
+
     /// Returns a value describing the type of an object.
     abstract TypeOf : ObjectReference -> ObjectType
-    /// The objects that are always reachable, such as objects in local variables, arguments, global variables, etc.
-    abstract Roots : System.Collections.Generic.ICollection<ObjectReference> // TODO: Could be a IList, so same object can be added more than once, helps simplify rooting of objects stored in locals.
 
-// TODO: Have NaiveMarkAndSweep class be public instead to force usage of 'new' keyword since it is disposable
+    [<CLIEvent>]
+    abstract Allocated : IEvent<struct(int32 * ObjectReference)>
+
+    [<CLIEvent>]
+    abstract Collected : IEvent<nativeint>
+
+and ReferencedObjectsLookup = IGarbageCollector -> ObjectReference -> ImmutableArray<ObjectReference>
 
 [<AbstractClass; Sealed>]
-type CollectionStrategies =
-    static member NaiveMarkAndSweep : unit -> IGarbageCollector
-    static member NaiveMarkAndSweep : threshold: uint32 -> IGarbageCollector
+type GarbageCollectors =
+    /// A stop-the-world naive mark and sweep garbage collector.
+    static member MarkAndSweep : ?threshold: uint32 -> IGarbageCollector
 
 [<Sealed>]
 type ValueStack =
     /// <summary>Constructs a new stack to store values with the specified size.</summary>
     /// <param name="capacity">The maximum capacity of the stack, in bytes.</param>
-    internal new: capacity: int32 -> ValueStack
+    internal new : capacity: int32 -> ValueStack
 
     member internal TryAllocate : size: int32 * address: outref<voidptr> -> bool
     member internal SaveAllocations: unit -> unit

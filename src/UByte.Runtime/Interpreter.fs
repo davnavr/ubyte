@@ -1158,7 +1158,7 @@ let interpret
                         typeSizeResolver constructor.DeclaringModule vtype
                     )
 
-                gc.Roots.Add o
+                //gc.Roots.Add o
                 invoke CallFlags.None (ReadOnlyMemory(insertThisArgument arguments o)) constructor |> ignore
                 control.TemporaryRegisters.Add(Register.ofValue RegisterType.Object o)
                 // TODO: Check that calling constructor does not return any values (ensure no new temps are added), since the object above has already been added.
@@ -1419,7 +1419,7 @@ type Runtime
         new Runtime (
             program,
             defaultArg moduleImportLoader (fun _ -> ValueNone),
-            defaultArg garbageCollectorStrategy (CollectionStrategies.NaiveMarkAndSweep())
+            defaultArg garbageCollectorStrategy (GarbageCollectors.MarkAndSweep())
         )
 
     member _.Program = program
@@ -1441,7 +1441,7 @@ type Runtime
                     match program.TypeSignatureAt parameters.[0] with
                     | AnyType.ReferenceType(ReferenceType.Vector(ReferenceOrValueType.Reference(ReferenceType.Vector tchar) as tstr)) ->
                         let argv' = runtime.AllocateArray(tstr, argv.Length)
-                        garbageCollectorStrategy.Roots.Add argv'
+                        //garbageCollectorStrategy.Roots.Add argv'
 
                         match tchar with
                         | ReferenceOrValueType.Value(ValueType.Primitive PrimitiveType.Char32) ->
@@ -1452,7 +1452,7 @@ type Runtime
                                 buffer.AddRange(argv.[i].EnumerateRunes())
 
                                 let argument = runtime.AllocateArray(tchar, buffer.Count)
-                                garbageCollectorStrategy.Roots.Add argument
+                                //garbageCollectorStrategy.Roots.Add argument
                                 NativePtr.write (NativePtr.add start i) argument
 
                                 let chars = NativePtr.ofVoidPtr<System.Text.Rune>(ArrayObject.address argument)

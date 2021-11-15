@@ -3,6 +3,7 @@
 open System
 open System.Collections.Generic
 open System.Collections.Immutable
+open System.Runtime.CompilerServices
 open System.Runtime.InteropServices
 
 open Microsoft.FSharp.NativeInterop
@@ -30,31 +31,97 @@ let inline (|ObjectReference|) (o: ObjectReference) = o.Address
 module ObjectReference =
     let inline toNativePtr<'T when 'T : unmanaged> (ObjectReference addr) = NativePtr.ofNativeInt<'T> addr
     let inline toVoidPtr o = NativePtr.toVoidPtr(toNativePtr<byte> o)
+    let inline toNativeInt(ObjectReference i) = i
 
     [<RequiresExplicitTypeArguments>]
-    let header<'Header when 'Header : unmanaged> (ObjectReference addr) =
+    let getHeaderPtr<'Header when 'Header : unmanaged> (ObjectReference addr) =
         NativePtr.ofNativeInt<'Header>(addr - nativeint sizeof<'Header>)
+
+    [<RequiresExplicitTypeArgumentsAttribute>]
+    let getHeaderRef<'Header when 'Header : unmanaged> o = NativePtr.toByRef(getHeaderPtr<'Header> o)
+
+type ObjectSizeLookup = ObjectType -> int32
 
 type IGarbageCollector =
     inherit IDisposable
 
     abstract Allocate : ObjectType * size: int32 -> ObjectReference
-    abstract Collect : (IGarbageCollector -> ObjectReference -> ImmutableArray<ObjectReference>) -> unit
+    abstract Collect : ReferencedObjectsLookup * ObjectSizeLookup -> unit
     abstract TypeOf : ObjectReference -> ObjectType
-    abstract Roots : ICollection<ObjectReference>
+    [<CLIEvent>] abstract Allocated : IEvent<struct(int32 * ObjectReference)>
+    [<CLIEvent>] abstract Collected : IEvent<nativeint>
+
+and ReferencedObjectsLookup = IGarbageCollector -> ObjectReference -> ImmutableArray<ObjectReference>
+
+[<AbstractClass>]
+type ValidatedCollector () =
+    let mutable disposed = false
+    let allocated = Event<_>()
+
+    member val Collected = Event<_>()
+
+    /// Frees all objects allocated by this collector, ensure that managed objects are not accessed as this may be called by the
+    /// finalizer.
+    abstract Deallocate : unit -> unit
+
+    abstract Allocate : ObjectType * size: int32 -> ObjectReference
+
+    abstract Collect : ReferencedObjectsLookup * ObjectSizeLookup -> unit
+
+    abstract TypeOf : ObjectReference -> ObjectType
+
+    member private gc.CheckDisposed() = if disposed then raise(ObjectDisposedException(nameof gc))
+
+    interface IGarbageCollector with
+        member gc.Dispose() =
+            if not disposed then
+                gc.Deallocate()
+                disposed <- true
+            GC.SuppressFinalize gc
+
+        member gc.Allocate(ty, size) =
+            gc.CheckDisposed()
+            if size < 0 then
+                raise(ArgumentOutOfRangeException(nameof size, size, "Cannot allocate an object with a negative size"))
+            let o = gc.Allocate(ty, size)
+            allocated.Trigger(struct(size, o))
+            o
+
+        member gc.Collect(orefs, osize) =
+            gc.CheckDisposed()
+            gc.Collect(orefs, osize)
+
+        member gc.TypeOf o =
+            gc.CheckDisposed()
+            gc.TypeOf o
+
+        [<CLIEvent>]
+        member _.Allocated = allocated.Publish
+
+        [<CLIEvent>]
+        member gc.Collected = gc.Collected.Publish
+
+/// Ensures that a lock on an object is acquired when an allocation or collection is made.
+[<Sealed>]
+type PausingCollector<'Collector when 'Collector :> IGarbageCollector> (collector: 'Collector) =
+    let lobj = obj()
+
+    interface IGarbageCollector with
+        member _.Dispose() = collector.Dispose()
+        member _.Allocate(ty, size) = lock lobj (fun() -> collector.Allocate(ty, size))
+        member _.Collect(orefs, osize) = lock lobj (fun() -> collector.Collect(orefs, osize))
+        member _.TypeOf o = collector.TypeOf o
+        [<CLIEvent>] member _.Allocated = collector.Allocated
+        [<CLIEvent>] member _.Collected = collector.Collected
 
 [<RequiresExplicitTypeArguments>]
-let allocate<'Header when 'Header : unmanaged> size =
-    if size < 0 then raise(ArgumentOutOfRangeException(nameof size, size, "Cannot allocate an object with negative size"))
+let alloch<'Header when 'Header : unmanaged> size =
     let hsize = sizeof<'Header>
-    let addr = Marshal.AllocHGlobal(hsize + size)
-    struct(NativePtr.ofNativeInt<'Header> addr, ObjectReference(addr + nativeint hsize))
+    ObjectReference(Marshal.AllocHGlobal(hsize + size) + nativeint hsize)
 
 [<RequiresExplicitTypeArguments>]
-let free<'Header when 'Header : unmanaged> (ObjectReference addr) =
+let freeh<'Header when 'Header : unmanaged> (ObjectReference addr) =
     Marshal.FreeHGlobal(addr - nativeint sizeof<'Header>)
-
-let inline (|ByReference|) addr = NativePtr.toByRef addr
 
 [<Flags>]
 type MarkAndSweepFlags =
@@ -67,104 +134,85 @@ type MarkAndSweepHeader =
       Type: ObjectType
       mutable Next: ObjectReference }
 
-let throwIfDisposed disposed = if disposed then raise(ObjectDisposedException("gc"))
+let markAndSweepNext o =
+    let header = &ObjectReference.getHeaderRef<MarkAndSweepHeader> o
+    &header.Next
 
-// TODO: When disposed or finalized, call Collect.
+let markAndSweepFlags o=
+   let header = &ObjectReference.getHeaderRef<MarkAndSweepHeader> o
+   &header.Flags
+
 [<Sealed>]
-type NaiveMarkAndSweep (threshold: uint32) =
-    let mutable disposed = false
+type MarkAndSweep (threshold: uint32) =
+    inherit ValidatedCollector()
+
     let mutable first = ObjectReference.Null
-    let mutable last = ObjectReference.Null
     let mutable allocated = 0u
     let mutable threshold = threshold
     let roots = HashSet()
     let unmarked = Stack()
 
-    static member ObjectFlags o =
-        let (ByReference header) = ObjectReference.header<MarkAndSweepHeader> o
-        &header.Flags
+    override _.Allocate(ty, size) =
+        let o = alloch<MarkAndSweepHeader> size
 
-    static member NextObject o =
-        let (ByReference header) = ObjectReference.header<MarkAndSweepHeader> o
-        &header.Next
+        let header = &ObjectReference.getHeaderRef<MarkAndSweepHeader> o
+        header.Flags <- MarkAndSweepFlags.None
+        Unsafe.AsRef &header.Type <- ty
+        header.Next <- ObjectReference.Null
 
-    member gc.Collect getReferencedObjects =
-        throwIfDisposed disposed
+        if allocated > threshold then
+            failwith "TODO: Make getReferencedObjects function be a field so gc.Collect() can be used in Allocate function"
+            threshold <- allocated
 
-        // TODO: Take a lock before collection
-        failwith "BAD"
+        if first.IsNull then first <- o
+        o
 
+    override _.TypeOf o =
+        let header: inref<_> = &ObjectReference.getHeaderRef<MarkAndSweepHeader> o
+        header.Type
+
+    member private gc.Free o =
+        freeh<MarkAndSweepHeader> o
+        gc.Collected.Trigger(ObjectReference.toNativeInt o)
+
+    override gc.Collect(getReferencedObjects, _) =
         // Mark
         unmarked.Clear()
         for root in roots do unmarked.Push root
 
         while unmarked.Count > 0 do
             let o = unmarked.Pop()
-            let oflags = &NaiveMarkAndSweep.ObjectFlags o
+            let oflags = &markAndSweepFlags o
             oflags <- oflags ||| MarkAndSweepFlags.Marked
             for referenced in getReferencedObjects gc o do
-                if NaiveMarkAndSweep.ObjectFlags referenced &&& MarkAndSweepFlags.Marked = MarkAndSweepFlags.None then
+                if markAndSweepFlags referenced &&& MarkAndSweepFlags.Marked = MarkAndSweepFlags.None then
                     unmarked.Push referenced
 
         // Sweep
         let mutable current, previous = first, ObjectReference.Null
         while not current.IsNull do
-            let (ByReference header) = ObjectReference.header<MarkAndSweepHeader> current
+            let header = &ObjectReference.getHeaderRef<MarkAndSweepHeader> current
 
             if header.Flags &&& MarkAndSweepFlags.Marked = MarkAndSweepFlags.None then
                 if current = first then first <- header.Next
-                free<MarkAndSweepHeader> current
-                if not previous.IsNull then NaiveMarkAndSweep.NextObject previous <- header.Next
+                gc.Free current
+                if not previous.IsNull then markAndSweepNext previous <- header.Next
 
             header.Flags <- header.Flags &&& (~~~MarkAndSweepFlags.Marked)
-            if header.Next.IsNull then last <- current
             previous <- current
             current <- header.Next
 
-    override gc.Finalize() = (gc :> IDisposable).Dispose()
-
-    interface IGarbageCollector with
-        member _.Roots = roots :> ICollection<_>
-
-        member gc.Collect getReferencedObjects = gc.Collect getReferencedObjects
-
-        member gc.Allocate(ty, size) =
-            throwIfDisposed disposed
-
-            // TODO: Take a lock before allocation
-            let struct(ByReference header, o) = allocate<MarkAndSweepHeader> size
-            allocated <- allocated + uint32 size
-            header <- { Flags = MarkAndSweepFlags.None; Type = ty; Next = ObjectReference.Null }
-
-            if allocated > threshold then
-                failwith "TODO: Make getReferencedObjects function be a field so gc.Collect() can be used in Allocate function"
-                threshold <- allocated
-
-            if first.IsNull then first <- o
-            if not last.IsNull then NaiveMarkAndSweep.NextObject last <- o
-            last <- o
-            o
-
-        member _.TypeOf o =
-            let (ByReference header) = ObjectReference.header<MarkAndSweepHeader> o
-            header.Type
-
-        member _.Dispose() =
-            if not disposed then
-                let mutable current = first
-                while not current.IsNull do
-                    let next = NaiveMarkAndSweep.NextObject current
-                    free<MarkAndSweepHeader> current
-                    current <- next
-
-                first <- ObjectReference.Null
-                last <- ObjectReference.Null
-                disposed <- true
+    override gc.Deallocate() =
+        let mutable current = first
+        while not current.IsNull do
+            let next = markAndSweepNext current
+            gc.Free current
+            current <- next
 
 [<AbstractClass; Sealed>]
-type CollectionStrategies =
-    static member NaiveMarkAndSweep threshold = new NaiveMarkAndSweep(threshold) :> IGarbageCollector
-    static member NaiveMarkAndSweep() = CollectionStrategies.NaiveMarkAndSweep(0xFFFu)
+type GarbageCollectors =
+    static member MarkAndSweep(?threshold) =
+        new PausingCollector<_>(new MarkAndSweep(defaultArg threshold 0xFFFu)) :> IGarbageCollector
 
 [<Sealed>]
 type ValueStack (capacity: int32) =
