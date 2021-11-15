@@ -1190,14 +1190,11 @@ let interpret
 #endif
             arguments.Insert(0, Register.ofValue RegisterType.Object o)
 
-#if DEBUG
-        let returnBackControl (results: ReadOnlyMemory<_>) =
-#else
-        let inline returnBackControl (results: ReadOnlyMemory<_>) =
-#endif
-            frame.Value <- control.Previous
+        let returnBackControl current previous (results: ReadOnlyMemory<_>) =
+            if events.IsSome then events.Value.TriggerMethodReturn current
+            frame.Value <- previous
 
-            match control.Previous with
+            match previous with
             | ValueSome caller ->
                 roots.PopRoots()
                 let results = results.Span
@@ -1313,9 +1310,7 @@ let interpret
 
                 results.AsSpan().CopyTo(Span control.ReturnRegisters) // TODO: Maybe Register could be a reference type? Ensuring registers are copied correctly may be confusing.
 
-                if events.IsSome then events.Value.TriggerMethodReturn control
-
-                returnBackControl(results.AsMemory())
+                returnBackControl control control.Previous (results.AsMemory())
             | Br target -> branchToTarget target
             | Br_eq(Register x, Register y, ttrue, tfalse)
             | Br_ne(Register x, Register y, tfalse, ttrue) ->
@@ -1496,10 +1491,8 @@ let interpret
                         runtimeStackFrame
                     )
 
-                    // TODO: Avoid code duplication with ret.
-                    if events.IsSome then events.Value.TriggerMethodReturn runtimeStackFrame
                     // TODO: Handle return values from internal call.
-                    returnBackControl ReadOnlyMemory.Empty
+                    returnBackControl runtimeStackFrame runtimeStackFrame.Previous ReadOnlyMemory.Empty
                 finally
                     runExternalCode <- ValueNone
 
