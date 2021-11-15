@@ -106,3 +106,8 @@ module StackPtr =
     val internal ofNativeInt<'T when 'T : unmanaged> : address: nativeint -> stackptr<'T>
 
     val inline internal read<'T when 'T : unmanaged> : address: stackptr<'T> -> 'T
+
+    val internal add<'T when 'T : unmanaged> : address: stackptr<'T> -> int32 -> stackptr<'T>
+
+    val inline internal reinterpret<'From, 'To when 'From : unmanaged and 'To : unmanaged> :
+        address: stackptr<'From> -> stackptr<'To>

@@ -294,6 +294,7 @@ type StackFrame
     member _.InstructionIndex with get() = iindex and set i = iindex <- i
     member _.BlockIndex = bindex
     member _.PreviousBlockIndex = previousBlockIndex
+    member _.PreviousLocalRegisters = previousLocalLookup
     member val TemporaryRegisters = List<Register>() // ImmutableArray.CreateBuilder
     member _.ReturnRegisters = returns
     member _.Code = blocks
@@ -928,7 +929,7 @@ type EventSource () =
     member _.TriggerMethodReturn frame = returned.Trigger frame
 
 [<RequireQualifiedAccess; Struct; NoComparison; NoEquality>]
-type RootObjects =
+type private RootObjects =
     val mutable Temporaries: List<ObjectReference>
     val mutable Locals: List<ObjectReference>
     val mutable Addressed: List<stackptr<ObjectReference>>
@@ -953,13 +954,29 @@ type RootObjectCollection () =
         if isNull this.Current.Temporaries then this.CurrentRef.Temporaries <- List()
         this.Current.Temporaries.Add o
 
+    member this.RootTemporary(temporary: inref<Register>) =
+        match temporary.Type with
+        | RegisterType.Object -> this.RootTemporary(InterpretRegister.value<ObjectReference> &temporary)
+        // Don't need to check for roots if register contains pointer, as alloca already updates the root collection.
+        | RegisterType.Pointer _
+        | RegisterType.Primitive _ -> ()
+
     member this.ClearTemporaries() =
         if this.Current.Temporaries <> null then this.Current.Temporaries.Clear()
 
-    member this.RootLocals locals =
-        if isNull this.Current.Locals
-        then this.CurrentRef.Locals <- locals
-        else this.Current.Locals.AddRange locals
+    member this.RootLocals(locals: byref<#IEnumerator<Register>>) =
+        if isNull this.Current.Locals then this.CurrentRef.Locals <- List()
+        while locals.MoveNext() do
+            let register = locals.Current
+            match register.Type with
+            | RegisterType.Object ->
+                this.Current.Locals.Add(InterpretRegister.value<ObjectReference> &register)
+            // Don't need to check for roots if register contains pointer, as alloca already updates the root collection.
+            | RegisterType.Pointer _
+            | RegisterType.Primitive _ -> ()
+
+    member this.ClearLocals() =
+        if this.Current.Locals <> null then this.Current.Locals.Clear()
 
     /// Includes an object reference on the stack as a root.
     member this.RootAddress address =
@@ -1043,6 +1060,25 @@ type GarbageCollectionState
 
         member state.GetReferencedObjects(gc, o) = state.GetReferencedObjects(gc, o)
 
+[<Struct; NoComparison; NoEquality>]
+type private RegisterArrayEnumerator =
+    val mutable private registers: Register[]
+    val mutable private index: int32
+
+    new (registers) = { registers = registers; index = -1 }
+
+    member this.Current = this.registers.[this.index]
+
+    interface IEnumerator<Register> with
+        member this.MoveNext() =
+            this.index <- this.index + 1
+            this.index < this.registers.Length
+
+        member this.Current = this.Current
+        member this.Current = this.Current :> obj
+        member this.Reset() = this.index <- -1
+        member _.Dispose() = ()
+
 let interpret
     (gc: IGarbageCollector)
     (garbageCollectionState: GarbageCollectionState)
@@ -1059,8 +1095,8 @@ let interpret
     let mutable frame: StackFrame voption ref = ref ValueNone
     let mutable runExternalCode: _ voption = ValueNone
     let mutable ex = ValueNone
+    let roots = garbageCollectionState.Roots
     use stack = new ValueStack(maxStackCapacity)
-    failwith "TODO: Don't forget to add calls to garbageCollectionState.Roots"
 
     if stackEventHandler.IsSome then
         stackEventHandler.Value stack
@@ -1073,23 +1109,30 @@ let interpret
             ValueSome source
         | None -> ValueNone
 
-    let invoke flags (arguments: ReadOnlyMemory<Register>) (method: ResolvedMethod) =
+    let invoke flags (arguments: ImmutableArray<Register>) (method: ResolvedMethod) =
         if isFlagSet CallFlags.RequiresTailCallOptimization flags then
             raise(NotImplementedException "Tail call optimization is not yet supported")
 
         stack.SaveAllocations()
+        roots.PushRoots()
         setupStackFrame typeSizeResolver method frame &runExternalCode
         let current = frame.Value.Value
         if events.IsSome then events.Value.TriggerMethodCall current
-        let arguments' = current.ArgumentRegisters
-        if arguments.Length < arguments'.Length then
-            invalidOp(sprintf "Expected %i arguments but only %i were provided" arguments'.Length arguments.Length)
+
+        let newArgumentRegisters = current.ArgumentRegisters
+        if arguments.Length < newArgumentRegisters.Length then
+            invalidOp(sprintf "Expected %i arguments but only %i were provided" newArgumentRegisters.Length arguments.Length)
+
         // TODO: Copy only the Value part of the argument register.
         // TODO: Check that argument register types match.
-        arguments.Span.CopyTo(Span arguments')
+        arguments.AsSpan().CopyTo(Span newArgumentRegisters)
+
+        let mutable argumentRegisterEnumerator = new RegisterArrayEnumerator(newArgumentRegisters)
+        roots.RootLocals &argumentRegisterEnumerator
+
         current.ReturnRegisters
 
-    let entryPointResults = invoke CallFlags.None (arguments.AsMemory()) entrypoint
+    let entryPointResults = invoke CallFlags.None arguments entrypoint
 
 #if DEBUG
     let cont() =
@@ -1117,9 +1160,9 @@ let interpret
             control.RegisterAt rindex
 
         let (|LookupRegisterArray|) (indices: ImmutableArray<RegisterIndex>) =
-            let registers = Array.zeroCreate indices.Length // TODO: Cache register lookup array.
+            let mutable registers = Array.zeroCreate indices.Length // TODO: Cache register lookup array.
             for i = 0 to registers.Length - 1 do registers.[i] <- control.RegisterAt indices.[i]
-            registers
+            Unsafe.As<_, ImmutableArray<Register>> &registers
 
         let inline (|Method|) mindex: ResolvedMethod = control.CurrentModule.MethodAt mindex
         let inline (|Field|) findex: ResolvedField = control.CurrentModule.FieldAt findex
@@ -1135,16 +1178,17 @@ let interpret
         let inline branchToTarget (BranchTarget target) =
 #endif
             control.JumpTo target
+            roots.ClearLocals()
+            roots.ClearTemporaries()
+            let mutable locals = control.PreviousLocalRegisters.Values.GetEnumerator()
+            roots.RootLocals &locals
 
 #if DEBUG
-        let insertThisArgument arguments o =
+        let insertThisArgument (arguments: ImmutableArray<Register>) o =
 #else
         let inline insertThisArgument arguments o =
 #endif
-            let arguments' = Array.zeroCreate(Array.length arguments + 1)
-            arguments'.[0] <- Register.ofValue RegisterType.Object o
-            Span(arguments).CopyTo(Span(arguments', 1, arguments.Length))
-            arguments'
+            arguments.Insert(0, Register.ofValue RegisterType.Object o)
 
         try
             let instr = control.CurrentBlock.Instructions.[control.InstructionIndex]
@@ -1218,7 +1262,7 @@ let interpret
                 raise(NotImplementedException "TODO: Storing of constant floating point integers is not yet supported")
 
             | Call(ValidFlags.Call CallFlags.DefaultValidMask flags, Method method, LookupRegisterArray arguments) ->
-                invoke flags (ReadOnlyMemory arguments) method |> ignore
+                invoke flags arguments method |> ignore
             | Call_virt(ValidFlags.Call CallFlags.VirtualValidMask flags, Method method, Register this, LookupRegisterArray arguments) ->
                 match this.Type with
                 | RegisterType.Object ->
@@ -1232,7 +1276,7 @@ let interpret
                         match objectTypeLookup(gc.TypeOf o) with
                         | rm, AnyType.ReferenceType(ReferenceType.Defined idef) ->
                             let vtable = rm.TypeAt(idef).VTable
-                            invoke flags (ReadOnlyMemory(insertThisArgument arguments o)) vtable.[method] |> ignore
+                            invoke flags (insertThisArgument arguments o) vtable.[method] |> ignore
                         | _, AnyType.ReferenceType(ReferenceType.Vector _) ->
                             invalidOp "Cannot call virtual method with an array object reference"
                         | _, bad ->
@@ -1248,14 +1292,18 @@ let interpret
                         results.Length
                     |> invalidOp
 
-                Span(results).CopyTo(Span control.ReturnRegisters) // TODO: Maybe Register could be a reference type? Ensuring registers are copied correctly may be confusing.
+                results.AsSpan().CopyTo(Span control.ReturnRegisters) // TODO: Maybe Register could be a reference type? Ensuring registers are copied correctly may be confusing.
 
                 if events.IsSome then events.Value.TriggerMethodReturn control
 
                 frame.Value <- control.Previous
 
                 match control.Previous with
-                | ValueSome caller -> caller.TemporaryRegisters.AddRange results // TODO: Maybe Register could be a reference type? Ensuring registers are copied correctly may be confusing.
+                | ValueSome caller ->
+                    roots.PopRoots()
+                    for register in results do
+                        roots.RootTemporary &register
+                        caller.TemporaryRegisters.Add register // TODO: Maybe Register could be a reference type? Ensuring registers are copied correctly may be confusing.
                 | ValueNone -> ()
 
                 stack.FreeAllocations()
@@ -1285,8 +1333,8 @@ let interpret
                         typeSizeResolver constructor.DeclaringModule vtype
                     )
 
-                //gc.Roots.Add o
-                invoke CallFlags.None (ReadOnlyMemory(insertThisArgument arguments o)) constructor |> ignore
+                roots.RootTemporary o
+                invoke CallFlags.None (insertThisArgument arguments o) constructor |> ignore
                 control.TemporaryRegisters.Add(Register.ofValue RegisterType.Object o)
                 // TODO: Check that calling constructor does not return any values (ensure no new temps are added), since the object above has already been added.
             | Obj_fd_ld(Field field, Register object) ->
@@ -1320,6 +1368,7 @@ let interpret
                         (anyTypeToRefOrValType etype)
                         (ConvertRegister.s32 &length)
 
+                roots.RootTemporary array
                 control.TemporaryRegisters.Add(Register.ofValue RegisterType.Object array)
             | Obj_arr_get(Register array, Register index) ->
                 let o = InterpretRegister.value<ObjectReference> &array
@@ -1350,7 +1399,7 @@ let interpret
                 if data.Length % esize <> 0 then
                     raise(NotImplementedException "TODO: How to handle mismatch in constant data array length?")
 #endif
-                let a =
+                let array =
                     ArrayObject.allocate
                         control.CurrentModule
                         gc
@@ -1360,10 +1409,10 @@ let interpret
                         (anyTypeToRefOrValType etype)
                         (data.Length / esize)
 
-                //gc.Roots.Add a
+                roots.RootTemporary array
                 // NOTE: Creation of array from constant data might not work when endianness of data and runtime is different.
-                data.AsSpan().CopyTo(Span(ArrayObject.address a, data.Length))
-                control.TemporaryRegisters.Add(Register.ofValue RegisterType.Object a)
+                data.AsSpan().CopyTo(Span(ArrayObject.address array, data.Length))
+                control.TemporaryRegisters.Add(Register.ofValue RegisterType.Object array)
             | Mem_st(ValidFlags.MemoryAccess MemoryAccessFlags.RawAccessValidMask _, Register src, TypeSignature ty, Register addr) ->
                 // TODO: Throw exception on invalid memory store.
                 let address = InterpretRegister.value<nativeptr<byte>> &addr
@@ -1375,10 +1424,30 @@ let interpret
                 control.TemporaryRegisters.Add(MemoryOperations.load stack typeSizeResolver (NativePtr.toVoidPtr address) control.CurrentModule ty)
             | Alloca(Register count, TypeSignature ty) ->
                 // TODO: Have flag to skip 0 init.
-                let size = typeSizeResolver control.CurrentModule ty
-                MemoryOperations.alloca stack size (ConvertRegister.s32 &count)
-                |> NativePtr.ofVoidPtr<byte>
-                |> Register.ofValue(RegisterType.Pointer(uint32 size))
+                let esize = typeSizeResolver control.CurrentModule ty
+                let count = ConvertRegister.s32 &count
+                let address = MemoryOperations.alloca stack esize count
+
+                if count > 0 then
+                    match ty with
+                    | AnyType.ReferenceType _ ->
+                        let start = StackPtr.ofVoidPtr<ObjectReference> address
+                        for i = 0 to count - 1 do roots.RootAddress(StackPtr.add start i)
+                    | AnyType.ValueType(ValueType.Defined typei) ->
+                        let layout = typeLayoutResolver(control.CurrentModule.TypeAt typei).References
+                        if not layout.IsDefaultOrEmpty then
+                            for elemi = 0 to count - 1 do
+                                let start = StackPtr.add (StackPtr.ofVoidPtr<byte> address) elemi
+                                for offseti = 0 to layout.Length - 1 do
+                                    StackPtr.add start offseti
+                                    |> StackPtr.reinterpret<_, ObjectReference>
+                                    |> roots.RootAddress
+                    | AnyType.ValueType(ValueType.Primitive _ | ValueType.UnsafePointer _) -> ()
+                    | AnyType.SafePointer _ ->
+                        raise(NotImplementedException "TODO: Add roots when alloca is used with a safe pointer")
+
+                NativePtr.ofVoidPtr<byte> address
+                |> Register.ofValue (RegisterType.Pointer(uint32 esize))
                 |> control.TemporaryRegisters.Add
             | Mem_init(ValidFlags.MemoryAccess MemoryAccessFlags.RawAccessValidMask _, Register count, TypeSignature ty, Register address, Register value) ->
                 // TODO: Could be more efficient with mem.init, don't need to calculate size and other things with each store.

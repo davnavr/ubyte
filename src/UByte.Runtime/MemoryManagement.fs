@@ -292,3 +292,9 @@ module StackPtr =
     let ofVoidPtr address = ofNativePtr<'T>(NativePtr.ofVoidPtr<'T> address)
 
     let inline read (address: stackptr<'T>) = NativePtr.read(toNativePtr address)
+
+    let add<'T when 'T : unmanaged> (StackPointer address: stackptr<'T>) index =
+        ofNativeInt<'T>(address + (nativeint index * nativeint sizeof<'T>))
+
+    let inline reinterpret<'From, 'To when 'From : unmanaged and 'To : unmanaged> (StackPointer address: stackptr<'From>) =
+        ofNativeInt<'To> address
