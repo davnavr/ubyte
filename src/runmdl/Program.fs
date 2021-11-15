@@ -168,15 +168,15 @@ let main argv =
         let stackEventHandler =
             if logEventCategories.Contains LogEventTypes.Allocation then
                 gc.Allocated.Add <| fun(struct(size, addr)) ->
-                    logfn loggers "Allocated %i bytes on heap at %O" size addr
+                    logfn loggers "Allocated object at %O (%i bytes)" addr size
                 gc.Collected.Add <| fun addr ->
                     logfn loggers "Collected object at 0x%08X" addr
 
                 Some <| fun (stack: MemoryManagement.ValueStack) ->
                     stack.Allocated.Add <| fun arg ->
-                        logfn loggers "Allocated %i bytes at 0x%08X" arg.Size arg.Address
+                        logfn loggers "Allocated %i bytes on stack at 0x%08X" arg.Size arg.Address
                     stack.Freed.Add <| fun arg ->
-                        logfn loggers "Freed %i bytes" arg
+                        logfn loggers "Freed %i bytes from stack" arg
             else
                 None
 

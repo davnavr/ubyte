@@ -738,8 +738,8 @@ module private RegisterComparison =
         comparison (>=) (>=) (>=) (>=) (>=) (<=) (<=) (<=) (<=) (<=) (<=) (<=) &xreg &yreg
 
 type ExternalCallHandler =
-    delegate of IGarbageCollector * TypeSizeResolver * ObjectTypeResolver * ObjectTypeLookup * TypeLayoutResolver * StackFrame ->
-        unit
+    delegate of IGarbageCollector * IGarbageCollectionState<IEnumerator<ObjectReference>> * TypeSizeResolver *
+        ObjectTypeResolver * ObjectTypeLookup * TypeLayoutResolver * StackFrame -> unit
 
 [<RequireQualifiedAccess>]
 module ExternalCode =
@@ -748,7 +748,7 @@ module ExternalCode =
 
     let private lookup = Dictionary<struct(string * string), ExternalCallHandler>()
 
-    let private println gc _ _ objectTypeLookup _ (frame: StackFrame) =
+    let private println gc _ _ _ objectTypeLookup _ (frame: StackFrame) =
         let arg = frame.ArgumentRegisters.[0]
         match arg.Type with
         | RegisterType.Object ->
@@ -771,8 +771,8 @@ module ExternalCode =
         stdout.WriteLine()
 
     do lookup.[(InternalCall, "testhelperprintln")] <- ExternalCallHandler println
-    //do lookup.[(InternalCall, "gc_collect")] <- ExternalCallHandler(fun gc _ _ _ _ _ -> gc.Collect())
-    do lookup.[(InternalCall, "break")] <- ExternalCallHandler(fun _ _ _ _ _ _ -> System.Diagnostics.Debugger.Launch() |> ignore)
+    do lookup.[(InternalCall, "GC_Collect")] <- ExternalCallHandler(fun gc state _ _ _ _ _ -> gc.Collect state)
+    do lookup.[(InternalCall, "break")] <- ExternalCallHandler(fun _ _ _ _ _ _ _ -> System.Diagnostics.Debugger.Launch() |> ignore)
 
     let call library name =
         match lookup.TryGetValue(struct(library, name)) with
@@ -1190,6 +1190,25 @@ let interpret
 #endif
             arguments.Insert(0, Register.ofValue RegisterType.Object o)
 
+#if DEBUG
+        let returnBackControl (results: ReadOnlyMemory<_>) =
+#else
+        let inline returnBackControl (results: ReadOnlyMemory<_>) =
+#endif
+            frame.Value <- control.Previous
+
+            match control.Previous with
+            | ValueSome caller ->
+                roots.PopRoots()
+                let results = results.Span
+                for i = 0 to results.Length - 1 do
+                    let register = &results.Item i
+                    roots.RootTemporary &register
+                    caller.TemporaryRegisters.Add register // TODO: Maybe Register could be a reference type? Ensuring registers are copied correctly may be confusing.
+            | ValueNone -> ()
+
+            stack.FreeAllocations()
+
         try
             let instr = control.CurrentBlock.Instructions.[control.InstructionIndex]
 
@@ -1296,17 +1315,7 @@ let interpret
 
                 if events.IsSome then events.Value.TriggerMethodReturn control
 
-                frame.Value <- control.Previous
-
-                match control.Previous with
-                | ValueSome caller ->
-                    roots.PopRoots()
-                    for register in results do
-                        roots.RootTemporary &register
-                        caller.TemporaryRegisters.Add register // TODO: Maybe Register could be a reference type? Ensuring registers are copied correctly may be confusing.
-                | ValueNone -> ()
-
-                stack.FreeAllocations()
+                returnBackControl(results.AsMemory())
             | Br target -> branchToTarget target
             | Br_eq(Register x, Register y, ttrue, tfalse)
             | Br_ne(Register x, Register y, tfalse, ttrue) ->
@@ -1477,11 +1486,20 @@ let interpret
             | ValueSome run ->
                 let runtimeStackFrame = frame.Value.Value
                 try
-                    run.Invoke(gc, typeSizeResolver, objectTypeResolver, objectTypeLookup, typeLayoutResolver, runtimeStackFrame)
+                    run.Invoke (
+                        gc,
+                        garbageCollectionState,
+                        typeSizeResolver,
+                        objectTypeResolver,
+                        objectTypeLookup,
+                        typeLayoutResolver,
+                        runtimeStackFrame
+                    )
+
                     // TODO: Avoid code duplication with ret.
                     if events.IsSome then events.Value.TriggerMethodReturn runtimeStackFrame
-                    frame.Value <- runtimeStackFrame.Previous
-                    stack.FreeAllocations()
+                    // TODO: Handle return values from internal call.
+                    returnBackControl ReadOnlyMemory.Empty
                 finally
                     runExternalCode <- ValueNone
 

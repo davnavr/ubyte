@@ -1,0 +1,78 @@
+﻿.module Constructor
+.version 71 67
+.format 0 0
+
+.identifier @id_namespace Example
+.identifier @id_class_Program Program
+.identifier @id_class_MyLong MyLong
+.identifier @id_field_MyLong_value value
+.identifier @id_method_Program_Main Main
+.identifier @id_extern_interpreter runmdl
+.identifier @id_extern_ForceGarbageCollection GC_Collect
+
+.signature @t_int type s32
+.signature @t_long type s64
+.signature @t_MyLong type class @class_MyLong
+
+.signature @m_Program_Main method (@t_int) ()
+.signature @m_Program_ForceGarbageCollection method () ()
+.signature @m_MyLong_init method () (@t_MyLong)
+
+.namespace @namespace_Example {
+    .name @id_namespace
+}
+
+.code @code_MyLong_init {
+    .arguments ($a_this)
+    .block $ENTRY {
+        %t0 = const.i s64 7
+        obj.fd.st @field_MyLong_value $a_this %t0
+        ret
+    }
+}
+
+.type @class_MyLong private {
+    .name @id_class_MyLong
+    .namespace @namespace_Example
+
+    .method @method_MyLong_init public instance constructor {
+        .signature @m_MyLong_init
+        .body defined @code_MyLong_init
+    }
+
+    .field @field_MyLong_value public mutable {
+        .type @t_long
+        .name @id_field_MyLong_value
+    }
+}
+
+.code @code_Program_Main {
+    .block $ENTRY {
+        %t_obj_0 = obj.new @method_MyLong_init ()
+        %t_obj_1 = obj.new @method_MyLong_init ()
+        call @method_Program_ForceGarbageCollection ()
+        %t_result_0 = obj.fd.ld @field_MyLong_value %t_obj_0
+        %t_result_1 = obj.fd.ld @field_MyLong_value %t_obj_1
+        %t_ret = add @t_long %t_result_0 %t_result_1
+        ret %t_ret
+    }
+}
+
+.type @class_Program public {
+    .name @id_class_Program
+    .namespace @namespace_Example
+
+    .method @method_Program_Main public {
+        .signature @m_Program_Main
+        .body defined @code_Program_Main
+        .name @id_method_Program_Main
+    }
+
+    .method @method_Program_ForceGarbageCollection private {
+        .signature @m_Program_ForceGarbageCollection
+        .name @id_extern_ForceGarbageCollection
+        .body external @id_extern_ForceGarbageCollection from @id_extern_interpreter
+    }
+}
+
+.entrypoint @method_Program_Main
