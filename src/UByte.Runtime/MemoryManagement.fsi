@@ -25,6 +25,7 @@ val inline (|ObjectReference|) : o: ObjectReference -> nativeint
 module ObjectReference =
     val inline toNativePtr<'T when 'T : unmanaged> : o: ObjectReference -> nativeptr<'T>
     val inline toVoidPtr : o: ObjectReference -> voidptr
+    val inline toNativeInt : o: ObjectReference -> nativeint
 
 type ObjectSizeLookup = ObjectType -> int32
 

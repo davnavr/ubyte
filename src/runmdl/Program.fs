@@ -113,11 +113,13 @@ let main argv =
     let loggers = List<struct(bool * TextWriter)>()
 
     try
+        let gc = MemoryManagement.GarbageCollectors.MarkAndSweep()
+
         use runtime =
             Interpreter.Runtime.Initialize ( // TODO: Use actual constructor so caller knows Runtime is disposable?
-                UByte.Format.ParseModule.fromPath program.FullName,
-                moduleImportResolver
-                // TODO: Allow selection of a GC strategy from command line options
+                program = UByte.Format.ParseModule.fromPath program.FullName,
+                moduleImportLoader = moduleImportResolver,
+                garbageCollectorStrategy = gc
             )
 
         let logEventCategories = HashSet<LogEventTypes>()
@@ -165,6 +167,11 @@ let main argv =
 
         let stackEventHandler =
             if logEventCategories.Contains LogEventTypes.Allocation then
+                gc.Allocated.Add <| fun(struct(size, addr)) ->
+                    logfn loggers "Allocated %i bytes on heap at %O" size addr
+                gc.Collected.Add <| fun addr ->
+                    logfn loggers "Collected object at 0x%08X" addr
+
                 Some <| fun (stack: MemoryManagement.ValueStack) ->
                     stack.Allocated.Add <| fun arg ->
                         logfn loggers "Allocated %i bytes at 0x%08X" arg.Size arg.Address
