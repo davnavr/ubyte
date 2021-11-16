@@ -8,18 +8,25 @@
   "foldingStopMarker": "\\}",
   "patterns": [
     {
-      "include": "#comment"
-    }
-  ],
-  "repository": {
-    "comment": {
-      "begin": "^//.*",
-      "beginCaptures": {
+      "match": "^//.*\n",
+      "captures": {
         "0": {
           "name": "comment.line.double-slash.txtmdl"
         }
-      },
-      "end": "\n"
+      }
+    },
+    {
+      "include": "#type"
+    }
+  ],
+  "repository": {
+    "type": {
+      "match": "([su](8|16|32|64|native)|char(16|32)|f(32|64)|bool)",
+      "captures": {
+        "0": {
+          "name": "storage.type.keyword.txtmdl"
+        }
+      }
     }
   }
 }
