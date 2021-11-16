@@ -5,5 +5,21 @@
     "txtmdl"
   ],
   "foldingStartMarker": "\\{",
-  "foldingStopMarker":  "\\}"
+  "foldingStopMarker": "\\}",
+  "patterns": [
+    {
+      "include": "#comment"
+    }
+  ],
+  "repository": {
+    "comment": {
+      "begin": "^//.*",
+      "beginCaptures": {
+        "0": {
+          "name": "comment.line.double-slash.txtmdl"
+        }
+      },
+      "end": "\n"
+    }
+  }
 }
