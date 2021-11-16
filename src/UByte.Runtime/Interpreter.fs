@@ -1348,7 +1348,7 @@ let interpret
                     Register.ofRegisterType (anyTypeToRegisterType typeSizeResolver field.DeclaringModule field.FieldType)
                 source.CopyTo(Span(Unsafe.AsPointer &destination.Value, sizeof<RegisterValue>))
                 control.TemporaryRegisters.Add destination
-                // TODO: Add to roots of loaded an object ref from field.
+                roots.RootTemporary &destination
             | Obj_fd_st(Field field, Register object, Register source) ->
                 ObjectField.checkCanMutate field control
                 // TODO: If field contains a struct, source should be an address, so perform struct copying.
