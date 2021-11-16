@@ -12,6 +12,8 @@ type FrameEventKind = | OpenFrame | CloseFrame
 
 type FrameEvent = { Time: TimeSpan; Type: FrameEventKind; Name: string }
 
+let timeValueOf (time: TimeSpan) = time.Ticks * 100L
+
 let write
     (output: Utf8JsonWriter)
     (events: ImmutableArray<FrameEvent>)
@@ -45,9 +47,9 @@ let write
         output.WriteStartObject()
         output.WriteString("type", "evented")
         output.WriteString("name", programFileName)
-        output.WriteString("unit", "milliseconds")
-        output.WriteNumber("startValue", startTime.Milliseconds)
-        output.WriteNumber("endValue", endTime.Milliseconds)
+        output.WriteString("unit", "nanoseconds")
+        output.WriteNumber("startValue", timeValueOf startTime)
+        output.WriteNumber("endValue", timeValueOf endTime)
         output.WriteStartArray "events"
 
         for event in events do
@@ -58,7 +60,7 @@ let write
 
             output.WriteStartObject()
             output.WriteString("type", kind)
-            output.WriteNumber("at", event.Time.Milliseconds)
+            output.WriteNumber("at", timeValueOf event.Time)
             output.WriteNumber("frame", frames.[event.Name])
             output.WriteEndObject()
 
