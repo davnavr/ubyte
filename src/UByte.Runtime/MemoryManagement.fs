@@ -244,7 +244,6 @@ type ValueStack (capacity: int32) =
         if size < 0n then raise(ArgumentOutOfRangeException(nameof size, size, "The size to allocate cannot be negative"))
         if remaining >= size then
             let addr = start + capacity - remaining
-            assert(addr >= start)
             assert(start + addr < start + capacity)
             address <- NativePtr.toVoidPtr(NativePtr.ofNativeInt<byte> addr)
             allocated.Trigger(struct {| Size = size; Address = addr |})
