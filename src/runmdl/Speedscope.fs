@@ -10,7 +10,7 @@ module Runtime = UByte.Runtime.Interpreter
 [<Struct>]
 type FrameEventKind = | OpenFrame | CloseFrame
 
-type FrameEvent = { Time: TimeSpan; Type: FrameEventKind; Frame: Runtime.StackFrame }
+type FrameEvent = { Time: TimeSpan; Type: FrameEventKind; Name: string }
 
 let write
     (output: Utf8JsonWriter)
@@ -26,15 +26,15 @@ let write
         output.WriteStartObject "shared"
         output.WriteStartArray "frames"
 
-        let frames = System.Collections.Generic.Dictionary<Runtime.StackFrame, int32>()
-        for { Frame = frame } in events do
-            match frames.TryGetValue frame with
+        let frames = System.Collections.Generic.Dictionary<_, int32> StringComparer.Ordinal
+        for { Name = name } in events do
+            match frames.TryGetValue name with
             | true, _ -> ()
             | false, _ ->
                 let i = frames.Count
-                frames.Add(frame, i)
+                frames.Add(name, i)
                 output.WriteStartObject()
-                output.WriteString("name", frame.CurrentMethod.ToString())
+                output.WriteString("name", name)
                 //output.WriteString("file", frame.CurrentModule.ToString())
                 output.WriteEndObject()
 
@@ -59,7 +59,7 @@ let write
             output.WriteStartObject()
             output.WriteString("type", kind)
             output.WriteNumber("at", event.Time.Milliseconds)
-            output.WriteNumber("frame", frames.[event.Frame])
+            output.WriteNumber("frame", frames.[event.Name])
             output.WriteEndObject()
 
         output.WriteEndArray() // events

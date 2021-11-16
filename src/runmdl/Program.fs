@@ -35,7 +35,9 @@ type Argument =
             | Log_To_Stdout -> "specify that log messages should also be written to standard output"
             | Trace _ -> "specify a path to a file that will contain profiling information in speedscope format, defaults to a file named after the program in the current directory"
 
-let interpreterArgumentParser = ArgumentParser.Create<Argument>()
+let [<Literal>] InterpreterProgramName = "runmdl"
+
+let interpreterArgumentParser = ArgumentParser.Create<Argument>(programName = InterpreterProgramName)
 
 [<AutoOpen>]
 module Logger =
@@ -152,21 +154,27 @@ let main argv =
                 interpreterTraceOutput <- Some(destination', events)
 
                 interpreterTraceHandler <- Some <| fun (source: Interpreter.EventSource) ->
-                    timer.Value <- Some(Stopwatch())
+                    timer.Value <- Some(Stopwatch.StartNew())
                     let timer = timer.Value.Value
+
+                    events.Add
+                        { Speedscope.Time = System.TimeSpan.Zero
+                          Speedscope.Type = Speedscope.OpenFrame
+                          Speedscope.Name = InterpreterProgramName }
+
                     source.MethodCalled.Add <| fun frame ->
-                        if not timer.IsRunning then timer.Start()
                         let time = timer.Elapsed
                         events.Add
                             { Speedscope.Time = time
                               Speedscope.Type = Speedscope.OpenFrame
-                              Speedscope.Frame = frame }
+                              Speedscope.Name = frame.CurrentMethod.ToString() }
+
                     source.MethodReturned.Add <| fun frame ->
                         let time = timer.Elapsed
                         events.Add
                             { Speedscope.Time = time
                               Speedscope.Type = Speedscope.CloseFrame
-                              Speedscope.Frame = frame }
+                              Speedscope.Name = frame.CurrentMethod.ToString() }
             | _ -> ())
             fullArgumentList
 
@@ -201,6 +209,11 @@ let main argv =
 
             match interpreterTraceOutput with
             | Some(destination, events) ->
+                events.Add
+                    { Speedscope.Time = timer.Elapsed
+                      Speedscope.Type = Speedscope.CloseFrame
+                      Speedscope.Name = InterpreterProgramName }
+
                 use output = destination.Open(FileMode.Create)
                 Speedscope.writeToStream output (events.ToImmutable()) (System.TimeSpan.Zero) timer.Elapsed program.Name
             | None -> ()

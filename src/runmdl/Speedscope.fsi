@@ -4,8 +4,6 @@ module UByte.Interpreter.Speedscope
 
 open System
 
-open UByte.Runtime
-
 [<Struct>]
 type FrameEventKind = | OpenFrame | CloseFrame
 
@@ -13,7 +11,7 @@ type FrameEventKind = | OpenFrame | CloseFrame
 type FrameEvent =
     { Time: TimeSpan
       Type: FrameEventKind
-      Frame: Interpreter.StackFrame }
+      Name: string }
 
 val writeToStream :
     output: System.IO.Stream ->
