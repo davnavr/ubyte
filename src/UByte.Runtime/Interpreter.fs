@@ -1186,7 +1186,7 @@ let interpret
 #if DEBUG
         let insertThisArgument (arguments: ImmutableArray<Register>) o =
 #else
-        let inline insertThisArgument arguments o =
+        let inline insertThisArgument (arguments: ImmutableArray<_>) o =
 #endif
             arguments.Insert(0, Register.ofValue RegisterType.Object o)
 

@@ -7,6 +7,7 @@
 .identifier @id_class_MyLong MyLong
 .identifier @id_field_MyLong_value value
 .identifier @id_method_Program_Main Main
+.identifier @id_method_Program_Helper Helper
 .identifier @id_extern_interpreter runmdl
 .identifier @id_extern_ForceGarbageCollection GC_Collect
 
@@ -15,6 +16,7 @@
 .signature @t_MyLong type class @class_MyLong
 
 .signature @m_Program_Main method (@t_int) ()
+.signature @m_Program_Helper method (@t_MyLong) ()
 .signature @m_Program_ForceGarbageCollection method () ()
 .signature @m_MyLong_init method () (@t_MyLong)
 
@@ -46,10 +48,24 @@
     }
 }
 
+.code @code_Program_Helper {
+    .locals ($l_result)
+    .block $ENTRY {
+        %t_garbage = obj.new @method_MyLong_init ()
+        $l_result = obj.new @method_MyLong_init ()
+        br $RETURN
+    }
+    .block $RETURN {
+        %t_garbage = obj.new @method_MyLong_init ()
+        ret $l_result
+    }
+}
+
 .code @code_Program_Main {
     .block $ENTRY {
         %t_obj_0 = obj.new @method_MyLong_init ()
-        %t_obj_1 = obj.new @method_MyLong_init ()
+        %t_obj_garbage = obj.new @method_MyLong_init ()
+        %t_obj_1 = call @method_Program_Helper ()
         call @method_Program_ForceGarbageCollection ()
         %t_result_0 = obj.fd.ld @field_MyLong_value %t_obj_0
         %t_result_1 = obj.fd.ld @field_MyLong_value %t_obj_1
@@ -66,6 +82,12 @@
         .signature @m_Program_Main
         .body defined @code_Program_Main
         .name @id_method_Program_Main
+    }
+
+    .method @method_Program_Helper private {
+        .signature @m_Program_Helper
+        .body defined @code_Program_Helper
+        .name @id_method_Program_Helper
     }
 
     .method @method_Program_ForceGarbageCollection private {
