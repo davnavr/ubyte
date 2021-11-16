@@ -22,11 +22,20 @@
           "name": "keyword.txtmdl"
         }
       }
+    },
+    {
+      "include": "#register"
+    },
+    {
+      "include": "#identifier"
+    },
+    {
+      "include": "#type-primitive"
     }
   ],
   "repository": {
     "type-primitive": {
-      "match": "([su](8|16|32|64|native)|char(16|32)|f(32|64)|bool)",
+      "match": "\\b([su](8|16|32|64|native)|char(16|32)|f(32|64)|bool)\\b",
       "captures": {
         "0": {
           "name": "storage.type.keyword.txtmdl"
