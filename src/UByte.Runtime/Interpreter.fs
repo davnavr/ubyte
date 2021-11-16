@@ -1346,14 +1346,14 @@ let interpret
                 let source = ObjectField.access gc objectTypeLookup typeLayoutResolver typeSizeResolver &object field
                 let mutable destination =
                     Register.ofRegisterType (anyTypeToRegisterType typeSizeResolver field.DeclaringModule field.FieldType)
-                source.CopyTo(Span(Unsafe.AsPointer &destination, sizeof<uint64>))
+                source.CopyTo(Span(Unsafe.AsPointer &destination.Value, sizeof<RegisterValue>))
                 control.TemporaryRegisters.Add destination
                 // TODO: Add to roots of loaded an object ref from field.
             | Obj_fd_st(Field field, Register object, Register source) ->
                 ObjectField.checkCanMutate field control
                 // TODO: If field contains a struct, source should be an address, so perform struct copying.
                 let destination = ObjectField.access gc objectTypeLookup typeLayoutResolver typeSizeResolver &object field
-                Span(Unsafe.AsPointer(&Unsafe.AsRef &source), destination.Length).CopyTo destination
+                Span(Unsafe.AsPointer(&Unsafe.AsRef &source.Value), destination.Length).CopyTo destination
             | Obj_fd_addr(ValidFlags.MemoryAccess MemoryAccessFlags.ElementAccessValidMask _, Field field, Register object) ->
                 // TODO: Prevent throwing of exception for when field does not contain object in obj.fd.addr
                 let o = InterpretRegister.value<ObjectReference> &object
