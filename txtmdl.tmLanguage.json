@@ -16,15 +16,45 @@
       }
     },
     {
-      "include": "#type"
+      "match": "\\.\\w+",
+      "captures": {
+        "0": {
+          "name": "keyword.txtmdl"
+        }
+      }
+    },
+    {
+      "include": "#type-primitive"
+    },
+    {
+      "include": "#register"
+    },
+    {
+      "include": "#identifier"
     }
   ],
   "repository": {
-    "type": {
+    "type-primitive": {
       "match": "([su](8|16|32|64|native)|char(16|32)|f(32|64)|bool)",
       "captures": {
         "0": {
           "name": "storage.type.keyword.txtmdl"
+        }
+      }
+    },
+    "register": {
+      "match": "(\\$|%)\\w+",
+      "captures": {
+        "0": {
+          "name": "variable.other.txtmdl"
+        }
+      }
+    },
+    "identifier": {
+      "match": "@\\w+",
+      "captures": {
+        "0": {
+          "name": "entity.other.txtmdl"
         }
       }
     }
