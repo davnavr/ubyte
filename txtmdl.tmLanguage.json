@@ -16,21 +16,12 @@
       }
     },
     {
-      "match": "\\.\\w+",
+      "match": "^\\s*\\.\\w+",
       "captures": {
         "0": {
           "name": "keyword.txtmdl"
         }
       }
-    },
-    {
-      "include": "#type-primitive"
-    },
-    {
-      "include": "#register"
-    },
-    {
-      "include": "#identifier"
     }
   ],
   "repository": {
@@ -43,10 +34,10 @@
       }
     },
     "register": {
-      "match": "(\\$|%)\\w+",
+      "match": "((\\$|%)\\w+)",
       "captures": {
         "0": {
-          "name": "variable.other.txtmdl"
+          "name": "variable.txtmdl"
         }
       }
     },
