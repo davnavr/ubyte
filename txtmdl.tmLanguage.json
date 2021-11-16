@@ -1,0 +1,9 @@
+{
+  "name": "UByte Text Module",
+  "scopeName": "source.txtmdl",
+  "fileTypes": [
+    "txtmdl"
+  ],
+  "foldingStartMarker": "\\{",
+  "foldingStopMarker":  "\\}"
+}
