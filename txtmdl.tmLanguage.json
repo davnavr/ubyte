@@ -8,7 +8,7 @@
   "foldingStopMarker": "\\}",
   "patterns": [
     {
-      "match": "^//.*\n",
+      "match": "//.*\n",
       "captures": {
         "0": {
           "name": "comment.line.double-slash.txtmdl"
