@@ -1516,7 +1516,8 @@ let interpret
                 match currentHandlerFrame.CurrentExceptionHandler with
                 | ValueSome({ BlockExceptionHandler.CatchBlock = Index handlerBlockIndex } as handler) ->
                     branchToTarget(int32 handlerBlockIndex - currentHandlerFrame.BlockIndex)
-                    
+                    control.InstructionIndex <- 0
+
                     match handler.ExceptionRegister with
                     | ValueSome eindex ->
                         currentHandlerFrame.AddExceptionRegister(eindex, caughtProgramException.Value.Value)
