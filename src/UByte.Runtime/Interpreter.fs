@@ -1515,12 +1515,14 @@ let interpret
                 let currentHandlerFrame = frame.Value.Value
                 match currentHandlerFrame.CurrentExceptionHandler with
                 | ValueSome({ BlockExceptionHandler.CatchBlock = Index handlerBlockIndex } as handler) ->
+                    let exr = caughtProgramException.Value.Value
                     branchToTarget(int32 handlerBlockIndex - currentHandlerFrame.BlockIndex)
+                    garbageCollectionState.Roots.RootTemporary &exr
                     control.InstructionIndex <- 0
 
                     match handler.ExceptionRegister with
                     | ValueSome eindex ->
-                        currentHandlerFrame.AddExceptionRegister(eindex, caughtProgramException.Value.Value)
+                        currentHandlerFrame.AddExceptionRegister(eindex, exr)
                         caughtProgramException <- ValueNone
                     | ValueNone -> ()
                 | ValueNone ->
