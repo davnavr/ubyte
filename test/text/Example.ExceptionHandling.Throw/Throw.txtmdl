@@ -11,7 +11,7 @@
 
 .code @code_main {
     .block $ENTRY {
-        %t_exn = const.s s32 5 // TODO: Throw an object instead.
+        %t_exn = const.i s32 5 // TODO: Throw an object instead.
         obj.throw %t_exn
         ret
     }

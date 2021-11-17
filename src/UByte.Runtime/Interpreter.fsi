@@ -29,6 +29,13 @@ type EventSource =
     [<CLIEvent>] member MethodCalled : IEvent<StackFrame>
     [<CLIEvent>] member MethodReturned : IEvent<StackFrame>
 
+[<Sealed; Class>]
+type UncaughtProgramException =
+    inherit System.Exception
+
+    /// The stack frame describing where the exception originated from.
+    member ProgramFrame : StackFrame
+
 [<Sealed>]
 type Runtime =
     /// Initializes the interpreter with the specified program containing the code to run.
@@ -46,6 +53,9 @@ type Runtime =
     /// <param name="stackEventHandler" />
     /// <returns>The integer exit code returned by the program.</returns>
     /// <exception cref="T:UByte.Runtime.Interpreter.MissingEntryPointException" />
+    /// <exception cref="T:UByte.Runtime.Interpreter.UncaughtProgramException">
+    /// Thrown when an exception was thrown by the interpreted program that was not caught.
+    /// </exception>
     member InvokeEntryPoint :
         argv: string[] *
         ?maxStackCapacity: int32 *

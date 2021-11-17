@@ -161,6 +161,7 @@ module private InterpretRegister =
     let copyValueTo<'Value when 'Value : unmanaged> (destination: voidptr) (register: inref<Register>) =
         NativePtr.write (NativePtr.ofVoidPtr<'Value> destination) (value<'Value> &register)
 
+/// Contains functions for interacting with object references to arrays.
 [<RequireQualifiedAccess>]
 module private ArrayObject =
     type ArrayLength = int32
@@ -1079,6 +1080,15 @@ type private RegisterArrayEnumerator =
         member this.Reset() = this.index <- -1
         member _.Dispose() = ()
 
+[<RequireQualifiedAccess; NoComparison; NoEquality>]
+type ExceptionRegister = { Value: Register; Origin: StackFrame }
+
+[<Sealed>]
+type UncaughtProgramException (message: string, ex: ExceptionRegister) =
+    inherit Exception(message)
+
+    member _.ProgramFrame = ex.Origin
+
 let interpret
     (gc: IGarbageCollector)
     (garbageCollectionState: GarbageCollectionState)
@@ -1094,7 +1104,7 @@ let interpret
     =
     let mutable frame: StackFrame voption ref = ref ValueNone
     let mutable runExternalCode: _ voption = ValueNone
-    let mutable ex = ValueNone
+    let mutable caughtProgramException = ValueNone
     let roots = garbageCollectionState.Roots
     use stack = new ValueStack(maxStackCapacity)
 
@@ -1145,11 +1155,6 @@ let interpret
         | ValueNone -> false
 
     while cont() do
-        match ex with
-        | ValueSome e ->
-            raise(NotImplementedException("TODO: Reimplement exception handling, with support for moving back up the call stack:\n" + frame.Value.Value.StackTrace, e))
-        | ValueNone -> ()
-
         let control = frame.Value.Value
 
 #if DEBUG
@@ -1474,6 +1479,8 @@ let interpret
                 let dest = InterpretRegister.value<nativeptr<byte>> &destination
                 let length = esize * ConvertRegister.s32 &count
                 Span<byte>(NativePtr.toVoidPtr src, length).CopyTo(Span<byte>(NativePtr.toVoidPtr dest, length))
+            | Obj_throw(Register ex) ->
+                caughtProgramException <- ValueSome { ExceptionRegister.Value = ex; ExceptionRegister.Origin = control }
             | Nop -> ()
 
             match runExternalCode with
@@ -1499,13 +1506,31 @@ let interpret
             // Incrementing here means index points to instruction that caused the exception in the stack frame.
             control.InstructionIndex <- Checked.(+) control.InstructionIndex 1
         with
-        | e -> ex <- ValueSome e
+        | ex ->
+            let message = sprintf "Internal interpreter error: %s%s" Environment.NewLine control.StackTrace
+            raise(InvalidOperationException(message, ex))
 
-    match ex with
-    | ValueSome e ->
-        match frame.Value with
-        | ValueSome existing -> raise(NotImplementedException(existing.StackTrace, e))
-        | ValueNone -> raise e
+        if caughtProgramException.IsSome then
+            while frame.Value.IsSome && caughtProgramException.IsSome do
+                let currentHandlerFrame = frame.Value.Value
+                match currentHandlerFrame.CurrentExceptionHandler with
+                | ValueSome({ BlockExceptionHandler.CatchBlock = Index handlerBlockIndex } as handler) ->
+                    branchToTarget(int32 handlerBlockIndex - currentHandlerFrame.BlockIndex)
+                    
+                    match handler.ExceptionRegister with
+                    | ValueSome eindex ->
+                        currentHandlerFrame.AddExceptionRegister(eindex, caughtProgramException.Value.Value)
+                        caughtProgramException <- ValueNone
+                    | ValueNone -> ()
+                | ValueNone ->
+                    returnBackControl currentHandlerFrame currentHandlerFrame.Previous (ReadOnlyMemory())
+
+    match caughtProgramException with
+    | ValueSome(exr: ExceptionRegister) ->
+        let message =
+            sprintf "Uncaught program exception: %s%s%s" (exr.Value.ToString()) Environment.NewLine exr.Origin.StackTrace
+
+        raise(UncaughtProgramException(message, exr))
     | ValueNone -> ()
 
     match frame.contents with
