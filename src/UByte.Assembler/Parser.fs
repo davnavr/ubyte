@@ -405,8 +405,18 @@ let code: Parser<ParsedCode, _> =
         bitwiseBinaryInstruction "and" InstructionSet.And
         bitwiseBinaryInstruction "or" InstructionSet.Or
         bitwiseBinaryInstruction "xor" InstructionSet.Xor
-        bitwiseBinaryInstruction "rotl" InstructionSet.Rotl
-        bitwiseBinaryInstruction "rotr" InstructionSet.Rotr
+
+        let bitwiseRotateInstruction name instr =
+            pipe3 tprimitive localCodeRegister (keyword "by" >>. localCodeRegister) <| fun vtype vreg areg rlookup _ errors _ ->
+                voptional {
+                    let! vreg' = lookupRegisterName rlookup errors vreg
+                    let! areg' = lookupRegisterName rlookup errors areg
+                    return instr(vtype, vreg', areg')
+                }
+            |> addInstructionParser name
+
+        bitwiseRotateInstruction "rotl" InstructionSet.Rotl
+        bitwiseRotateInstruction "rotr" InstructionSet.Rotr
 
         let constantBooleanInstruction name instr =
             tprimitive |>> (fun vtype _ _ _ _ -> ValueSome(instr vtype)) |> addInstructionParser name

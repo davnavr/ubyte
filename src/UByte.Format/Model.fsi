@@ -480,24 +480,24 @@ module InstructionSet =
 
         /// <summary>
         /// <para>
-        /// <c>&lt;result&gt; = rotl &lt;numeric type&gt; &lt;value&gt;</c>
+        /// <c>&lt;result&gt; = rotl &lt;numeric type&gt; &lt;value&gt; by &lt;amount&gt;</c>
         /// </para>
         /// <para>
-        /// Converts the in the <paramref name="i"/> register to the specified integer type, and shifts the value left by the
-        /// specified integer <paramref name="amount"/>
+        /// Converts the value to the specified integer type, and shifts the value left by the specified integer
+        /// <paramref name="amount"/>.
         /// </para>
         /// </summary>
-        | Rotl of PrimitiveType * amount: RegisterIndex * i: RegisterIndex
+        | Rotl of PrimitiveType * value: RegisterIndex * amount: RegisterIndex
         /// <summary>
         /// <para>
-        /// <c>&lt;result&gt; = rotr &lt;integer type&gt; &lt;value&gt;</c>
+        /// <c>&lt;result&gt; = rotr &lt;integer type&gt; &lt;value&gt; by &lt;amount&gt;</c>
         /// </para>
         /// <para>
-        /// Converts the value in the <paramref name="i"/> register to the specified integer type, and shifts the value right by
-        /// the specified integer <paramref name="amount"/>.
+        /// Converts the value to the specified integer type, and shifts the value right by the specified integer
+        /// <paramref name="amount"/>.
         /// </para>
         /// </summary>
-        | Rotr of PrimitiveType * amount: RegisterIndex * i: RegisterIndex
+        | Rotr of PrimitiveType * value: RegisterIndex * amount: RegisterIndex
 
         /// <summary>
         /// <para>

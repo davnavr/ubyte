@@ -236,8 +236,8 @@ module InstructionSet =
         | Not of PrimitiveType * RegisterIndex
         | Xor of PrimitiveType * x: RegisterIndex * y: RegisterIndex
         | Rem of ArithmeticFlags * TypeSignatureIndex * x: RegisterIndex * y: RegisterIndex
-        | Rotl of PrimitiveType * amount: RegisterIndex * i: RegisterIndex
-        | Rotr of PrimitiveType * amount: RegisterIndex * i: RegisterIndex
+        | Rotl of PrimitiveType * value: RegisterIndex * amount: RegisterIndex
+        | Rotr of PrimitiveType * value: RegisterIndex * amount: RegisterIndex
         | Const_i of PrimitiveType * value: varint
         | Const_f32 of value: single
         | Const_f64 of value: double

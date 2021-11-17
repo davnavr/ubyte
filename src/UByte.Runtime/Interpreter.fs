@@ -419,7 +419,7 @@ module private ConvertRegister =
 
 /// Contains functions for performing arithmetic on the values stored in registers.
 [<RequireQualifiedAccess>]
-module private RegisterArithmetic = // TODO: Fix, pointer arithmetic does not take into account the size of the type pointed to
+module private RegisterArithmetic =
     let private noObjectReferences() = invalidOp "Cannot use object reference in an arithmetic operation"
 
     let private pointerSizeMismatch expected actual =
@@ -621,6 +621,42 @@ module private RegisterArithmetic = // TODO: Fix, pointer arithmetic does not ta
         let incr vtype (register: inref<_>) = unop inc inc inc inc inc inc inc inc inc inc inc inc vtype &register
         let inline private dec value = oneop (-) value
         let decr vtype (register: inref<_>) = unop dec dec dec dec dec dec dec dec dec dec dec dec vtype &register
+
+    let inline private rotop sh8 sh16 sh32 sh64 shnative itype (register: inref<Register>) amount =
+        let rtype = RegisterType.primitive itype
+        match itype with
+        | PrimitiveType.S8 | PrimitiveType.U8 | PrimitiveType.Bool ->
+            Register.ofValue rtype (sh8 (ConvertRegister.u8 &register) amount)
+        | PrimitiveType.S16 | PrimitiveType.U16 | PrimitiveType.Char16 ->
+            Register.ofValue rtype (sh16 (ConvertRegister.u16 &register) amount)
+        | PrimitiveType.S32 | PrimitiveType.U32 | PrimitiveType.Char32 | PrimitiveType.F32 ->
+            Register.ofValue rtype (sh32 (ConvertRegister.u32 &register) amount)
+        | PrimitiveType.S64 | PrimitiveType.U64 | PrimitiveType.F64 ->
+            Register.ofValue rtype (sh64 (ConvertRegister.u64 &register) amount)
+        | PrimitiveType.UNative | PrimitiveType.SNative ->
+            Register.ofValue rtype (shnative (ConvertRegister.unative &register) amount)
+
+    let rotl itype (register: inref<_>) amount =
+        rotop
+            (fun value amount -> (value <<< amount) ||| (value >>> (8 - amount)))
+            (fun value amount -> (value <<< amount) ||| (value >>> (16 - amount)))
+            (fun value amount -> System.Numerics.BitOperations.RotateLeft(value, amount))
+            (fun value amount -> System.Numerics.BitOperations.RotateLeft(value, amount))
+            (fun value amount -> (value <<< amount) ||| (value >>> (sizeof<unativeint> - amount)))
+            itype
+            &register
+            amount
+
+    let rotr itype (register: inref<_>) amount =
+           rotop
+               (fun value amount -> (value >>> amount) ||| (value <<< (8 - amount)))
+               (fun value amount -> (value >>> amount) ||| (value <<< (16 - amount)))
+               (fun value amount -> System.Numerics.BitOperations.RotateRight(value, amount))
+               (fun value amount -> System.Numerics.BitOperations.RotateRight(value, amount))
+               (fun value amount -> (value >>> amount) ||| (value <<< (sizeof<unativeint> - amount)))
+               itype
+               &register
+               amount
 
 /// Contains functions for comparing the values stored in registers.
 [<RequireQualifiedAccess>]
@@ -1270,6 +1306,10 @@ let interpret
                 control.TemporaryRegisters.Add(RegisterArithmetic.xor vtype &x &y)
             | Not(vtype, Register register) ->
                 control.TemporaryRegisters.Add(RegisterArithmetic.``not`` vtype &register)
+            | Rotl(rtype, Register value, Register amount) ->
+                control.TemporaryRegisters.Add(RegisterArithmetic.rotl rtype &value (ConvertRegister.s32 &amount))
+            | Rotr(rtype, Register value, Register amount) ->
+                control.TemporaryRegisters.Add(RegisterArithmetic.rotr rtype &value (ConvertRegister.s32 &amount))
             | Const_i(vtype, value) ->
                 control.TemporaryRegisters.Add(StoreConstant.integer vtype value)
             | Const_true vtype ->
