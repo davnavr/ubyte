@@ -376,6 +376,8 @@ type MarkAndCompact (capacity: uint32) =
                             else
                                 free.Enqueue { FreeBlock.Offset = destination; FreeBlock.Size = current - destination }
                                 destination <- next
+                        else
+                            destination <- next
 
                     current <- next
 
