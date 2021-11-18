@@ -1026,6 +1026,18 @@ type RootObjectCollection () =
     member _.GetEnumerator() = // TODO: Create a custom struct root enumerator to avoid large allocations every single time the interpreter's GC is run.
         enumerated.GetEnumerator()
 
+    member _.AdjustMovedObjects (relocations: byref<#IEnumerator<ObjectRelocation>>) =
+        while relocations.MoveNext() do
+            let update = relocations.Current
+            for i = 0 to roots.Count - 1 do
+                let stackRootObjects = &roots.ItemRef i
+
+                if stackRootObjects.Temporaries.Count > 0 || stackRootObjects.Locals.Count > 0 then
+                    raise(NotImplementedException "TODO: Update object references inside of registers.")
+
+                for stackObjectReference in stackRootObjects.Addressed do
+                    if StackPtr.read stackObjectReference = update.From then StackPtr.write stackObjectReference update.To
+
 let private noAnyObject() = invalidOp "Unexpected object reference of unspecified type"
 
 let private expectedReferenceType actual = invalidOp(sprintf "Expected object reference to be of a reference type, but got %A" actual)
@@ -1096,6 +1108,8 @@ type GarbageCollectionState
             typeSizeResolver rm ty
 
         member state.GetReferencedObjects(gc, o) = state.GetReferencedObjects(gc, o)
+
+        member state.AdjustMovedObjects relocations = state.Roots.AdjustMovedObjects &relocations
 
 [<Struct; NoComparison; NoEquality>]
 type private RegisterArrayEnumerator =

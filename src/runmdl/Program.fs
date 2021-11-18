@@ -123,7 +123,7 @@ let main argv =
     let loggers = List<struct(bool * TextWriter)>()
 
     try
-        let gc = MemoryManagement.GarbageCollectors.MarkAndSweep()
+        use gc = MemoryManagement.GarbageCollectors.MarkAndSweep()
 
         use runtime =
             Interpreter.Runtime.Initialize ( // TODO: Use actual constructor so caller knows Runtime is disposable?

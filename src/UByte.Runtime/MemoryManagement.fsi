@@ -1,6 +1,7 @@
 ﻿module UByte.Runtime.MemoryManagement
 
 open System
+open System.Collections.Generic
 open System.Collections.Immutable
 open System.Runtime.CompilerServices
 
@@ -28,6 +29,9 @@ module ObjectReference =
     val inline toVoidPtr : o: ObjectReference -> voidptr
     val inline toNativeInt : o: ObjectReference -> nativeint
 
+[<RequireQualifiedAccess; IsReadOnly; Struct; NoComparison; NoEquality>]
+type ObjectRelocation = { From: ObjectReference; To: ObjectReference }
+
 [<Interface>]
 type IGarbageCollector =
     inherit IDisposable
@@ -50,9 +54,10 @@ type IGarbageCollector =
     [<CLIEvent>]
     abstract Collected : IEvent<nativeint>
 
-and [<Interface>] IGarbageCollectionState<'RootEnumerator
-    when 'RootEnumerator :> System.Collections.Generic.IEnumerator<ObjectReference>>
-    =
+    [<CLIEvent>]
+    abstract Moved : IEvent<struct(nativeint * ObjectReference)>
+
+and [<Interface>] IGarbageCollectionState<'RootEnumerator when 'RootEnumerator :> IEnumerator<ObjectReference>> =
     /// Returns an enumeration of all objects that are currently in use.
     abstract EnumerateRoots : unit -> 'RootEnumerator
 
@@ -60,10 +65,15 @@ and [<Interface>] IGarbageCollectionState<'RootEnumerator
 
     abstract GetReferencedObjects : IGarbageCollector * ObjectReference -> ImmutableArray<ObjectReference>
 
+    abstract AdjustMovedObjects : relocations: byref<#IEnumerator<ObjectRelocation>> -> unit
+
 [<AbstractClass; Sealed>]
 type GarbageCollectors =
-    /// A stop-the-world naive mark and sweep garbage collector.
-    static member MarkAndSweep : ?threshold: uint32 -> IGarbageCollector
+    /// A simple stop-the-world naive mark and sweep garbage collector.
+    static member MarkAndSweep : unit -> IGarbageCollector
+
+    /// A simple stop-the-world mark and compact garbage collector.
+    static member MarkAndCompact : ?capacity: uint32 -> IGarbageCollector
 
 [<Sealed>]
 type ValueStack =
@@ -106,6 +116,7 @@ module StackPtr =
     val internal ofNativeInt<'T when 'T : unmanaged> : address: nativeint -> stackptr<'T>
 
     val inline internal read<'T when 'T : unmanaged> : address: stackptr<'T> -> 'T
+    val inline internal write<'T when 'T : unmanaged> : address: stackptr<'T> -> value: 'T -> unit
 
     val internal add<'T when 'T : unmanaged> : address: stackptr<'T> -> int32 -> stackptr<'T>
 
