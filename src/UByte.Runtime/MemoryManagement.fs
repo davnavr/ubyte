@@ -278,13 +278,14 @@ type MarkAndCompact (capacity: uint32) =
             ObjectReference.Null
         else
             if free.Count > 0 then
-                raise(NotImplementedException "TODO: Search free list for blocks")
-            let o = gc.NextObject()
+                raise(NotImplementedException "TODO: Search free list for blocks to allocate in")
 
             remaining <- remaining - osize
             if remaining < threshold then
                 gc.Collect state
                 if remaining < threshold then threshold <- remaining
+
+            let o = gc.NextObject()
 
             let header = &ObjectReference.getHeaderRef<MarkAndCompactHeader> o
             header.Flags <- MarkAndSweepFlags.None
@@ -346,26 +347,27 @@ type MarkAndCompact (capacity: uint32) =
                     let osize = hsize + nativeint(state.GetTypeSize header.Type)
                     let next = current + osize
 
-                    header.Flags <- header.Flags &&& (~~~MarkAndSweepFlags.Marked)
-
                     if header.Flags &&& MarkAndSweepFlags.Marked = MarkAndSweepFlags.None then
                         // Dead objects are simply overwritten when used objects are compacted.
                         destination <- current
                         gc.Collected.Trigger oaddr
-                    elif destination < current then
-                        if header.Flags &&& MarkAndSweepFlags.Pinned = MarkAndSweepFlags.None then
-                            let oadjusted = ObjectReference(destination + hsize)
-                            Unsafe.CopyBlock(ObjectReference.toVoidPtr oadjusted, ObjectReference.toVoidPtr o, uint32 osize)
-                            relocations.Add { ObjectRelocation.From = o; ObjectRelocation.To = oadjusted }
-                            destination <- destination + osize
-                            gc.Moved.Trigger(struct(ObjectReference.toNativeInt o, oadjusted))
-                        else
-                            free.Enqueue { FreeBlock.Offset = destination; FreeBlock.Size = current - destination }
-                            destination <- next
+                    else
+                        header.Flags <- header.Flags &&& (~~~MarkAndSweepFlags.Marked)
+                        if destination < current then
+                            if header.Flags &&& MarkAndSweepFlags.Pinned = MarkAndSweepFlags.None then
+                                // header variable no longer valid here
+                                let oadjusted = ObjectReference(destination + hsize)
+                                Unsafe.CopyBlock(ObjectReference.toVoidPtr oadjusted, ObjectReference.toVoidPtr o, uint32 osize)
+                                relocations.Add { ObjectRelocation.From = o; ObjectRelocation.To = oadjusted }
+                                destination <- destination + osize
+                                gc.Moved.Trigger(struct(ObjectReference.toNativeInt o, oadjusted))
+                            else
+                                free.Enqueue { FreeBlock.Offset = destination; FreeBlock.Size = current - destination }
+                                destination <- next
 
                     current <- next
 
-            remaining <- current - start
+            remaining <- capacity - (destination - start)
 
             // Adjust
             let mutable relocatedObjectsEnumerator = relocations.GetEnumerator()
