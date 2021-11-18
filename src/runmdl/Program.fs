@@ -8,10 +8,15 @@ open Argu
 
 open UByte.Runtime
 
-[<System.Runtime.CompilerServices.IsReadOnly; Struct; RequireQualifiedAccess>]
+[<Struct; RequireQualifiedAccess>]
 type LogEventTypes =
     | Resolution
     | Allocation
+
+[<Struct; RequireQualifiedAccess>]
+type GarbageCollectionStrategy =
+    | Mark_And_Sweep
+    | Mark_And_Compact
 
 type Argument =
     | [<ExactlyOnce>] Program of ``program.binmdl``: string
@@ -22,6 +27,7 @@ type Argument =
     | Log_To_File of ``log.txt``: string
     | Log_To_Stdout
     | [<Unique>] Trace of ``trace.speedscope.json``: string option
+    | [<Unique>] Garbage_Collector of GarbageCollectionStrategy
 
     interface IArgParserTemplate with
         member this.Usage =
@@ -34,6 +40,7 @@ type Argument =
             | Log_To_File _ -> "specify a path to a file that log messages are written to"
             | Log_To_Stdout -> "specify that log messages should also be written to standard output"
             | Trace _ -> "specify a path to a file that will contain profiling information in speedscope format, defaults to a file named after the program in the current directory"
+            | Garbage_Collector _ -> "specify the garbage collector to use"
 
 let [<Literal>] InterpreterProgramName = "runmdl"
 
@@ -123,7 +130,13 @@ let main argv =
     let loggers = List<struct(bool * TextWriter)>()
 
     try
-        use gc = MemoryManagement.GarbageCollectors.MarkAndSweep()
+        use gc =
+            match iargs'.TryGetResult <@ Garbage_Collector @> with
+            | None
+            | Some GarbageCollectionStrategy.Mark_And_Sweep ->
+                MemoryManagement.GarbageCollectors.MarkAndSweep()
+            | Some GarbageCollectionStrategy.Mark_And_Compact ->
+                MemoryManagement.GarbageCollectors.MarkAndCompact()
 
         use runtime =
             Interpreter.Runtime.Initialize ( // TODO: Use actual constructor so caller knows Runtime is disposable?
