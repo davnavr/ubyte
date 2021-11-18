@@ -198,8 +198,15 @@ let main argv =
             if logEventCategories.Contains LogEventTypes.Allocation then
                 gc.Allocated.Add <| fun(struct(size, addr)) ->
                     logfn loggers "Allocated object at %O (%i bytes)" addr size
+
+                gc.CollectionStarted.Add <| fun() ->
+                    logfn loggers "Garbage collection started"
+
                 gc.Collected.Add <| fun addr ->
                     logfn loggers "Collected object at 0x%08X" addr
+
+                gc.CollectionEnded.Add <| fun count ->
+                    logfn loggers "Garbage collection ended, freed %i objects" count
 
                 Some <| fun (stack: MemoryManagement.ValueStack) ->
                     stack.Allocated.Add <| fun arg ->

@@ -52,7 +52,9 @@ type IGarbageCollector =
     abstract Collect : state: IGarbageCollectionState<'RootEnumerator> -> unit
     abstract TypeOf : ObjectReference -> ObjectType
     [<CLIEvent>] abstract Allocated : IEvent<struct(int32 * ObjectReference)>
+    [<CLIEvent>] abstract CollectionStarted : IEvent<unit>
     [<CLIEvent>] abstract Collected : IEvent<nativeint>
+    [<CLIEvent>] abstract CollectionEnded : IEvent<uint32>
     [<CLIEvent>] abstract Moved : IEvent<struct(nativeint * ObjectReference)>
 
 and IGarbageCollectionState<'RootEnumerator when 'RootEnumerator :> IEnumerator<ObjectReference>> =
@@ -65,6 +67,8 @@ and IGarbageCollectionState<'RootEnumerator when 'RootEnumerator :> IEnumerator<
 type ValidatedCollector () =
     let mutable disposed = false
     let allocated = Event<_>()
+    let garbageCollectionStarted = Event<_>()
+    let garbageCollectionEnded = Event<_>()
 
     member val Collected = Event<_>()
     member val Moved = Event<_>()
@@ -74,7 +78,7 @@ type ValidatedCollector () =
 
     abstract Allocate : state: IGarbageCollectionState<'RootEnumerator> * ObjectType * size: int32 -> ObjectReference
 
-    abstract Collect : state: IGarbageCollectionState<'RootEnumerator> -> unit
+    abstract Collect : state: IGarbageCollectionState<'RootEnumerator> -> uint32
 
     abstract TypeOf : ObjectReference -> ObjectType
 
@@ -100,14 +104,17 @@ type ValidatedCollector () =
 
         member gc.Collect state =
             gc.CheckDisposed()
-            gc.Collect state
+            garbageCollectionStarted.Trigger()
+            garbageCollectionEnded.Trigger(gc.Collect state)
 
         member gc.TypeOf o =
             gc.CheckDisposed()
             gc.TypeOf o
 
         [<CLIEvent>] member _.Allocated = allocated.Publish
+        [<CLIEvent>] member _.CollectionStarted = garbageCollectionStarted.Publish
         [<CLIEvent>] member gc.Collected = gc.Collected.Publish
+        [<CLIEvent>] member _.CollectionEnded = garbageCollectionEnded.Publish
         [<CLIEvent>] member gc.Moved = gc.Moved.Publish
 
     /// DO NOT OVERRIDE THIS
@@ -124,7 +131,9 @@ type PausingCollector<'Collector when 'Collector :> IGarbageCollector> (collecto
         member _.Collect state = lock lobj (fun() -> collector.Collect state)
         member _.TypeOf o = collector.TypeOf o
         [<CLIEvent>] member _.Allocated = collector.Allocated
+        [<CLIEvent>] member _.CollectionStarted = collector.CollectionStarted
         [<CLIEvent>] member _.Collected = collector.Collected
+        [<CLIEvent>] member _.CollectionEnded = collector.CollectionEnded
         [<CLIEvent>] member _.Moved = collector.Moved
 
 [<RequiresExplicitTypeArguments>]
@@ -223,7 +232,7 @@ type MarkAndSweep () =
             isNotMarked
 
         // Sweep
-        let mutable current, previous = first, ObjectReference.Null
+        let mutable current, previous, collected = first, ObjectReference.Null, 0u
         while not current.IsNull do
             let header = &ObjectReference.getHeaderRef<MarkAndSweepHeader> current
             let next = header.Next
@@ -232,12 +241,14 @@ type MarkAndSweep () =
                 if current = first then first <- header.Next
                 if current = last then last <- previous
                 gc.Free(false, current)
+                collected <- collected + 1u
                 if not previous.IsNull then markAndSweepNext previous <- next
             else
                 header.Flags <- header.Flags &&& (~~~MarkAndSweepFlags.Marked)
                 previous <- current
 
             current <- next
+        collected
 
     override gc.Deallocate finalizing =
         let mutable current = first
@@ -316,6 +327,7 @@ type MarkAndCompact (capacity: uint32) =
             /// Pointer where the next object will be copied to.
             let mutable destination = start
             let mutable remainingFreeBlocks = free.Count
+            let mutable collected = 0u
             let heapEndAddress = gc.NextAddress()
 
             while current < heapEndAddress do
@@ -351,6 +363,7 @@ type MarkAndCompact (capacity: uint32) =
                         // Dead objects are simply overwritten when used objects are compacted.
                         destination <- current
                         gc.Collected.Trigger oaddr
+                        collected <- collected + 1u
                     else
                         header.Flags <- header.Flags &&& (~~~MarkAndSweepFlags.Marked)
                         if destination < current then
@@ -372,6 +385,9 @@ type MarkAndCompact (capacity: uint32) =
             // Adjust
             let mutable relocatedObjectsEnumerator = relocations.GetEnumerator()
             state.AdjustMovedObjects &relocatedObjectsEnumerator
+            collected
+        else
+            0u
 
     override _.TypeOf o =
         let header : inref<_> = &ObjectReference.getHeaderRef<MarkAndCompactHeader> o

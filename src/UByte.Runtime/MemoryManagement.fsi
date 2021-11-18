@@ -52,7 +52,13 @@ type IGarbageCollector =
     abstract Allocated : IEvent<struct(int32 * ObjectReference)>
 
     [<CLIEvent>]
+    abstract CollectionStarted : IEvent<unit>
+
+    [<CLIEvent>]
     abstract Collected : IEvent<nativeint>
+
+    [<CLIEvent>]
+    abstract CollectionEnded : IEvent<uint32>
 
     [<CLIEvent>]
     abstract Moved : IEvent<struct(nativeint * ObjectReference)>
