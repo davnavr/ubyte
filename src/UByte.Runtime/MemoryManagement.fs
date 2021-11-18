@@ -200,7 +200,7 @@ type MarkAndSweep () =
         header.Next <- ObjectReference.Null
 
         if allocated > threshold then
-            gc.Collect state
+            (gc :> IGarbageCollector).Collect state
             threshold <- allocated
 
         if first.IsNull then first <- o
@@ -293,7 +293,7 @@ type MarkAndCompact (capacity: uint32) =
 
             remaining <- remaining - osize
             if remaining < threshold then
-                gc.Collect state
+                (gc :> IGarbageCollector).Collect state
                 if remaining < threshold then threshold <- remaining
 
             let o = gc.NextObject()
@@ -380,7 +380,7 @@ type MarkAndCompact (capacity: uint32) =
 
                     current <- next
 
-            remaining <- capacity - (destination - start)
+            remaining <- capacity - (current - start)
 
             // Adjust
             let mutable relocatedObjectsEnumerator = relocations.GetEnumerator()

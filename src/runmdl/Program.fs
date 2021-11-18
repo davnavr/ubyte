@@ -208,6 +208,9 @@ let main argv =
                 gc.CollectionEnded.Add <| fun count ->
                     logfn loggers "Garbage collection ended, freed %i objects" count
 
+                gc.Moved.Add <| fun struct(old, current) ->
+                    logfn loggers "Relocated object from 0%08X to %O" old current
+
                 Some <| fun (stack: MemoryManagement.ValueStack) ->
                     stack.Allocated.Add <| fun arg ->
                         logfn loggers "Allocated %i bytes on stack at 0x%08X" arg.Size arg.Address
