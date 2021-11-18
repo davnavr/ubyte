@@ -269,6 +269,7 @@ type FreeBlock = { Offset: nativeint; Size: nativeint }
 type MarkAndCompact (capacity: uint32) =
     inherit ValidatedCollector()
 
+    static let hsize = nativeint sizeof<MarkAndCompactHeader>
     let capacity = nativeint capacity
     let start = Marshal.AllocHGlobal capacity
     let mutable remaining = capacity
@@ -280,24 +281,23 @@ type MarkAndCompact (capacity: uint32) =
 
     member private _.NextAddress() = start + capacity - remaining
 
-    member private gc.NextObject() =
-        ObjectReference(nativeint sizeof<MarkAndCompactHeader> + gc.NextAddress())
-
     override gc.Allocate(state, ty, size) =
-        let osize = nativeint sizeof<MarkAndCompactHeader> + nativeint size
+        let osize = hsize + nativeint size
         if osize > remaining then
             ObjectReference.Null
         else
             if free.Count > 0 then
                 raise(NotImplementedException "TODO: Search free list for blocks to allocate in")
 
-            remaining <- remaining - osize
+            let oaddr = hsize + gc.NextAddress()
+
             if remaining < threshold then
                 (gc :> IGarbageCollector).Collect state
                 if remaining < threshold then threshold <- remaining
 
-            let o = gc.NextObject()
+            remaining <- remaining - osize
 
+            let o = ObjectReference oaddr
             let header = &ObjectReference.getHeaderRef<MarkAndCompactHeader> o
             header.Flags <- MarkAndSweepFlags.None
             Unsafe.AsRef &header.Type <- ty
@@ -352,7 +352,6 @@ type MarkAndCompact (capacity: uint32) =
                         false
 
                 if not(skippedFreeBlock()) then
-                    let hsize = nativeint sizeof<MarkAndCompactHeader>
                     let oaddr = current + hsize
                     let o = ObjectReference oaddr
                     let mutable header = &ObjectReference.getHeaderRef<MarkAndCompactHeader> o
