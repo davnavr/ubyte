@@ -318,15 +318,27 @@ type MarkAndCompact (capacity: uint32) =
             let heapEndAddress = gc.NextAddress()
 
             while current < heapEndAddress do
-                let nextFreeBlock = free.Peek()
-                let nextObjectAddress = nextFreeBlock.Offset + nextFreeBlock.Size
-                // Checks if we are currently in a free block.
-                if remainingFreeBlocks > 0 && nextFreeBlock.Offset >= current && current < nextObjectAddress then
-                    remainingFreeBlocks <- remainingFreeBlocks - 1
-                    // Skips to the address of the next object.
-                    current <- nextObjectAddress
-                    // Destination address does not need to be updated here.
-                else
+#if DEBUG
+                let skippedFreeBlock() =
+#else
+                let inline skippedFreeBlock() =
+#endif
+                    let mutable nextFreeBlock = Unchecked.defaultof<_>
+                    if free.TryPeek &nextFreeBlock then
+                        let nextObjectAddress = nextFreeBlock.Offset + nextFreeBlock.Size
+                        // Checks if we are currently in a free block.
+                        if remainingFreeBlocks > 0 && nextFreeBlock.Offset >= current && current < nextObjectAddress then
+                            remainingFreeBlocks <- remainingFreeBlocks - 1
+                            // Skips to the address of the next object.
+                            current <- nextObjectAddress
+                            // Destination address does not need to be updated here.
+                            true
+                        else
+                            false
+                    else
+                        false
+
+                if not(skippedFreeBlock()) then
                     let hsize = nativeint sizeof<MarkAndCompactHeader>
                     let oaddr = current + hsize
                     let o = ObjectReference oaddr
