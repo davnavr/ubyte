@@ -87,6 +87,30 @@ type Register =
             | PrimitiveType.F64 -> string(Unsafe.As<_, double> &this.Value)
         | RegisterType.Object | RegisterType.Pointer _ -> sprintf "0x%016X" (Unsafe.As<_, nativeint> &this.Value)
 
+[<Interface>]
+type IRegisterList =
+    abstract RegisterAt : index: int32 -> inref<Register>
+
+[<IsReadOnly; Struct; NoComparison; NoEquality>]
+type AllocatedRegister =
+    val private registers: IRegisterList
+    val private index: int32
+
+    new (registers: Register[], index) =
+        { registers = { new IRegisterList with member _.RegisterAt i = &registers.[i] }; index = index }
+
+    new (registers: ImmutableArray<Register>, index) =
+        { registers = { new IRegisterList with member _.RegisterAt i = &registers.ItemRef(i) }; index = index }
+
+    new (registers: ImmutableArray<Register>.Builder, index) =
+        { registers = { new IRegisterList with member _.RegisterAt i = &registers.ItemRef(i) }; index = index }
+
+    member this.Register : inref<Register> = &this.registers.RegisterAt(this.index)
+
+    override this.ToString() = this.Register.ToString()
+
+let inline (|AllocatedRegister|) (register: inref<AllocatedRegister>) = register.Register
+
 [<RequireQualifiedAccess>]
 module Register =
     let ofRegisterType rtype = { Register.Value = RegisterValue(); Register.Type = rtype }
@@ -284,7 +308,7 @@ type StackFrame
     let mutable bindex, iindex = 0, 0
     let mutable previousBlockIndex = ValueNone
     let currentLocalLookup = Dictionary<LocalIndex, TemporaryIndex>(Checked.int32 localRegisterCount)
-    let previousLocalLookup = Dictionary<LocalIndex, Register>(Checked.int32 localRegisterCount)
+    let previousLocalLookup = Dictionary<LocalIndex, AllocatedRegister>(Checked.int32 localRegisterCount)
     do
         if not blocks.IsDefaultOrEmpty then
             // TODO: Avoid code duplication with JumpTo
@@ -296,7 +320,7 @@ type StackFrame
     member _.BlockIndex = bindex
     member _.PreviousBlockIndex = previousBlockIndex
     member _.PreviousLocalRegisters = previousLocalLookup
-    member val TemporaryRegisters = List<Register>() // ImmutableArray.CreateBuilder
+    member val TemporaryRegisters = ImmutableArray.CreateBuilder<Register>()
     member _.ReturnRegisters = returns
     member _.Code = blocks
     member _.CurrentMethod = method
@@ -313,30 +337,35 @@ type StackFrame
     member this.RegisterAt(RegisterIndex.Index index) =
         let tcount = uint32 this.TemporaryRegisters.Count
         if index < tcount then
-            this.TemporaryRegisters.[Checked.int32 index] //.ItemRef
+            &this.TemporaryRegisters.ItemRef(Checked.int32 index)
         else
             let index' = Checked.(-) index tcount
             let acount = uint32 this.ArgumentRegisters.Length
             if index' < acount then
-                this.ArgumentRegisters.[Checked.int32 index'] //.ItemRef
+                &this.ArgumentRegisters.[Checked.int32 index']
             else
                 let index' = LocalIndex.Index(index - tcount - acount)
                 match currentLocalLookup.TryGetValue index' with
-                | true, Index i -> this.TemporaryRegisters.[Checked.int32 i] //.ItemRef
+                | true, Index i -> &this.TemporaryRegisters.ItemRef(Checked.int32 i)
                 | false, _ ->
-                    match previousLocalLookup.TryGetValue index' with
-                    | true, lregister -> lregister // TODO: Make dictionary type that allows an inref<_> to the value.
-                    | false, _ ->
+                    let previousLocalFound, previousLocalRegister = previousLocalLookup.TryGetValue index'
+
+                    if not previousLocalFound then
                         sprintf "A register corresponding to the index 0x%0X could not be found" index
                         |> KeyNotFoundException
                         |> raise
+
+                    &previousLocalRegister.Register
 
     member this.JumpTo index =
         previousBlockIndex <- ValueSome bindex
         bindex <- index
         iindex <- -1
+
+        let previousTemporaryRegisters = this.TemporaryRegisters.ToImmutable()
         for KeyValue(lindex, Index lregister) in currentLocalLookup do
-            previousLocalLookup.[lindex] <- this.TemporaryRegisters.[Checked.int32 lregister]
+            previousLocalLookup.[lindex] <- AllocatedRegister(previousTemporaryRegisters, Checked.int32 lregister)
+
         currentLocalLookup.Clear()
         this.TemporaryRegisters.Clear()
         for struct(tindex, lindex) in this.CurrentBlock.Locals do
@@ -967,8 +996,8 @@ type EventSource () =
 
 [<RequireQualifiedAccess; Struct; NoComparison; NoEquality>]
 type private RootObjects =
-    val mutable Temporaries: List<ObjectReference>
-    val mutable Locals: List<ObjectReference>
+    val mutable Temporaries: ImmutableArray<AllocatedRegister>.Builder
+    val mutable Locals: ImmutableArray<AllocatedRegister>.Builder
     val mutable Addressed: List<stackptr<ObjectReference>>
 
 [<Sealed>]
@@ -977,9 +1006,13 @@ type RootObjectCollection () =
 
     let enumerated = seq {
         for i = 0 to roots.Count - 1 do
-            let objects = roots.ItemRef i
-            if objects.Temporaries <> null then yield! objects.Temporaries
-            if objects.Locals <> null then yield! objects.Locals
+            let objects = (*&*)roots.ItemRef i
+            if objects.Temporaries <> null then
+                for registeri = 0 to objects.Temporaries.Count - 1 do
+                    yield InterpretRegister.value<ObjectReference> (&objects.Temporaries.ItemRef(registeri).Register)
+            if objects.Locals <> null then
+                for registeri = 0 to objects.Locals.Count - 1 do
+                    yield InterpretRegister.value<ObjectReference> (&objects.Locals.ItemRef(registeri).Register)
             if objects.Addressed <> null then
                 for address in objects.Addressed do yield StackPtr.read address
     }
@@ -987,13 +1020,11 @@ type RootObjectCollection () =
     member private _.Current = &roots.ItemRef(roots.Count - 1)
     member private this.CurrentRef = &Unsafe.AsRef &this.Current // Not safe if roots were resized.
 
-    member this.RootTemporary o =
-        if isNull this.Current.Temporaries then this.CurrentRef.Temporaries <- List()
-        this.Current.Temporaries.Add o
-
-    member this.RootTemporary(temporary: inref<Register>) =
-        match temporary.Type with
-        | RegisterType.Object -> this.RootTemporary(InterpretRegister.value<ObjectReference> &temporary)
+    member this.RootTemporary(temporary: AllocatedRegister) =
+        match temporary.Register.Type with
+        | RegisterType.Object ->
+            if isNull this.Current.Temporaries then this.CurrentRef.Temporaries <- ImmutableArray.CreateBuilder()
+            this.Current.Temporaries.Add temporary
         // Don't need to check for roots if register contains pointer, as alloca already updates the root collection.
         | RegisterType.Pointer _
         | RegisterType.Primitive _ -> ()
@@ -1001,13 +1032,13 @@ type RootObjectCollection () =
     member this.ClearTemporaries() =
         if this.Current.Temporaries <> null then this.Current.Temporaries.Clear()
 
-    member this.RootLocals(locals: byref<#IEnumerator<Register>>) =
-        if isNull this.Current.Locals then this.CurrentRef.Locals <- List()
+    member this.RootLocals(locals: byref<#IEnumerator<AllocatedRegister>>) =
+        if isNull this.Current.Locals then this.CurrentRef.Locals <- ImmutableArray.CreateBuilder()
         while locals.MoveNext() do
             let register = locals.Current
-            match register.Type with
+            match register.Register.Type with
             | RegisterType.Object ->
-                this.Current.Locals.Add(InterpretRegister.value<ObjectReference> &register)
+                this.Current.Locals.Add register
             // Don't need to check for roots if register contains pointer, as alloca already updates the root collection.
             | RegisterType.Pointer _
             | RegisterType.Primitive _ -> ()
@@ -1118,17 +1149,21 @@ type private RegisterArrayEnumerator =
 
     new (registers) = { registers = registers; index = -1 }
 
-    member this.Current = this.registers.[this.index]
+    member this.Current = AllocatedRegister(this.registers, this.index)
 
-    interface IEnumerator<Register> with
+    interface IEnumerator<AllocatedRegister> with
+        member this.Current = this.Current
+
+    interface IDisposable with
+        member _.Dispose() = ()
+
+    interface System.Collections.IEnumerator with
         member this.MoveNext() =
             this.index <- this.index + 1
             this.index < this.registers.Length
 
-        member this.Current = this.Current
         member this.Current = this.Current :> obj
         member this.Reset() = this.index <- -1
-        member _.Dispose() = ()
 
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
 type ExceptionRegister = { Value: Register; Origin: StackFrame }
@@ -1245,18 +1280,17 @@ let interpret
 #endif
             arguments.Insert(0, Register.ofValue RegisterType.Object o)
 
-        let returnBackControl current previous (results: ReadOnlyMemory<_>) =
+        let returnBackControl current previous (results: ImmutableArray<_>) =
             if events.IsSome then events.Value.TriggerMethodReturn current
             frame.Value <- previous
 
             match previous with
             | ValueSome caller ->
                 roots.PopRoots()
-                let results = results.Span
                 for i = 0 to results.Length - 1 do
-                    let register = &results.Item i
-                    roots.RootTemporary &register
-                    caller.TemporaryRegisters.Add register // TODO: Maybe Register could be a reference type? Ensuring registers are copied correctly may be confusing.
+                    let register = AllocatedRegister(results, i)
+                    roots.RootTemporary register
+                    caller.TemporaryRegisters.Add register.Register
             | ValueNone -> ()
 
             stack.FreeAllocations()
@@ -1369,7 +1403,7 @@ let interpret
 
                 results.AsSpan().CopyTo(Span control.ReturnRegisters) // TODO: Maybe Register could be a reference type? Ensuring registers are copied correctly may be confusing.
 
-                returnBackControl control control.Previous (results.AsMemory())
+                returnBackControl control control.Previous results
             | Br target -> branchToTarget target
             | Br_eq(Register x, Register y, ttrue, tfalse)
             | Br_ne(Register x, Register y, tfalse, ttrue) ->
@@ -1396,9 +1430,9 @@ let interpret
                         typeSizeResolver constructor.DeclaringModule vtype
                     )
 
-                roots.RootTemporary o
-                invoke CallFlags.None (insertThisArgument arguments o) constructor |> ignore
                 control.TemporaryRegisters.Add(Register.ofValue RegisterType.Object o)
+                roots.RootTemporary(AllocatedRegister(control.TemporaryRegisters, control.TemporaryRegisters.Count - 1))
+                invoke CallFlags.None (insertThisArgument arguments o) constructor |> ignore
                 // TODO: Check that calling constructor does not return any values (ensure no new temps are added), since the object above has already been added.
             | Obj_fd_ld(Field field, Register object) ->
                 // TODO: If field contains a struct, perform struct copying
@@ -1407,7 +1441,7 @@ let interpret
                     Register.ofRegisterType (anyTypeToRegisterType typeSizeResolver field.DeclaringModule field.FieldType)
                 source.CopyTo(Span(Unsafe.AsPointer &destination.Value, sizeof<RegisterValue>))
                 control.TemporaryRegisters.Add destination
-                roots.RootTemporary &destination
+                roots.RootTemporary(AllocatedRegister(control.TemporaryRegisters, control.TemporaryRegisters.Count - 1))
             | Obj_fd_st(Field field, Register object, Register source) ->
                 ObjectField.checkCanMutate field control
                 // TODO: If field contains a struct, source should be an address, so perform struct copying.
@@ -1431,8 +1465,8 @@ let interpret
                         (anyTypeToRefOrValType etype)
                         (ConvertRegister.s32 &length)
 
-                roots.RootTemporary array
                 control.TemporaryRegisters.Add(Register.ofValue RegisterType.Object array)
+                roots.RootTemporary(AllocatedRegister(control.TemporaryRegisters, control.TemporaryRegisters.Count - 1))
             | Obj_arr_get(Register array, Register index) ->
                 let o = InterpretRegister.value<ObjectReference> &array
                 control.TemporaryRegisters.Add(ArrayObject.get gc objectTypeLookup typeSizeResolver o (ConvertRegister.s32 &index))
@@ -1472,10 +1506,10 @@ let interpret
                         (anyTypeToRefOrValType etype)
                         (data.Length / esize)
 
-                roots.RootTemporary array
+                control.TemporaryRegisters.Add(Register.ofValue RegisterType.Object array)
+                roots.RootTemporary(AllocatedRegister(control.TemporaryRegisters, control.TemporaryRegisters.Count - 1))
                 // NOTE: Creation of array from constant data might not work when endianness of data and runtime is different.
                 data.AsSpan().CopyTo(Span(ArrayObject.address array, data.Length))
-                control.TemporaryRegisters.Add(Register.ofValue RegisterType.Object array)
             | Mem_st(ValidFlags.MemoryAccess MemoryAccessFlags.RawAccessValidMask _, Register src, TypeSignature ty, Register addr) ->
                 // TODO: Throw exception on invalid memory store.
                 let address = InterpretRegister.value<nativeptr<byte>> &addr
@@ -1553,7 +1587,7 @@ let interpret
                     )
 
                     // TODO: Handle return values from internal call.
-                    returnBackControl runtimeStackFrame runtimeStackFrame.Previous ReadOnlyMemory.Empty
+                    returnBackControl runtimeStackFrame runtimeStackFrame.Previous ImmutableArray.Empty
                 finally
                     runExternalCode <- ValueNone
 
@@ -1569,9 +1603,9 @@ let interpret
                 let currentHandlerFrame = frame.Value.Value
                 match currentHandlerFrame.CurrentExceptionHandler with
                 | ValueSome({ BlockExceptionHandler.CatchBlock = Index handlerBlockIndex } as handler) ->
-                    let exr = caughtProgramException.Value.Value
+                    let exr = AllocatedRegister(Array.singleton caughtProgramException.Value.Value, 0)
                     branchToTarget(int32 handlerBlockIndex - currentHandlerFrame.BlockIndex)
-                    garbageCollectionState.Roots.RootTemporary &exr
+                    garbageCollectionState.Roots.RootTemporary exr
                     control.InstructionIndex <- 0
 
                     match handler.ExceptionRegister with
@@ -1580,7 +1614,7 @@ let interpret
                         caughtProgramException <- ValueNone
                     | ValueNone -> ()
                 | ValueNone ->
-                    returnBackControl currentHandlerFrame currentHandlerFrame.Previous (ReadOnlyMemory())
+                    returnBackControl currentHandlerFrame currentHandlerFrame.Previous ImmutableArray.Empty
 
     match caughtProgramException with
     | ValueSome(exr: ExceptionRegister) ->

@@ -384,6 +384,8 @@ type MarkAndCompact (capacity: uint32) =
             remaining <- capacity - (current - start)
 
             // Adjust
+            // TODO: Use state.GetReferencedObjects to update internal pointers inside of all objects.
+
             let mutable relocatedObjectsEnumerator = relocations.GetEnumerator()
             state.AdjustMovedObjects &relocatedObjectsEnumerator
             collected
