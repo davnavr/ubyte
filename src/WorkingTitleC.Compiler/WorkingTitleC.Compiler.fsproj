@@ -7,7 +7,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="Library.fs" />
+    <Compile Include="Lexer.fsi" />
+    <Compile Include="Lexer.fs" />
 
     <ProjectReference Include="$(RootDirectory)\src\UByte.Format\UByte.Format.fsproj" />
   </ItemGroup>
