@@ -405,8 +405,18 @@ let code: Parser<ParsedCode, _> =
         bitwiseBinaryInstruction "and" InstructionSet.And
         bitwiseBinaryInstruction "or" InstructionSet.Or
         bitwiseBinaryInstruction "xor" InstructionSet.Xor
-        bitwiseBinaryInstruction "rotl" InstructionSet.Rotl
-        bitwiseBinaryInstruction "rotr" InstructionSet.Rotr
+
+        let bitwiseRotateInstruction name instr =
+            pipe3 tprimitive localCodeRegister (keyword "by" >>. localCodeRegister) <| fun vtype vreg areg rlookup _ errors _ ->
+                voptional {
+                    let! vreg' = lookupRegisterName rlookup errors vreg
+                    let! areg' = lookupRegisterName rlookup errors areg
+                    return instr(vtype, vreg', areg')
+                }
+            |> addInstructionParser name
+
+        bitwiseRotateInstruction "rotl" InstructionSet.Rotl
+        bitwiseRotateInstruction "rotr" InstructionSet.Rotr
 
         let constantBooleanInstruction name instr =
             tprimitive |>> (fun vtype _ _ _ _ -> ValueSome(instr vtype)) |> addInstructionParser name
@@ -426,14 +436,9 @@ let code: Parser<ParsedCode, _> =
             }
             |> addInstructionParser name
 
-        constantNumberInstruction "const.s" integerlit InstructionSet.Const_s <| fun value ->
+        constantNumberInstruction "const.i" integerlit InstructionSet.Const_i <| fun value ->
             match Int64.TryParse value.String with
             | true, i when i >= int64 Int32.MinValue && i <= int64 UInt32.MaxValue -> Result.Ok(int32 i)
-            | _ -> Result.Error(fun pos -> InvalidInstructionError.InvalidIntegerLiteral(pos, sizeof<int32>, value.String))
-
-        constantNumberInstruction "const.u" integerlit InstructionSet.Const_u <| fun value ->
-            match Int64.TryParse value.String with
-            | true, i when i >= int64 UInt32.MinValue && i <= int64 UInt32.MaxValue -> Result.Ok(uint32 i)
             | _ -> Result.Error(fun pos -> InvalidInstructionError.InvalidIntegerLiteral(pos, sizeof<int32>, value.String))
 
         //"const.f32"
@@ -665,23 +670,12 @@ let code: Parser<ParsedCode, _> =
         }
         |> addInstructionParser "obj.fd.addr"
 
-        let memoryAllocationFlags = optattributes [
-            "throw.fail", InstructionSet.AllocationFlags.ThrowOnFailure
-        ]
-
-        pipe3 memoryAllocationFlags localCodeRegister symbol <| fun flags creg ty rlookup resolver errors _ -> voptional {
+        pipe2 localCodeRegister symbol <| fun creg ty rlookup resolver errors _ -> voptional {
             let! creg' = lookupRegisterName rlookup errors creg
             let! tindex = lookupTypeSignature resolver errors ty
-            return InstructionSet.Alloca(flags, creg', tindex)
+            return InstructionSet.Alloca(creg', tindex)
         }
         |> addInstructionParser "alloca"
-
-        pipe3 memoryAllocationFlags symbol codeRegisterList <| fun flags ctor args rlookup resolver errors _ -> voptional {
-            let! ctor' = lookupMethodName resolver errors ctor
-            let! args' = lookupRegisterList rlookup errors args
-            return InstructionSet.Alloca_obj(flags, ctor', args')
-        }
-        |> addInstructionParser "alloca.obj"
 
         getPosition .>>. codeInstructionName .>> whitespace >>= fun (pos, name) ->
             match instructions.TryGetValue name with

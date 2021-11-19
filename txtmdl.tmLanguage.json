@@ -1,0 +1,62 @@
+{
+  "name": "UByte Text Module",
+  "scopeName": "source.txtmdl",
+  "fileTypes": [
+    "txtmdl"
+  ],
+  "foldingStartMarker": "\\{",
+  "foldingStopMarker": "\\}",
+  "patterns": [
+    {
+      "match": "//.*\n",
+      "captures": {
+        "0": {
+          "name": "comment.line.double-slash.txtmdl"
+        }
+      }
+    },
+    {
+      "match": "^\\s*\\.\\w+",
+      "captures": {
+        "0": {
+          "name": "keyword.txtmdl"
+        }
+      }
+    },
+    {
+      "include": "#register"
+    },
+    {
+      "include": "#identifier"
+    },
+    {
+      "include": "#type-primitive"
+    }
+  ],
+  "repository": {
+    "type-primitive": {
+      "match": "\\b([su](8|16|32|64|native)|char(16|32)|f(32|64)|bool)\\b",
+      "captures": {
+        "0": {
+          "name": "storage.type.keyword.txtmdl"
+        }
+      }
+    },
+    "register": {
+      "match": "((\\$|%)\\w+)",
+      "captures": {
+        "0": {
+          "name": "variable.txtmdl"
+        }
+      }
+    },
+    "identifier": {
+      "match": "@\\w+",
+      "captures": {
+        "0": {
+          "name": "entity.other.txtmdl"
+        }
+      }
+    }
+  }
+}

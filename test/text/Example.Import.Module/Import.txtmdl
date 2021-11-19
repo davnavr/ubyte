@@ -16,8 +16,8 @@
 
 .code @code_main {
     .block $ENTRY {
-        %t0 = const.s s32 63
-        %t1 = call @method_imported (%t0)
+        %t0 = const.i s32 63
+        (%t1) = call @method_imported (%t0)
         ret %t1
     }
 }

@@ -18,7 +18,7 @@
 
 .code @code_main {
     .block $ENTRY {
-        %t0 = const.s s32 21
+        %t0 = const.i s32 21
         %t1 = obj.new @method_constructor (%t0)
         %t2 = obj.fd.ld @field_value %t1
         ret %t2

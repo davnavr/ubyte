@@ -7,13 +7,10 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="MemoryManagement.fsi" />
-    <Compile Include="MemoryManagement.fs" />
-    <Compile Include="Interpreter.fsi" />
-    <Compile Include="Interpreter.fs" />
+    <Compile Include="Resolver.fsi" />
+    <Compile Include="Resolver.fs" />
 
     <ProjectReference Include="$(RootDirectory)\src\UByte.Format\UByte.Format.fsproj" />
-    <ProjectReference Include="$(RootDirectory)\src\UByte.Resolver\UByte.Resolver.fsproj" />
   </ItemGroup>
 
 </Project>

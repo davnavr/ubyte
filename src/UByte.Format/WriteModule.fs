@@ -178,14 +178,10 @@ let instruction instr dest =
     | Rem(flags, rtype, x, y) -> arithmeticBinaryOp Opcode.rem flags rtype x y
     | Rotl(rtype, amt, reg) -> bitwiseBinaryOp Opcode.rotl rtype amt reg
     | Rotr(rtype, amt, reg) -> bitwiseBinaryOp Opcode.rotr rtype amt reg
-    | Const_s(vtype, value) ->
-        opcode Opcode.``const.s`` dest
+    | Const_i(vtype, value) ->
+        opcode Opcode.``const.i`` dest
         primitiveType vtype dest
         VarInt.signed value dest
-    | Const_u(vtype, value) ->
-        opcode Opcode.``const.u`` dest
-        primitiveType vtype dest
-        VarInt.unsigned value dest
     | Const_f32 _
     | Const_f64 _ -> failwith "TODO: How to handle endianness of floating point values"
     | Const_true vtype ->
@@ -289,16 +285,10 @@ let instruction instr dest =
         opcode Opcode.``obj.arr.const`` dest
         index etype dest
         index data dest
-    | Alloca(flags, count, ty) ->
+    | Alloca(count, ty) ->
         opcode Opcode.alloca dest
-        bits1 flags dest
         index count dest
         index ty dest
-    | Alloca_obj(flags, ctor, args) ->
-        opcode Opcode.``alloca.obj`` dest
-        bits1 flags dest
-        index ctor dest
-        vector index args dest
 
 let localRegisterMapping (struct(tindex: TemporaryIndex, lindex: LocalIndex)) dest =
     index tindex dest

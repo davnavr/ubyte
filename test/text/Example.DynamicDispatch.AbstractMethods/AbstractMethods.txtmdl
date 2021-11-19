@@ -53,7 +53,7 @@
 
 .code @code_main {
     .block $ENTRY {
-        %t0 = const.s s32 1
+        %t0 = const.i s32 1
         %t1 = obj.new @constructor_derived ()
         %t2 = call.virt throw.nullthis @method_base %t1 ()
         ret %t2

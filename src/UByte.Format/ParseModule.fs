@@ -267,8 +267,7 @@ let instruction source =
     | Opcode.rem -> arithmeticBinaryOp Rem
     | Opcode.rotl -> bitwiseBinaryOp Rotl
     | Opcode.rotr -> bitwiseBinaryOp Rotr
-    | Opcode.``const.s`` -> Const_s(instructionPrimitiveType source, VarInt.signed source)
-    | Opcode.``const.u`` -> Const_u(instructionPrimitiveType source, VarInt.unsigned source)
+    | Opcode.``const.i`` -> Const_i(instructionPrimitiveType source, VarInt.signed source)
     //| Opcode.``const.f32`` ->
     //| Opcode.``const.f64`` ->
     | Opcode.``const.true`` -> Const_true(instructionPrimitiveType source)
@@ -298,8 +297,7 @@ let instruction source =
     | Opcode.``obj.arr.set`` -> instr3 Obj_arr_set
     | Opcode.``obj.arr.addr`` -> Obj_arr_addr(bits1 source, index source, index source)
     | Opcode.``obj.arr.const`` -> instr2 Obj_arr_const
-    | Opcode.alloca -> Alloca(bits1 source, index source, index source)
-    | Opcode.``alloca.obj`` -> Alloca_obj(bits1 source, index source, vector source index)
+    | Opcode.alloca -> Alloca(index source, index source)
     | bad -> failwithf "TODO: Unrecognized opcode 0x%08X (%A)" (uint32 bad) bad
 
 let block source =

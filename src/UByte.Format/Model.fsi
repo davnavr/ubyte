@@ -162,10 +162,11 @@ type PrimitiveType =
 
     interface IEquatable<PrimitiveType>
 
-[<RequireQualifiedAccess; IsReadOnly; Struct>]
+[<RequireQualifiedAccess; NoComparison; StructuralEquality>]
 type RegisterType =
     | Primitive of PrimitiveType
-    | Pointer
+    /// A pointer to instances of a type with the specified size.
+    | Pointer of size: uint32
     | Object
 
 module InstructionSet =
@@ -204,8 +205,8 @@ module InstructionSet =
         //| = 0x33u
         | rotl = 0x34u
         | rotr = 0x35u
-        | ``const.s`` = 0x40u
-        | ``const.u`` = 0x41u
+        //|  = 0x40u
+        | ``const.i`` = 0x41u
         | ``const.f32`` = 0x42u
         | ``const.f64`` = 0x43u
         | ``const.true`` = 0x44u
@@ -277,12 +278,8 @@ module InstructionSet =
         /// object reference is <see langword="null"/>.
         /// </summary>
         | ThrowOnNullThis = 0b1000_0000uy
-
-    [<Flags>]
-    type AllocationFlags =
-        | None = 0uy
-        | ThrowOnFailure = 1uy
-        | ValidMask = 1uy
+        | DefaultValidMask = 0b0000_0011uy
+        | VirtualValidMask = 0b1000_0011uy
 
     [<Flags>]
     type MemoryAccessFlags =
@@ -295,10 +292,6 @@ module InstructionSet =
 
     /// <remarks>
     /// <para>
-    /// Instructions that store integer constants into a register <c>const.</c> are followed by the integer constants in the
-    /// endianness specified in the module header.
-    /// </para>
-    /// <para>
     /// For instructions that take a vector of registers, such as <c>ret</c> or <c>call</c>, the length of the vector is
     /// included as usual to simplify parsing.
     /// </para>
@@ -308,11 +301,11 @@ module InstructionSet =
     /// of temporary registers introduced is equal to the number of return values.
     /// </para>
     /// </remarks>
-    /// <seealso cref="T:UByte.Format.Model.InstructionSet.CallFlags" />
     [<NoComparison; NoEquality>]
     type Instruction =
         // NOTE: If efficiency is needed, could theoretically omit length integers from Ret and Call instructions
-        // TODO: Add FieldIndex/RegisterIndex that points to exception to throw in the event that an instruction throws an exception (e.g. add throw.ovf @my_exception_value ...)
+        // TODO: Add FieldIndex/RegisterIndex that points to exception to throw in the event that an instruction throws an exception (e.g. %result = add throw.ovf @my_exception_value ...)
+        // TODO: Instead of above, could have optional flag that introduces a success register (e.g. (%success, %result) = add check.ovf ...)
         /// <summary>
         /// <para>
         /// <c>nop</c>
@@ -487,49 +480,37 @@ module InstructionSet =
 
         /// <summary>
         /// <para>
-        /// <c>&lt;result&gt; = rotl &lt;numeric type&gt; &lt;value&gt;</c>
+        /// <c>&lt;result&gt; = rotl &lt;numeric type&gt; &lt;value&gt; by &lt;amount&gt;</c>
         /// </para>
         /// <para>
-        /// Converts the in the <paramref name="i"/> register to the specified integer type, and shifts the value left by the
-        /// specified integer <paramref name="amount"/>
+        /// Converts the value to the specified integer type, and shifts the value left by the specified integer
+        /// <paramref name="amount"/>.
         /// </para>
         /// </summary>
-        | Rotl of PrimitiveType * amount: RegisterIndex * i: RegisterIndex
+        | Rotl of PrimitiveType * value: RegisterIndex * amount: RegisterIndex
         /// <summary>
         /// <para>
-        /// <c>&lt;result&gt; = rotr &lt;integer type&gt; &lt;value&gt;</c>
+        /// <c>&lt;result&gt; = rotr &lt;integer type&gt; &lt;value&gt; by &lt;amount&gt;</c>
         /// </para>
         /// <para>
-        /// Converts the value in the <paramref name="i"/> register to the specified integer type, and shifts the value right by
-        /// the specified integer <paramref name="amount"/>.
+        /// Converts the value to the specified integer type, and shifts the value right by the specified integer
+        /// <paramref name="amount"/>.
         /// </para>
         /// </summary>
-        | Rotr of PrimitiveType * amount: RegisterIndex * i: RegisterIndex
+        | Rotr of PrimitiveType * value: RegisterIndex * amount: RegisterIndex
 
         /// <summary>
         /// <para>
-        /// <c>&lt;result&gt; = const.s &lt;numeric type&gt; &lt;value&gt;</c>
+        /// <c>&lt;result&gt; = const.i &lt;numeric type&gt; &lt;value&gt;</c>
         /// </para>
         /// <para>
-        /// Returns a signed integer of the specified numeric type.
+        /// Returns an integer of the specified numeric type, ignoring any integer overflow.
         /// </para>
         /// </summary>
         /// <remarks>
         /// The integer is stored as a variable-width signed integer.
         /// </remarks>
-        | Const_s of PrimitiveType * value: varint //////////////////////// TODO: Have a const.i instruction instead for all integer constants.
-        /// <summary>
-        /// <para>
-        /// <c>&lt;result&gt; = const.u &lt;numeric type&gt; &lt;value&gt;</c>
-        /// </para>
-        /// <para>
-        /// Returns an unsigned integer of the specified numeric type.
-        /// </para>
-        /// </summary>
-        /// <remarks>
-        /// The integer is stored as a variable-width unsigned integer.
-        /// </remarks>
-        | Const_u of PrimitiveType * value: uvarint
+        | Const_i of PrimitiveType * value: varint
         | Const_f32 of value: single
         | Const_f64 of value: double
         /// <summary>
@@ -808,25 +789,14 @@ module InstructionSet =
         // TODO: How to allocate an "array" of object references? Maybe have a separate RegisterType type?
         /// <summary>
         /// <para>
-        /// <c>&lt;result&gt; = alloca [throw.fail] &lt;count&gt; &lt;type&gt;</c>
+        /// <c>&lt;result&gt; = alloca &lt;count&gt; &lt;type&gt;</c>
         /// </para>
         /// <para>
         /// Allocates a contiguous region of memory enough to hold the specified number of instances of the specified types, and
         /// returns a pointer to the region of memory.
         /// </para>
         /// </summary>
-        | Alloca of AllocationFlags * count: RegisterIndex * TypeSignatureIndex
-        /// <summary>
-        /// <para>
-        /// <c>&lt;result&gt; = alloca.obj [throw.fail] &lt;constructor&gt; (&lt;argument1&gt;, &lt;argument2&gt;, ...)</c>
-        /// </para>
-        /// <para>
-        /// Allocates a region of memory to contain an instance of a type, calls the specified <paramref name="constructor"/>
-        /// providing a pointer to the region of memory along with the specified <paramref name="arguments"/>, and returns a
-        /// pointer to the region of memory.
-        /// </para>
-        /// </summary>
-        | Alloca_obj of AllocationFlags * constructor: MethodIndex * arguments: vector<RegisterIndex> // TODO: How to support VTable for some instances, add a new alloca instruction?
+        | Alloca of count: RegisterIndex * TypeSignatureIndex
 
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
 type IdentifierSection = // TODO: Rename to something else
@@ -1103,6 +1073,8 @@ type ModuleIdentifier =
     { ModuleName: Name
       Version: VersionNumbers }
 
+    override ToString : unit -> string
+
     interface IEquatable<ModuleIdentifier>
 
 [<Flags>]
@@ -1199,6 +1171,11 @@ module VersionNumbers =
 [<RequireQualifiedAccess>]
 module MethodSignature =
     val empty : MethodSignature
+
+[<RequireQualifiedAccess>]
+module RegisterType =
+    val primitive : PrimitiveType -> RegisterType
+    val pointer : size: uint32 -> RegisterType
 
 [<RequireQualifiedAccess>]
 module Name =

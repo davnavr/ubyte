@@ -1,6 +1,7 @@
 ﻿module UByte.Format.Model
 
 open System
+open System.Collections.Generic
 open System.Collections.Immutable
 open System.Runtime.CompilerServices
 open System.Text
@@ -129,8 +130,8 @@ type PrimitiveType =
     | F32
     | F64
 
-[<RequireQualifiedAccess; Struct>]
-type RegisterType = | Primitive of PrimitiveType | Pointer | Object
+[<RequireQualifiedAccess>]
+type RegisterType = | Primitive of PrimitiveType | Pointer of size: uint32 | Object
 
 module InstructionSet =
     type BlockOffset = varint
@@ -159,8 +160,7 @@ module InstructionSet =
         | rem = 0x30u
         | rotl = 0x34u
         | rotr = 0x35u
-        | ``const.s`` = 0x40u
-        | ``const.u`` = 0x41u
+        | ``const.i`` = 0x41u
         | ``const.f32`` = 0x42u
         | ``const.f64`` = 0x43u
         | ``const.true`` = 0x44u
@@ -207,12 +207,8 @@ module InstructionSet =
         | NoTailCallOptimization = 1uy
         | RequiresTailCallOptimization = 0b0000_0010uy
         | ThrowOnNullThis = 0b1000_0000uy
-
-    [<Flags>]
-    type AllocationFlags =
-        | None = 0uy
-        | ThrowOnFailure = 1uy
-        | ValidMask = 1uy
+        | DefaultValidMask = 0b0000_0011uy
+        | VirtualValidMask = 0b1000_0011uy
 
     [<Flags>]
     type MemoryAccessFlags =
@@ -240,10 +236,9 @@ module InstructionSet =
         | Not of PrimitiveType * RegisterIndex
         | Xor of PrimitiveType * x: RegisterIndex * y: RegisterIndex
         | Rem of ArithmeticFlags * TypeSignatureIndex * x: RegisterIndex * y: RegisterIndex
-        | Rotl of PrimitiveType * amount: RegisterIndex * i: RegisterIndex
-        | Rotr of PrimitiveType * amount: RegisterIndex * i: RegisterIndex
-        | Const_s of PrimitiveType * value: varint
-        | Const_u of PrimitiveType * value: uvarint
+        | Rotl of PrimitiveType * value: RegisterIndex * amount: RegisterIndex
+        | Rotr of PrimitiveType * value: RegisterIndex * amount: RegisterIndex
+        | Const_i of PrimitiveType * value: varint
         | Const_f32 of value: single
         | Const_f64 of value: double
         | Const_true of PrimitiveType
@@ -274,8 +269,7 @@ module InstructionSet =
         | Obj_arr_set of array: RegisterIndex * index: RegisterIndex * source: RegisterIndex
         | Obj_arr_addr of MemoryAccessFlags * array: RegisterIndex * index: RegisterIndex
         | Obj_arr_const of etype: TypeSignatureIndex * data: DataIndex
-        | Alloca of AllocationFlags * count: RegisterIndex * TypeSignatureIndex
-        | Alloca_obj of AllocationFlags * constructor: MethodIndex * arguments: vector<RegisterIndex>
+        | Alloca of count: RegisterIndex * TypeSignatureIndex
 
 [<RequireQualifiedAccess>]
 type IdentifierSection =
@@ -464,7 +458,10 @@ type Code = { LocalCount: uvarint; Blocks: vector<CodeBlock> }
 type Debug = unit
 
 [<NoComparison; StructuralEquality>]
-type ModuleIdentifier = { ModuleName: Name; Version: VersionNumbers }
+type ModuleIdentifier =
+    { ModuleName: Name; Version: VersionNumbers }
+
+    override this.ToString() = sprintf "(%O, v%O)" this.ModuleName this.Version
 
 [<Flags>]
 type ModuleHeaderFlags =
@@ -540,6 +537,27 @@ module MethodSignature =
     let empty =
         { ReturnTypes = ImmutableArray.Empty
           ParameterTypes = ImmutableArray.Empty }
+
+module RegisterType =
+    let private primitives = Dictionary()
+
+    let primitive t =
+        match primitives.TryGetValue t with
+        | true, existing -> existing
+        | false, _ ->
+            let rtype = RegisterType.Primitive t
+            primitives.[t] <- rtype
+            rtype
+
+    let private pointerTypeSizes = Dictionary()
+
+    let pointer size =
+        match pointerTypeSizes.TryGetValue size with
+        | true, existing -> existing
+        | false, _ ->
+            let rtype = RegisterType.Pointer size
+            pointerTypeSizes.[size] <- rtype
+            rtype
 
 module VersionNumbers =
     let empty = VersionNumbers ImmutableArray.Empty

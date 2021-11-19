@@ -14,17 +14,19 @@
 .code @code_helper {
     .arguments ($a0)
     .block $ENTRY {
-        %t0 = const.s s32 12
-        %t1 = add s32 $a0 %t0
+        %t0 = const.i s32 12
+        (%t1) = add @sig_int $a0 %t0
         ret %t1
     }
 }
 
 .code @code_main {
     .block $ENTRY {
-        %t0 = const.s s32 9
-        %t1 = call @method_helper (%t0)
-        ret %t1
+        %t0 = const.i s32 9
+        (%t1) = call @method_helper (%t0)
+        (%t2) = call @method_helper (%t1)
+        (%t3) = call @method_helper (%t2)
+        ret %t3
     }
 }
 
