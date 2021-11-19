@@ -109,8 +109,6 @@ type AllocatedRegister =
 
     override this.ToString() = this.Register.ToString()
 
-let inline (|AllocatedRegister|) (register: inref<AllocatedRegister>) = register.Register
-
 [<RequireQualifiedAccess>]
 module Register =
     let ofRegisterType rtype = { Register.Value = RegisterValue(); Register.Type = rtype }
@@ -1057,17 +1055,27 @@ type RootObjectCollection () =
     member _.GetEnumerator() = // TODO: Create a custom struct root enumerator to avoid large allocations every single time the interpreter's GC is run.
         enumerated.GetEnumerator()
 
+    // TODO: Maybe supply a dictionary to this method instead, this is O(very bad) right now when lots of objects are relocated.
     member _.AdjustMovedObjects (relocations: byref<#IEnumerator<ObjectRelocation>>) =
+        let adjustObjectRegisters (update: ObjectRelocation) (registers: ImmutableArray<AllocatedRegister>.Builder) =
+            if registers <> null then
+                for i = 0 to registers.Count - 1 do
+                    let register = &registers.ItemRef(i).Register
+                    if InterpretRegister.value<ObjectReference> &register = update.From then
+                        Unsafe.As<RegisterValue, ObjectReference>(&Unsafe.AsRef &register.Value) <- update.To
+
         while relocations.MoveNext() do
             let update = relocations.Current
             for i = 0 to roots.Count - 1 do
                 let stackRootObjects = &roots.ItemRef i
 
-                if stackRootObjects.Temporaries.Count > 0 || stackRootObjects.Locals.Count > 0 then
-                    raise(NotImplementedException "TODO: Update object references inside of registers.")
+                adjustObjectRegisters update stackRootObjects.Temporaries
 
-                for stackObjectReference in stackRootObjects.Addressed do
-                    if StackPtr.read stackObjectReference = update.From then StackPtr.write stackObjectReference update.To
+                adjustObjectRegisters update stackRootObjects.Locals
+
+                if stackRootObjects.Addressed <> null then
+                    for stackObjectReference in stackRootObjects.Addressed do
+                        if StackPtr.read stackObjectReference = update.From then StackPtr.write stackObjectReference update.To
 
 let private noAnyObject() = invalidOp "Unexpected object reference of unspecified type"
 
