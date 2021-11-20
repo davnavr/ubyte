@@ -92,15 +92,21 @@ type TypeMemberNode =
 type TopLevelNode =
     | UsingNamespace of ParsedNamespaceName
     | NamespaceDeclaration of ParsedNamespaceName * ParsedNodeArray<TopLevelNode>
-    | TypeDeclaration of name: IdentifierNode * ParsedNodeArray<TypeAttributeNode> * ParsedNodeArray<TypeMemberNode>
+    | TypeDeclaration of name: IdentifierNode * ParsedNodeArray<TypeAttributeNode> * extends: ParsedNodeArray<ParsedIdentifier> *
+        members: ParsedNodeArray<TypeMemberNode>
     | Error of string
+
+[<RequireQualifiedAccess; NoComparison; NoEquality>]
+type ParsedFile =
+    { Source: string
+      Nodes: ParsedNodeArray<TopLevelNode> }
 
 [<RequireQualifiedAccess>]
 module Parse =
     val internal parser : Parser<ParsedNodeArray<TopLevelNode>, unit>
 
     /// <exception cref="T:System.ArgumentNullException"/>
-    val fromStream : source: System.IO.Stream -> ParsedNodeArray<TopLevelNode>
+    val fromPath : path: string -> ParsedFile
 
 [<RequireQualifiedAccess>]
 module AnyTypeNode =

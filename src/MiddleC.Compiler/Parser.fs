@@ -77,7 +77,8 @@ type TypeMemberNode =
 type TopLevelNode =
     | UsingNamespace of ParsedNamespaceName
     | NamespaceDeclaration of ParsedNamespaceName * ParsedNodeArray<TopLevelNode>
-    | TypeDeclaration of name: IdentifierNode * ParsedNodeArray<TypeAttributeNode> * ParsedNodeArray<TypeMemberNode>
+    | TypeDeclaration of name: IdentifierNode * ParsedNodeArray<TypeAttributeNode> * extends: ParsedNodeArray<ParsedIdentifier> *
+        members: ParsedNodeArray<TypeMemberNode>
     | Error of string
 
 [<RequireQualifiedAccess>]
@@ -128,6 +129,9 @@ module private CollectionParsers =
 
         let sepBy p sep = sepByCommon p sep false
         let sepBy1 p sep = sepByCommon p sep true
+
+[<RequireQualifiedAccess>]
+type ParsedFile = { Source: string; Nodes: ParsedNodeArray<TopLevelNode> }
 
 [<RequireQualifiedAccess>]
 module Parse =
@@ -188,13 +192,13 @@ module Parse =
                 |]
             |> choice
 
-        let typeNodeModifiers = choice [
+        let typeNodeModifiers = choice [|
             skipString "[]" >>% AnyTypeNode.Array
-        ]
+        |]
 
-        let baseTypeNodes = choice [
+        let baseTypeNodes = choice [|
             primitiveTypeNode
-        ]
+        |]
 
         pipe2
             (baseTypeNodes .>> whitespace)
@@ -211,12 +215,12 @@ module Parse =
 
         whitespace
         >>. choice
-            [
+            [|
                 skipString "true" >>% ExpressionNode.LiteralBool true
                 skipString "false" >>% ExpressionNode.LiteralBool false
                 numberlit signedIntegerLiteralOptions Int32.Parse ExpressionNode.LiteralS32
                 numberlit unsignedIntegerLiteralOptions UInt32.Parse ExpressionNode.LiteralU32
-            ]
+            |]
         //|> errorNodeHandler TopLevelNode.Error
         |> withNodeContent
         .>> whitespace
@@ -226,16 +230,16 @@ module Parse =
     let private statement : Parser<ParsedNode<StatementNode>, _> =
         whitespace
         >>. choice
-            [
+            [|
                 skipString "if"
                 >>. whitespace
                 >>. tuple3
                     (betweenParenthesis expression .>> whitespace)
                     (block .>> whitespace)
-                    (choice [
+                    (choice [|
                         skipString "else" >>. whitespace >>. block
                         preturn ImmutableArray.Empty
-                    ])
+                    |])
                 |>> StatementNode.If
 
                 // TODO: How to parse else if?
@@ -243,7 +247,7 @@ module Parse =
                 expression |>> StatementNode.Expression
                 skipString "return" >>. whitespace >>. expression |>> StatementNode.Return
                 followedBy semicolon >>% StatementNode.Empty
-            ]
+            |]
         .>> whitespace
         .>> semicolon
         .>> whitespace
@@ -262,15 +266,15 @@ module Parse =
             CollectionParsers.ImmutableArray.sepBy (whitespace >>. anyTypeNode .>> whitespace) comma |> betweenParenthesis
 
         let methodBodyNode : Parser<MethodBodyNode, _> =
-            choice [
+            choice [|
                 //skipString "external" >>.
 
                 block |>> MethodBodyNode.Defined
-            ]
+            |]
 
         whitespace
         >>. choice
-            [
+            [|
                 skipString "method"
                 >>. whitespace
                 >>. tuple5
@@ -285,13 +289,13 @@ module Parse =
                     (methodReturnTypes .>> whitespace)
                     methodBodyNode
                 |>> TypeMemberNode.MethodDeclaration
-            ]
+            |]
         .>> whitespace
         |> withNodeContent
 
     topLevelNodeRef.Value <-
         whitespace
-        >>. choice [
+        >>. choice [|
             skipString "namespace"
             >>. whitespace
             >>. namespaceNameNode
@@ -308,15 +312,19 @@ module Parse =
 
             skipString "type"
             >>. whitespace
-            >>. tuple3
+            >>. tuple4
                 (validIdentifierNode .>> whitespace)
                 (attributes [|
                     "abstract", TypeAttributeNode.Abstract
                     "inheritable", TypeAttributeNode.Inheritable
                 |])
+                (whitespace >>. choice [|
+                    semicolon >>. whitespace >>. CollectionParsers.ImmutableArray.sepBy1 validIdentifierNode comma
+                    preturn ImmutableArray.Empty
+                |])
                 (whitespace >>. betweenCurlyBrackets (CollectionParsers.ImmutableArray.many typeMemberNode))
             |>> TopLevelNode.TypeDeclaration
-        ]
+        |]
         .>> whitespace
         //|> errorNodeHandler TopLevelNode.Error
         |> withNodeContent
@@ -325,8 +333,10 @@ module Parse =
 
     let private defaultStreamEncoding = System.Text.Encoding.UTF8
 
-    let fromStream source =
-        if isNull source then nullArg (nameof source)
-        match runParserOnStream parser () String.Empty source defaultStreamEncoding with
-        | Success(nodes, (), _) -> nodes
+    let fromPath path =
+        if isNull path then nullArg (nameof path)
+        match runParserOnFile parser () path defaultStreamEncoding with
+        | Success(nodes, (), _) ->
+            { ParsedFile.Nodes = nodes
+              ParsedFile.Source = path }
         | Failure(message, _, ()) -> invalidOp message

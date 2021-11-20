@@ -33,8 +33,7 @@ let parseInputFiles (args: ParseResults<Argument>) =
         match paths with
         | [] -> results.ToImmutable()
         | path :: remaining ->
-            use stream = System.IO.File.OpenRead path
-            results.Add(MiddleC.Compiler.Parser.Parse.fromStream stream)
+            results.Add(MiddleC.Compiler.Parser.Parse.fromPath path)
             inner remaining
     inner (args.GetResults <@ Input @>)
 
@@ -47,5 +46,8 @@ let main argv =
     if args.Contains <@ Import @> then raise(System.NotImplementedException "Module imports are not yet supported")
 
     let parsedInputFiles = parseInputFiles args
+    let result = MiddleC.Compiler.Semantics.TypeChecker.check parsedInputFiles
 
-    0 // return an integer exit code
+    failwith "TODO: Emit .binmdl file"
+
+    0
