@@ -34,7 +34,28 @@ type AnyTypeNode =
     //| ObjectReference of Choice<TypeNode, IdentifierNode>
 
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
+type ExpressionNode =
+    //| LiteralArrayObject of AnyTypeNode * elements: ParsedNodeArray<ExpressionNode>
+    //| LiteralString 
+    | LiteralCharacterArray of AnyTypeNode * elements: string
+    | LiteralBool of bool
+    | LiteralChar32 of uint32
+    | LiteralU32 of uint32
+    | LiteralS32 of int32
+    //| UnaryOperation
+    //| BinaryOperation
+
+and ParsedExpression = ParsedNode<ExpressionNode>
+
+[<RequireQualifiedAccess; NoComparison; NoEquality>]
 type StatementNode =
+    | If of condition: ParsedExpression * trueStatementNodes: ParsedNodeArray<StatementNode> *
+        falseStatementNodes: ParsedNodeArray<StatementNode>
+    // An expression that is simply evaluated for side effects.
+    | Expression of ParsedExpression
+    | While of condition: ParsedExpression * body: ParsedNodeArray<StatementNode>
+    | Goto of IdentifierNode
+    | Label of IdentifierNode
     | Empty
 
 [<RequireQualifiedAccess; NoComparison; NoEquality>]

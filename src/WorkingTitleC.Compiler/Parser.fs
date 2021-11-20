@@ -31,7 +31,23 @@ type AnyTypeNode =
     | Array of AnyTypeNode
 
 [<RequireQualifiedAccess>]
+type ExpressionNode =
+    | LiteralCharacterArray of AnyTypeNode * elements: string
+    | LiteralBool of bool
+    | LiteralChar32 of uint32
+    | LiteralU32 of uint32
+    | LiteralS32 of int32
+
+and ParsedExpression = ParsedNode<ExpressionNode>
+
+[<RequireQualifiedAccess>]
 type StatementNode =
+    | If of condition: ParsedExpression * trueStatementNodes: ParsedNodeArray<StatementNode> *
+        falseStatementNodes: ParsedNodeArray<StatementNode>
+    | Expression of ParsedExpression
+    | While of condition: ParsedExpression * body: ParsedNodeArray<StatementNode>
+    | Goto of IdentifierNode
+    | Label of IdentifierNode
     | Empty
 
 [<RequireQualifiedAccess>]
@@ -185,6 +201,54 @@ module Parse =
             (fun btype modifiers -> (List.fold (fun mf m -> fun ty -> m(mf ty)) id modifiers) btype)
         |> withNodeContent
 
+    let expressionNode : Parser<ParsedNode<ExpressionNode>, _> =
+        // TODO: If integer literal is out of range, generate an error node.
+        let unsignedIntegerLiteralOptions = NumberLiteralOptions.AllowBinary ||| NumberLiteralOptions.AllowHexadecimal
+        let signedIntegerLiteralOptions = unsignedIntegerLiteralOptions ||| NumberLiteralOptions.AllowMinusSign
+        let numberlit options parser node =
+            numberLiteral options String.Empty |>> fun literal -> node(parser literal.String)
+
+        whitespace
+        >>. choice
+            [
+                skipString "true" >>% ExpressionNode.LiteralBool true
+                skipString "false" >>% ExpressionNode.LiteralBool false
+                numberlit signedIntegerLiteralOptions Int32.Parse ExpressionNode.LiteralS32
+                numberlit unsignedIntegerLiteralOptions UInt32.Parse ExpressionNode.LiteralU32
+            ]
+        //|> errorNodeHandler TopLevelNode.Error
+        |> withNodeContent
+        .>> whitespace
+
+    let block, blockRef : Parser<ParsedNodeArray<StatementNode>, unit> * _ = createParserForwardedToRef()
+
+    let statementNode : Parser<ParsedNode<StatementNode>, _> =
+        whitespace
+        >>. choice
+            [
+                skipString "if"
+                >>. whitespace
+                >>. tuple3
+                    (betweenParenthesis expressionNode .>> whitespace)
+                    (block .>> whitespace)
+                    (choice [
+                        skipString "else" >>. whitespace >>. block
+                        preturn ImmutableArray.Empty
+                    ])
+                |>> StatementNode.If
+
+                // TODO: How to parse else if?
+
+                expressionNode |>> StatementNode.Expression
+                followedBy semicolon >>% StatementNode.Empty
+            ]
+        .>> whitespace
+        .>> semicolon
+        .>> whitespace
+        |> withNodeContent
+
+    blockRef.Value <- betweenCurlyBrackets(CollectionParsers.ImmutableArray.many statementNode)
+
     let typeMemberNode : Parser<ParsedNode<TypeMemberNode>, unit> =
         let methodParameterNodes =
             CollectionParsers.ImmutableArray.sepBy
@@ -199,17 +263,7 @@ module Parse =
             choice [
                 //skipString "external" >>.
 
-                whitespace
-                >>. choice
-                    [
-                        followedBy semicolon >>% StatementNode.Empty
-                    ]
-                .>> semicolon
-                .>> whitespace
-                |> withNodeContent
-                |> CollectionParsers.ImmutableArray.many
-                |> betweenCurlyBrackets
-                |>> MethodBodyNode.Defined
+                block |>> MethodBodyNode.Defined
             ]
 
         whitespace
@@ -226,7 +280,7 @@ module Parse =
                         "virtual", MethodAttributeNode.Virtual
                     |])
                     (whitespace >>. methodParameterNodes .>> whitespace .>> skipString "->" .>> whitespace)
-                    methodReturnTypes
+                    (methodReturnTypes .>> whitespace)
                     methodBodyNode
                 |>> TypeMemberNode.MethodDeclaration
             ]
