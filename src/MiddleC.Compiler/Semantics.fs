@@ -7,6 +7,8 @@ open System.Runtime.CompilerServices
 
 open MiddleC.Compiler.Parser
 
+open UByte.Format
+
 type SemanticErrorMessage =
     | DuplicateTypeDefinition of MiddleC.Compiler.Parser.TypeIdentifier
     | UnknownError of message: string
@@ -86,7 +88,7 @@ module TypeChecker =
 
         let lookup = Dictionary<TypeIdentifier, CheckingType>()
         for file in files do inner errors file lookup ImmutableArray.Empty ImmutableArray.Empty file.Nodes
-        lookup
+        lookup :> IReadOnlyDictionary<_, _>
 
     let private namespaceSearchString (ns: ParsedNamespaceName) =
         if not ns.IsDefaultOrEmpty then
@@ -117,13 +119,37 @@ module TypeChecker =
 
     [<IsReadOnly; Struct; NoComparison; NoEquality>]
     type private CheckedTypeAttributes =
-        { Flags: UByte.Format.Model.TypeDefinitionFlags
+        { Flags: Model.TypeDefinitionFlags
           InheritedTypes: ImmutableArray<NamedType> }
 
-    let private checkTypeAttributes (declarations: Dictionary<_, CheckingType>) (namedTypeLookup: ParsedNode<_> -> _) =
-        let lookup = Dictionary<TypeIdentifier, CheckedTypeAttributes> declarations.Count
+    let private checkTypeAttributes errors (declarations: IReadOnlyDictionary<TypeIdentifier, _>) (namedTypeLookup: _ -> _) =
+        let lookup = Dictionary<_, CheckedTypeAttributes> declarations.Count
+        let inheritedTypeBuilder = ImmutableArray.CreateBuilder<NamedType>()
 
+        for (ty: CheckingType) in declarations.Values do
+            let mutable flags = Model.TypeDefinitionFlags.Final
 
+            for attr in ty.Attributes do
+                match attr.Content with
+                //| TypeAttributeNode.Abstract when flags.IsSet Model.TypeDefinitionFlags.NotFinal
+                //| TypeAttributeNode.Instance when flags.IsSet Model.TypeDefinitionFlags.Abstract ->
+                //    addErrorMessage
+                | TypeAttributeNode.Abstract ->
+                    flags <- flags ||| Model.TypeDefinitionFlags.Abstract ||| Model.TypeDefinitionFlags.NotFinal
+                | TypeAttributeNode.Inheritable ->
+                    flags <- flags ||| Model.TypeDefinitionFlags.NotFinal
+                // TODO: Check for duplicate type attributes
+
+            inheritedTypeBuilder.Clear()
+
+            for inheritedTypeName in ty.InheritedTypes do
+                match namedTypeLookup inheritedTypeName with
+                | Ok ty ->
+                    inheritedTypeBuilder.Add ty
+                | Error message ->
+                    addErrorMessage errors inheritedTypeName ty.Source message
+
+            lookup.Add(ty.Identifier, { Flags = flags; InheritedTypes = inheritedTypeBuilder.ToImmutable() })
 
         lookup
 
@@ -133,19 +159,18 @@ module TypeChecker =
 
         let typeImportLookup = importedTypeLookup imports
 
-        let namedTypeLookup ({ ParsedNode.Content = name } as id): NamedType voption =
+        let namedTypeLookup ({ ParsedNode.Content = name } as id): Result<NamedType, _> =
             match declaredTypesLookup.TryGetValue name with
             | true, declared ->
-                ValueSome(Choice1Of2 declared)
+                Ok(Choice1Of2 declared)
             | false, _ ->
                 match typeImportLookup name with
                 | ValueSome imported ->
-                    ValueSome(Choice2Of2 imported)
+                    Ok(Choice2Of2 imported)
                 | ValueNone ->
-                    //addErrorMessage errors id 
-                    ValueNone
+                    raise(NotImplementedException("TODO: Handle errors for when type name not found " + name.ToString()))
 
-        let typeAttributeLookup = checkTypeAttributes declaredTypesLookup namedTypeLookup
+        let typeAttributeLookup = checkTypeAttributes errors declaredTypesLookup namedTypeLookup
 
         failwith "BAD"
 
