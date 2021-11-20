@@ -3,28 +3,48 @@
 open System
 open System.Collections.Generic
 open System.Collections.Immutable
+open System.Runtime.CompilerServices
 
 open MiddleC.Compiler.Parser
 
+type SemanticErrorMessage =
+    | DuplicateTypeDefinition of MiddleC.Compiler.Parser.TypeIdentifier
+    | UnknownError of message: string
+
+    override this.ToString() =
+        match this with
+        | DuplicateTypeDefinition id -> "Duplicate definition of type " + id.ToString()
+        | UnknownError message -> message
+
+type SemanticError =
+    { Line: uint32
+      Column: uint32
+      Source: ParsedFile
+      Message: SemanticErrorMessage }
+
 [<RequireQualifiedAccess>]
 type CheckedModule =
-    { Errors: ImmutableArray<string> }
+    { Errors: ImmutableArray<SemanticError> } 
 
 [<RequireQualifiedAccess>]
 module TypeChecker =
     [<NoComparison; NoEquality>]
     type private CheckingType =
         { Identifier: TypeIdentifier
+          Source: ParsedFile
           Attributes: ParsedNodeArray<TypeAttributeNode>
-          Extends: ParsedNodeArray<TypeIdentifier>
+          InheritedTypes: ParsedNodeArray<TypeIdentifier>
           Members: ParsedNodeArray<TypeMemberNode>
           UsedNamespaces: ImmutableArray<ParsedNamespaceName> }
 
+    let private addErrorMessage (errors: ImmutableArray<_>.Builder) (node: ParsedNode<_>) source message =
+        errors.Add { Line = node.Line; Column = node.Column; Source = source; Message = message }
+
     let private findTypeDeclarations errors (files: ImmutableArray<ParsedFile>) =
         let rec inner
-            (errors: ImmutableArray<_>.Builder)
+            errors
+            file
             (lookup: Dictionary<_, _>)
-            (types: ImmutableArray<_>.Builder)
             currentNamespaceName
             (parentUsingDeclarations: ImmutableArray<_>)
             (nodes: ParsedNodeArray<TopLevelNode>)
@@ -40,33 +60,33 @@ module TypeChecker =
                 | TopLevelNode.NamespaceDeclaration(ns, nested) ->
                     nestedNamespaceDeclarations.Add(struct(ns, nested))
                 | TopLevelNode.TypeDeclaration(name, attributes, extends, members) ->
-                    declaredTypeNodes.Add({ TypeIdentifier.Name = name; TypeIdentifier.Namespace = currentNamespaceName }, attributes, extends, members)
+                    declaredTypeNodes.Add <| fun usedNamespaceDeclarations ->
+                        { CheckingType.Identifier =
+                            { TypeIdentifier.Name = name
+                              TypeIdentifier.Namespace = currentNamespaceName }
+                          Source = file
+                          Attributes = attributes
+                          InheritedTypes = extends
+                          Members = members
+                          UsedNamespaces = usedNamespaceDeclarations }
                 | TopLevelNode.UsingNamespace ns ->
                     usings.Add ns
-                | TopLevelNode.Error msg ->
-                    errors.Add msg
+                | TopLevelNode.Error msg -> // TODO: Error nodes should be treated as UserState in parser stage, TypeChecker should have to deal with parser errors.
+                    addErrorMessage errors node file (UnknownError msg)
 
             let currentUsingDeclarations = usings.ToImmutable()
 
-            for (id, attributes, extends, members) in declaredTypeNodes do
-                // TODO: Handle duplicate type definitions
-                let ty =
-                    { CheckingType.Identifier = id
-                      Attributes = attributes
-                      Extends = extends
-                      Members = members
-                      UsedNamespaces = currentUsingDeclarations }
-
-                lookup.Add(id, ty)
-                types.Add ty
+            for declaredTypeBuilder in declaredTypeNodes do
+                let ty = declaredTypeBuilder currentUsingDeclarations
+                if not(lookup.TryAdd(ty.Identifier, ty)) then
+                    addErrorMessage errors ty.Identifier.Name ty.Source (DuplicateTypeDefinition ty.Identifier)
 
             for struct(nestedNamespaceName, nested) in nestedNamespaceDeclarations do
-                inner errors lookup types nestedNamespaceName currentUsingDeclarations nested
+                inner errors file lookup nestedNamespaceName currentUsingDeclarations nested
 
         let lookup = Dictionary<TypeIdentifier, CheckingType>()
-        let types = ImmutableArray.CreateBuilder()
-        for file in files do inner errors lookup types ImmutableArray.Empty ImmutableArray.Empty file.Nodes
-        struct(types.ToImmutable(), lookup)
+        for file in files do inner errors file lookup ImmutableArray.Empty ImmutableArray.Empty file.Nodes
+        lookup
 
     let private namespaceSearchString (ns: ParsedNamespaceName) =
         if not ns.IsDefaultOrEmpty then
@@ -93,14 +113,39 @@ module TypeChecker =
                 lookup.Add(id, ty)
                 ty
 
-    let private typeAttributeChecker (types: ImmutableArray<CheckingType>) =
-        let lookup = Dictionary<TypeIdentifier, UByte.Format.Model.TypeDefinitionFlags * SomeType list> types.Length
-        ()
+    type private NamedType = Choice<CheckingType, UByte.Resolver.ResolvedTypeDefinition>
+
+    [<IsReadOnly; Struct; NoComparison; NoEquality>]
+    type private CheckedTypeAttributes =
+        { Flags: UByte.Format.Model.TypeDefinitionFlags
+          InheritedTypes: ImmutableArray<NamedType> }
+
+    let private checkTypeAttributes (declarations: Dictionary<_, CheckingType>) (namedTypeLookup: ParsedNode<_> -> _) =
+        let lookup = Dictionary<TypeIdentifier, CheckedTypeAttributes> declarations.Count
+
+
+
+        lookup
 
     let check files imports =
         let errors = ImmutableArray.CreateBuilder()
-        let struct(typeDeclarationList, typeDeclarationLookup) = findTypeDeclarations errors files
+        let declaredTypesLookup = findTypeDeclarations errors files
+
         let typeImportLookup = importedTypeLookup imports
+
+        let namedTypeLookup ({ ParsedNode.Content = name } as id): NamedType voption =
+            match declaredTypesLookup.TryGetValue name with
+            | true, declared ->
+                ValueSome(Choice1Of2 declared)
+            | false, _ ->
+                match typeImportLookup name with
+                | ValueSome imported ->
+                    ValueSome(Choice2Of2 imported)
+                | ValueNone ->
+                    //addErrorMessage errors id 
+                    ValueNone
+
+        let typeAttributeLookup = checkTypeAttributes declaredTypesLookup namedTypeLookup
 
         failwith "BAD"
 
