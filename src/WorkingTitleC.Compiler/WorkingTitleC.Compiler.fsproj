@@ -8,6 +8,7 @@
 
   <ItemGroup>
     <Compile Include="Parser.fsi" />
+    <Compile Include="Parser.fs" />
 
     <PackageReference Include="FParsec" Version="1.1.1" />
 

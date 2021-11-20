@@ -30,6 +30,7 @@ type ParsedNamespaceName = ParsedNodeArray<ParsedIdentifier>
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
 type AnyTypeNode =
     | Primitive of UByte.Format.Model.PrimitiveType
+    | Array of AnyTypeNode
     //| ObjectReference of Choice<TypeNode, IdentifierNode>
 
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
@@ -50,6 +51,7 @@ type MethodAttributeNode =
     /// Indicates that the method is the entry point of the module, can only be applied to one method in an entire module.
     | Entrypoint
     | Instance
+    | Abstract
     | Virtual
 
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
@@ -61,7 +63,7 @@ type MethodBodyNode =
 type TypeMemberNode =
     //| FieldDeclaration of name: IdentifierNode *
     | MethodDeclaration of name: IdentifierNode * ParsedNodeArray<MethodAttributeNode> *
-        parameters: ParsedNodeArray<IdentifierNode * AnyTypeNode> * ParsedNodeArray<AnyTypeNode> * MethodBodyNode
+        parameters: ImmutableArray<IdentifierNode * ParsedNode<AnyTypeNode>> * ParsedNodeArray<AnyTypeNode> * MethodBodyNode
     //| ConstructorDeclaration of parameters: ParsedNodeArray<ParameterNode> * ParsedNodeArray<TypeNode>
 
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
@@ -76,7 +78,7 @@ module Parse =
     val internal parser : Parser<ParsedNodeArray<TopLevelNode>, unit>
 
     /// <exception cref="T:System.ArgumentNullException"/>
-    val fromStream : source: System.IO.Stream -> unit
+    val fromStream : source: System.IO.Stream -> ParsedNodeArray<TopLevelNode>
 
 [<RequireQualifiedAccess>]
 module AnyTypeNode =
