@@ -1,4 +1,4 @@
-﻿namespace WorkingTitleC.Compiler.Parser
+﻿namespace MiddleC.Compiler.Parser
 
 open System
 open System.Collections.Immutable
