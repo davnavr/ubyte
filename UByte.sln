@@ -17,6 +17,8 @@ Project("{6EC3EE1D-3C4E-46DD-8F32-0CC8E7565705}") = "UByte.Resolver", "src\UByte
 EndProject
 Project("{6EC3EE1D-3C4E-46DD-8F32-0CC8E7565705}") = "MiddleC.Compiler", "src\MiddleC.Compiler\MiddleC.Compiler.fsproj", "{249754BE-582E-492E-8A77-AAADC3FADAA7}"
 EndProject
+Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "middlec", "src\middlec\middlec.fsproj", "{39852DC5-B63F-47C0-A477-903BF4D0C09D}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -51,6 +53,10 @@ Global
 		{249754BE-582E-492E-8A77-AAADC3FADAA7}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{249754BE-582E-492E-8A77-AAADC3FADAA7}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{249754BE-582E-492E-8A77-AAADC3FADAA7}.Release|Any CPU.Build.0 = Release|Any CPU
+		{39852DC5-B63F-47C0-A477-903BF4D0C09D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{39852DC5-B63F-47C0-A477-903BF4D0C09D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{39852DC5-B63F-47C0-A477-903BF4D0C09D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{39852DC5-B63F-47C0-A477-903BF4D0C09D}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
