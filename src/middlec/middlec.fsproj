@@ -11,8 +11,6 @@
 
     <PackageReference Include="Argu" Version="6.1.1" />
 
-    <ProjectReference Include="$(RootDirectory)\src\UByte.Format\UByte.Format.fsproj" />
-    <ProjectReference Include="$(RootDirectory)\src\UByte.Resolver\UByte.Resolver.fsproj" />
     <ProjectReference Include="$(RootDirectory)\src\MiddleC.Compiler\MiddleC.Compiler.fsproj" />
   </ItemGroup>
 

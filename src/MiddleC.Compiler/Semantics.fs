@@ -4,6 +4,8 @@ open System.Collections.Generic
 open System.Collections.Immutable
 open System.Runtime.CompilerServices
 
+open UByte.Resolver
+
 open MiddleC.Compiler.Parser
 
 [<RequireQualifiedAccess>]
@@ -12,14 +14,11 @@ type CheckedModule =
 
 [<RequireQualifiedAccess>]
 module TypeChecker =
-    [<IsReadOnly; Struct; NoComparison; StructuralEquality>]
-    type TypeIdentifier = { Name: ParsedIdentifier; Namespace: ParsedNamespaceName } // TODO: Move this to parser namespace.
-
     [<NoComparison; NoEquality>]
     type private CheckingType =
         { Identifier: TypeIdentifier
           Attributes: ParsedNodeArray<TypeAttributeNode>
-          Extends: ParsedNodeArray<ParsedIdentifier> // TypeIdentifier
+          Extends: ParsedNodeArray<TypeIdentifier>
           Members: ParsedNodeArray<TypeMemberNode>
           UsedNamespaces: ImmutableArray<ParsedNamespaceName> }
 
@@ -41,7 +40,7 @@ module TypeChecker =
                 | TopLevelNode.NamespaceDeclaration(ns, nested) ->
                     nestedNamespaceDeclarations.Add(struct(ns, nested))
                 | TopLevelNode.TypeDeclaration(name, attributes, extends, members) ->
-                    declaredTypeNodes.Add({ TypeIdentifier.Name = name.Content; Namespace = currentNamespaceName }, attributes, extends, members)
+                    declaredTypeNodes.Add({ TypeIdentifier.Name = name; TypeIdentifier.Namespace = currentNamespaceName }, attributes, extends, members)
                 | TopLevelNode.UsingNamespace ns ->
                     usings.Add ns
                 | TopLevelNode.Error msg ->
@@ -60,6 +59,6 @@ module TypeChecker =
         for file in files do inner lookup ImmutableArray.Empty ImmutableArray.Empty file.Nodes
         lookup
 
-    let check files =
+    let check files (imports: ImmutableArray<ResolvedModule>) =
         let typeDeclarationLookup = findTypeDeclarations files
         failwith "BAD": CheckedModule

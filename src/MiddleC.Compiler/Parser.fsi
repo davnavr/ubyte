@@ -15,7 +15,7 @@ type ParsedIdentifier =
 
     interface IEquatable<ParsedIdentifier>
 
-[<IsReadOnly; Struct; NoComparison; NoEquality>]
+[<IsReadOnly; Struct>]
 type ParsedNode<'Content> =
     { Line: uint32
       Column: uint32
@@ -27,11 +27,22 @@ type ParsedNodeArray<'Content> = ImmutableArray<ParsedNode<'Content>>
 
 type ParsedNamespaceName = ParsedNodeArray<ParsedIdentifier>
 
+[<RequireQualifiedAccess; IsReadOnly; Struct; NoComparison; StructuralEquality>]
+type TypeIdentifier =
+    { Name: IdentifierNode
+      Namespace: ParsedNamespaceName }
+
+    override ToString : unit -> string
+
+    interface IEquatable<TypeIdentifier>
+
+type ParsedTypeIdentifier = ParsedNode<TypeIdentifier>
+
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
 type AnyTypeNode =
     | Primitive of UByte.Format.Model.PrimitiveType
     | Array of AnyTypeNode
-    //| ObjectReference of Choice<TypeNode, IdentifierNode>
+    //| ObjectReference of Choice<TypeNode, ParsedTypeIdentifier>
 
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
 type ExpressionNode =
@@ -92,7 +103,7 @@ type TypeMemberNode =
 type TopLevelNode =
     | UsingNamespace of ParsedNamespaceName
     | NamespaceDeclaration of ParsedNamespaceName * ParsedNodeArray<TopLevelNode>
-    | TypeDeclaration of name: IdentifierNode * ParsedNodeArray<TypeAttributeNode> * extends: ParsedNodeArray<ParsedIdentifier> *
+    | TypeDeclaration of name: IdentifierNode * ParsedNodeArray<TypeAttributeNode> * extends: ParsedNodeArray<TypeIdentifier> *
         members: ParsedNodeArray<TypeMemberNode>
     | Error of string
 

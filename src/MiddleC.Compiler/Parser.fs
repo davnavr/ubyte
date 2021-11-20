@@ -25,6 +25,19 @@ type ParsedNodeArray<'Content> = ImmutableArray<ParsedNode<'Content>>
 
 type ParsedNamespaceName = ParsedNodeArray<ParsedIdentifier>
 
+[<RequireQualifiedAccess; Struct; NoComparison; StructuralEquality>]
+type TypeIdentifier =
+    { Name: IdentifierNode; Namespace: ParsedNamespaceName }
+
+    override this.ToString() =
+        let sb = System.Text.StringBuilder()
+        if not this.Namespace.IsDefaultOrEmpty then
+            for ns in this.Namespace do
+                sb.Append(ns.Content.ToString()).Append("::") |> ignore
+        sb.Append(this.Name.Content.ToString()).ToString()
+
+type ParsedTypeIdentifier = ParsedNode<TypeIdentifier>
+
 [<RequireQualifiedAccess>]
 type AnyTypeNode =
     | Primitive of UByte.Format.Model.PrimitiveType
@@ -77,7 +90,7 @@ type TypeMemberNode =
 type TopLevelNode =
     | UsingNamespace of ParsedNamespaceName
     | NamespaceDeclaration of ParsedNamespaceName * ParsedNodeArray<TopLevelNode>
-    | TypeDeclaration of name: IdentifierNode * ParsedNodeArray<TypeAttributeNode> * extends: ParsedNodeArray<ParsedIdentifier> *
+    | TypeDeclaration of name: IdentifierNode * ParsedNodeArray<TypeAttributeNode> * extends: ParsedNodeArray<TypeIdentifier> *
         members: ParsedNodeArray<TypeMemberNode>
     | Error of string
 
@@ -168,6 +181,18 @@ module Parse =
 
     let private namespaceNameNode : Parser<ParsedNamespaceName, unit> =
         CollectionParsers.ImmutableArray.sepBy1 validIdentifierNode (skipString "::")
+
+    let private typeIdentifierNode : Parser<ParsedTypeIdentifier, unit> =
+        choice [
+            pipe2
+                (namespaceNameNode .>> skipString "::")
+                validIdentifierNode
+                (fun ns name -> { TypeIdentifier.Name = name; TypeIdentifier.Namespace = ns })
+            |> attempt
+
+            validIdentifierNode |>> fun name -> { TypeIdentifier.Name = name; TypeIdentifier.Namespace = ImmutableArray.Empty }
+        ]
+        |> withNodeContent
 
     let private topLevelNode, private topLevelNodeRef : Parser<ParsedNode<TopLevelNode>, _> * _ = createParserForwardedToRef()
 
@@ -319,7 +344,7 @@ module Parse =
                     "inheritable", TypeAttributeNode.Inheritable
                 |])
                 (whitespace >>. choice [|
-                    semicolon >>. whitespace >>. CollectionParsers.ImmutableArray.sepBy1 validIdentifierNode comma
+                    semicolon >>. whitespace >>. CollectionParsers.ImmutableArray.sepBy1 typeIdentifierNode comma
                     preturn ImmutableArray.Empty
                 |])
                 (whitespace >>. betweenCurlyBrackets (CollectionParsers.ImmutableArray.many typeMemberNode))

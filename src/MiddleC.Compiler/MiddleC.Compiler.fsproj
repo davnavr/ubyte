@@ -15,6 +15,7 @@
     <PackageReference Include="FParsec" Version="1.1.1" />
 
     <ProjectReference Include="$(RootDirectory)\src\UByte.Format\UByte.Format.fsproj" />
+    <ProjectReference Include="$(RootDirectory)\src\UByte.Resolver\UByte.Resolver.fsproj" />
   </ItemGroup>
 
 </Project>
