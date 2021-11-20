@@ -1,0 +1,15 @@
+namespace HelloWorld {
+
+type Program {
+    method Main entrypoint () -> (s32) {
+        let message char32[] = new char32[] "Hello World!";
+        HelloWorld::Program.Print(message);
+    }
+
+    method Print private (char32[] message) -> () external {
+        entry = "testhelperprintln",
+        library = "runmdl"
+    }
+}
+
+}
