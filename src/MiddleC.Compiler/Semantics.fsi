@@ -6,7 +6,7 @@ open UByte.Resolver
 
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
 type CheckedModule =
-    { Errors: ImmutableArray<unit> }
+    { Errors: ImmutableArray<string> }
 
 [<RequireQualifiedAccess>]
 module TypeChecker =

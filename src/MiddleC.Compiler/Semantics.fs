@@ -1,16 +1,14 @@
 ﻿namespace MiddleC.Compiler.Semantics
 
+open System
 open System.Collections.Generic
 open System.Collections.Immutable
-open System.Runtime.CompilerServices
-
-open UByte.Resolver
 
 open MiddleC.Compiler.Parser
 
 [<RequireQualifiedAccess>]
 type CheckedModule =
-    { Errors: ImmutableArray<unit> }
+    { Errors: ImmutableArray<string> }
 
 [<RequireQualifiedAccess>]
 module TypeChecker =
@@ -22,9 +20,11 @@ module TypeChecker =
           Members: ParsedNodeArray<TypeMemberNode>
           UsedNamespaces: ImmutableArray<ParsedNamespaceName> }
 
-    let private findTypeDeclarations (files: ImmutableArray<ParsedFile>) =
+    let private findTypeDeclarations errors (files: ImmutableArray<ParsedFile>) =
         let rec inner
+            (errors: ImmutableArray<_>.Builder)
             (lookup: Dictionary<_, _>)
+            (types: ImmutableArray<_>.Builder)
             currentNamespaceName
             (parentUsingDeclarations: ImmutableArray<_>)
             (nodes: ParsedNodeArray<TopLevelNode>)
@@ -44,21 +44,67 @@ module TypeChecker =
                 | TopLevelNode.UsingNamespace ns ->
                     usings.Add ns
                 | TopLevelNode.Error msg ->
-                    failwithf "TODO: Handle error %s" msg
+                    errors.Add msg
 
             let currentUsingDeclarations = usings.ToImmutable()
 
             for (id, attributes, extends, members) in declaredTypeNodes do
                 // TODO: Handle duplicate type definitions
-                lookup.Add(id, { CheckingType.Identifier = id; Attributes = attributes; Extends = extends; Members = members; UsedNamespaces = currentUsingDeclarations })
+                let ty =
+                    { CheckingType.Identifier = id
+                      Attributes = attributes
+                      Extends = extends
+                      Members = members
+                      UsedNamespaces = currentUsingDeclarations }
+
+                lookup.Add(id, ty)
+                types.Add ty
 
             for struct(nestedNamespaceName, nested) in nestedNamespaceDeclarations do
-                inner lookup nestedNamespaceName currentUsingDeclarations nested
+                inner errors lookup types nestedNamespaceName currentUsingDeclarations nested
 
         let lookup = Dictionary<TypeIdentifier, CheckingType>()
-        for file in files do inner lookup ImmutableArray.Empty ImmutableArray.Empty file.Nodes
-        lookup
+        let types = ImmutableArray.CreateBuilder()
+        for file in files do inner errors lookup types ImmutableArray.Empty ImmutableArray.Empty file.Nodes
+        struct(types.ToImmutable(), lookup)
 
-    let check files (imports: ImmutableArray<ResolvedModule>) =
-        let typeDeclarationLookup = findTypeDeclarations files
-        failwith "BAD": CheckedModule
+    let private namespaceSearchString (ns: ParsedNamespaceName) =
+        if not ns.IsDefaultOrEmpty then
+            let sb = System.Text.StringBuilder()
+            for i = 0 to ns.Length - 1 do
+                sb.Append ns.[i] |> ignore
+                if i > 0 then sb.Append '.' |> ignore
+            sb.ToString()
+        else
+            String.Empty
+
+    let private importedTypeLookup (imports: ImmutableArray<UByte.Resolver.ResolvedModule>) =
+        let lookup = Dictionary<TypeIdentifier, UByte.Resolver.ResolvedTypeDefinition voption>()
+        fun id ->
+            match lookup.TryGetValue id with
+            | true, existing -> existing
+            | false, _ ->
+                let ns = namespaceSearchString id.Namespace
+                let mutable i, ty = 0, ValueNone
+                while i < imports.Length && ty.IsNone do
+                    let md = imports.[i]
+                    ty <- md.TryFindType(ns, id.Name.Content.ToString())
+                    i <- i + 1
+                lookup.Add(id, ty)
+                ty
+
+    let private typeAttributeChecker (types: ImmutableArray<CheckingType>) =
+        let lookup = Dictionary<TypeIdentifier, UByte.Format.Model.TypeDefinitionFlags * SomeType list> types.Length
+        ()
+
+    let check files imports =
+        let errors = ImmutableArray.CreateBuilder()
+        let struct(typeDeclarationList, typeDeclarationLookup) = findTypeDeclarations errors files
+        let typeImportLookup = importedTypeLookup imports
+
+        failwith "BAD"
+
+        { CheckedModule.Errors =
+            if errors.Count <> errors.Capacity
+            then errors.ToImmutable()
+            else errors.MoveToImmutable() }

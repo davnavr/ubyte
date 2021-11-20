@@ -114,3 +114,5 @@ type ResolvedModule with
 
     /// Finds the first type defined in this module with the specified name.
     member FindType : typeNamespace: string * typeName: string -> ResolvedTypeDefinition
+
+    member TryFindType : typeNamespace: string * typeName: string -> ResolvedTypeDefinition voption

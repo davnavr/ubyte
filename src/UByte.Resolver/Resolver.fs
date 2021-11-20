@@ -184,7 +184,7 @@ type ResolvedModule with
     member this.DataAt(ItemIndex i: DataIndex) = this.source.Data.[i]
     member this.CodeAt(ItemIndex i: CodeIndex) = this.source.Code.[i]
 
-    member this.FindType(typeNamespace: string, typeName: string): ResolvedTypeDefinition =
+    member this.TryFindType(typeNamespace: string, typeName: string): ResolvedTypeDefinition voption =
         let key = struct(typeNamespace, typeName)
         match this.typeNameLookup.TryGetValue key with
         | false, _ ->
@@ -206,16 +206,20 @@ type ResolvedModule with
 
                 i <- Checked.(+) 1 i
 
-            match result with
-            | ValueSome t -> t
-            | ValueNone ->
-                TypeNotFoundException (
-                    this,
-                    typeNamespace,
-                    typeName, sprintf "Unable to find type %s %s" typeNamespace typeName
-                )
-                |> raise
-        | true, existing -> existing
+            result
+        | true, existing ->
+            ValueSome existing
+
+    member this.FindType(typeNamespace: string, typeName: string): ResolvedTypeDefinition =
+        match this.TryFindType(typeNamespace, typeName) with
+        | ValueSome t -> t
+        | ValueNone ->
+            TypeNotFoundException (
+                this,
+                typeNamespace,
+                typeName, sprintf "Unable to find type %s %s" typeNamespace typeName
+            )
+            |> raise
 
 type ResolvedTypeDefinition with
     new (rm, source, index) =
