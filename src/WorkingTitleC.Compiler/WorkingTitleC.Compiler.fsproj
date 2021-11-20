@@ -7,8 +7,9 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="Lexer.fsi" />
-    <Compile Include="Lexer.fs" />
+    <Compile Include="Parser.fsi" />
+
+    <PackageReference Include="FParsec" Version="1.1.1" />
 
     <ProjectReference Include="$(RootDirectory)\src\UByte.Format\UByte.Format.fsproj" />
   </ItemGroup>
