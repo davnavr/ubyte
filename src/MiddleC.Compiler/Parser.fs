@@ -48,6 +48,7 @@ type StatementNode =
     | While of condition: ParsedExpression * body: ParsedNodeArray<StatementNode>
     | Goto of IdentifierNode
     | Label of IdentifierNode
+    | Return of ParsedExpression
     | Empty
 
 [<RequireQualifiedAccess>]
@@ -130,20 +131,20 @@ module private CollectionParsers =
 
 [<RequireQualifiedAccess>]
 module Parse =
-    let semicolon = skipChar ';'
-    let comma = skipChar ','
+    let private semicolon = skipChar ';'
+    let private comma = skipChar ','
 
-    let betweenCurlyBrackets inner = between (skipChar '{') (skipChar '}') inner
+    let private betweenCurlyBrackets inner = between (skipChar '{') (skipChar '}') inner
 
-    let betweenParenthesis inner = between (skipChar '(') (skipChar ')') inner
+    let private betweenParenthesis inner = between (skipChar '(') (skipChar ')') inner
 
-    let whitespace : Parser<unit, _> = choice [
+    let private whitespace : Parser<unit, _> = choice [
         spaces
         skipString "//" .>> skipRestOfLine true <?> "single-line comment"
         //between (skipString "/*") (skipString "*/")
     ]
 
-    let withNodeContent (parser: Parser<'Content, _>) : Parser<_, unit> =
+    let private withNodeContent (parser: Parser<'Content, _>) : Parser<_, unit> =
         fun stream ->
             let line = uint32 stream.Line
             let column = uint32 stream.Column
@@ -153,7 +154,7 @@ module Parse =
             else
                 Reply(result.Status, result.Error)
 
-    let validIdentifierNode : Parser<IdentifierNode, unit> =
+    let private validIdentifierNode : Parser<IdentifierNode, unit> =
         let isValidFirstCharacter c = isLetter c || c = '_'
         many1Satisfy2
             isValidFirstCharacter
@@ -161,12 +162,12 @@ module Parse =
         |>> ParsedIdentifier.Identifier
         |> withNodeContent
 
-    let namespaceNameNode : Parser<ParsedNamespaceName, unit> =
+    let private namespaceNameNode : Parser<ParsedNamespaceName, unit> =
         CollectionParsers.ImmutableArray.sepBy1 validIdentifierNode (skipString "::")
 
-    let private topLevelNode, topLevelNodeRef : Parser<ParsedNode<TopLevelNode>, _> * _ = createParserForwardedToRef()
+    let private topLevelNode, private topLevelNodeRef : Parser<ParsedNode<TopLevelNode>, _> * _ = createParserForwardedToRef()
 
-    let attributes attributes : Parser<ParsedNodeArray<_>, _> =
+    let private attributes attributes : Parser<ParsedNodeArray<_>, _> =
         let parsers =
             Array.map
                 (fun struct(name, attribute) -> skipString name >>% attribute)
@@ -177,7 +178,7 @@ module Parse =
         |> withNodeContent
         |> CollectionParsers.ImmutableArray.many
 
-    let anyTypeNode : Parser<ParsedNode<AnyTypeNode>, unit> =
+    let private anyTypeNode : Parser<ParsedNode<AnyTypeNode>, unit> =
         let primitiveTypeNode =
             Array.map
                 (fun struct(name, ty) -> skipString name >>% AnyTypeNode.Primitive ty)
@@ -201,7 +202,7 @@ module Parse =
             (fun btype modifiers -> (List.fold (fun mf m -> fun ty -> m(mf ty)) id modifiers) btype)
         |> withNodeContent
 
-    let expressionNode : Parser<ParsedNode<ExpressionNode>, _> =
+    let private expression : Parser<ParsedExpression, _> =
         // TODO: If integer literal is out of range, generate an error node.
         let unsignedIntegerLiteralOptions = NumberLiteralOptions.AllowBinary ||| NumberLiteralOptions.AllowHexadecimal
         let signedIntegerLiteralOptions = unsignedIntegerLiteralOptions ||| NumberLiteralOptions.AllowMinusSign
@@ -220,16 +221,16 @@ module Parse =
         |> withNodeContent
         .>> whitespace
 
-    let block, blockRef : Parser<ParsedNodeArray<StatementNode>, unit> * _ = createParserForwardedToRef()
+    let private block, private blockRef : Parser<ParsedNodeArray<StatementNode>, unit> * _ = createParserForwardedToRef()
 
-    let statementNode : Parser<ParsedNode<StatementNode>, _> =
+    let private statement : Parser<ParsedNode<StatementNode>, _> =
         whitespace
         >>. choice
             [
                 skipString "if"
                 >>. whitespace
                 >>. tuple3
-                    (betweenParenthesis expressionNode .>> whitespace)
+                    (betweenParenthesis expression .>> whitespace)
                     (block .>> whitespace)
                     (choice [
                         skipString "else" >>. whitespace >>. block
@@ -239,7 +240,8 @@ module Parse =
 
                 // TODO: How to parse else if?
 
-                expressionNode |>> StatementNode.Expression
+                expression |>> StatementNode.Expression
+                skipString "return" >>. whitespace >>. expression |>> StatementNode.Return
                 followedBy semicolon >>% StatementNode.Empty
             ]
         .>> whitespace
@@ -247,9 +249,9 @@ module Parse =
         .>> whitespace
         |> withNodeContent
 
-    blockRef.Value <- betweenCurlyBrackets(CollectionParsers.ImmutableArray.many statementNode)
+    blockRef.Value <- betweenCurlyBrackets(CollectionParsers.ImmutableArray.many statement)
 
-    let typeMemberNode : Parser<ParsedNode<TypeMemberNode>, unit> =
+    let private typeMemberNode : Parser<ParsedNode<TypeMemberNode>, unit> =
         let methodParameterNodes =
             CollectionParsers.ImmutableArray.sepBy
                 (whitespace >>. validIdentifierNode .>> whitespace .>>. anyTypeNode .>> whitespace)

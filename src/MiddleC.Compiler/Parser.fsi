@@ -56,6 +56,7 @@ type StatementNode =
     | While of condition: ParsedExpression * body: ParsedNodeArray<StatementNode>
     | Goto of IdentifierNode
     | Label of IdentifierNode
+    | Return of ParsedExpression
     | Empty
 
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
