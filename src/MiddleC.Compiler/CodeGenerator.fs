@@ -38,7 +38,7 @@ let private writeTypeDefinitions
     =
     //let definedFieldIndices = Dictionary<CheckedField, uint32>()
     let definedMethodIndices = Dictionary<CheckedMethod, uint32>()
-    let methodBodyLookup = Dictionary<CheckedMethod, CodeIndex>()
+    let methodBodyLookup = Dictionary<_, CodeIndex>()
     let definedTypeIndices = Dictionary<CheckedTypeDefinition, uint32> types.Length
     let definedTypeList = List types.Length
 
@@ -49,8 +49,8 @@ let private writeTypeDefinitions
             definedMethodIndices.Add(method, uint32 definedMethodIndices.Count)
 
             match method.Body with
-            | CheckedMethodBody.Defined _ ->
-                methodBodyLookup.Add(method, CodeIndex.Index(uint32 methodBodyLookup.Count))
+            | CheckedMethodBody.Defined statements ->
+                methodBodyLookup.Add(statements, CodeIndex.Index(uint32 methodBodyLookup.Count))
 
         definedTypeIndices.Add(definition, uint32 definedTypeIndices.Count)
 
@@ -82,6 +82,13 @@ let private writeTypeDefinitions
               TypeDefinition.VTable = ImmutableArray.Empty }
 
     struct(definedTypeIndices, definedTypeList, definedMethodIndices, methodBodyLookup)
+
+let private writeMethodBodies (methodBodyLookup: Dictionary<ImmutableArray<CheckedStatement>, CodeIndex>) =
+    let mutable bodies = Array.zeroCreate methodBodyLookup.Count
+    for KeyValue(statements, Index index) in methodBodyLookup do
+        let code = failwith "BAD"
+        bodies.[int32 index] <- code
+    Unsafe.As<Code[], ImmutableArray<Code>> &bodies
 
 let write (mdl: CheckedModule) =
     if not mdl.Errors.IsDefaultOrEmpty then raise(ArgumentException "The module must not contain any errors")
@@ -169,7 +176,7 @@ let write (mdl: CheckedModule) =
 
     // Type definitions, method definitions, and field definitions can only be refered to by index after method bodies have been
     // generated.
-    let code = ImmutableArray.Empty //writeMethodBodies methodBodyLookup
+    let code = writeMethodBodies methodBodyLookup
 
     let fieldImportCount = uint32
     let methodImportCount = uint32 importedMethodDefinitions.Count
@@ -202,7 +209,7 @@ let write (mdl: CheckedModule) =
                   Method.MethodAnnotations = ImmutableArray.Empty
                   Method.Body =
                     match method.Body with
-                    | CheckedMethodBody.Defined _ -> MethodBody.Defined methodBodyLookup.[method] }
+                    | CheckedMethodBody.Defined statements -> MethodBody.Defined methodBodyLookup.[statements] }
         Unsafe.As<Method[], ImmutableArray<Method>> &definitions
 
     { Module.Magic = UByte.Format.Model.magic
