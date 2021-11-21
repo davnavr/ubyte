@@ -67,17 +67,57 @@ type SemanticError =
       Source: ParsedFile
       Message: SemanticErrorMessage }
 
-type CheckedTypeDefinition =
-    private
-        { identifier: FullTypeIdentifier
-          Source: ParsedFile
-          AttributeNodes: ParsedNodeArray<TypeAttributeNode>
-          InheritanceNodes: ParsedNodeArray<TypeIdentifier>
-          MemberNodes: ParsedNodeArray<TypeMemberNode>
-          UsedNamespaces: ImmutableArray<FullNamespaceName>
-          [<DefaultValue>] mutable flags: Model.TypeDefinitionFlags }
+type NamedType = Choice<CheckedTypeDefinition, UByte.Resolver.ResolvedTypeDefinition>
 
-    member this.Identifier = this.identifier
+and [<Sealed>] CheckedMethod
+    (
+        name: IdentifierNode,
+        attributes: ParsedNodeArray<MethodAttributeNode>,
+        parameters: ImmutableArray<IdentifierNode * ParsedNode<AnyTypeNode>>,
+        returns: ParsedNodeArray<AnyTypeNode>,
+        body: MethodBodyNode
+    )
+    =
+    let mutable flags = Unchecked.defaultof<Model.MethodFlags>
+
+    member _.Name = name
+    member _.BodyNode = body
+    member _.Flags with get() = flags and set value = flags <- value
+
+and NamedMethod = Choice<CheckedMethod, UByte.Resolver.ResolvedMethod>
+
+and [<Sealed>] CheckedTypeDefinition
+    (
+        identifier: FullTypeIdentifier,
+        source: ParsedFile,
+        typeAttributeNodes: ParsedNodeArray<TypeAttributeNode>,
+        inheritedTypeNodes: ParsedNodeArray<TypeIdentifier>,
+        typeMemberNodes: ParsedNodeArray<TypeMemberNode>,
+        usedNamespaceDeclarations: ImmutableArray<FullNamespaceName>
+    )
+    =
+    let mutable flags = Unchecked.defaultof<Model.TypeDefinitionFlags>
+    let mutable inheritedTypeDefinitions = ImmutableArray.Empty
+    let mutable methods = ImmutableArray<CheckedMethod>.Empty
+
+    member _.Identifier = identifier
+    member _.Source = source
+    member _.AttributeNodes = typeAttributeNodes
+    member _.InheritanceNodes = inheritedTypeNodes
+    member _.MemberNodes = typeMemberNodes
+    member _.UsedNamespaces = usedNamespaceDeclarations
+    member _.Flags with get() = flags and set value = flags <- value
+    member _.InheritedTypes with get() = inheritedTypeDefinitions and set value = inheritedTypeDefinitions <- value
+    member _.Methods with get() = methods and set value = methods <- value
+
+    override this.Equals o =
+        match o with
+        | :? CheckedTypeDefinition as other -> (this :> IEquatable<_>).Equals other
+        | _ -> false
+
+    override _.GetHashCode() = identifier.GetHashCode()
+
+    interface IEquatable<CheckedTypeDefinition> with member _.Equals other = identifier = other.Identifier
 
 [<RequireQualifiedAccess>]
 type CheckedModule =
@@ -110,12 +150,14 @@ module TypeChecker =
                     nestedNamespaceDeclarations.Add(struct(ns, nested))
                 | TopLevelNode.TypeDeclaration(name, attributes, extends, members) ->
                     declaredTypeNodes.Add <| fun usedNamespaceDeclarations ->
-                        { identifier = FullTypeIdentifier.create name (FullNamespaceName.toParsedName currentNamespaceName)
-                          Source = file
-                          AttributeNodes = attributes
-                          InheritanceNodes = extends
-                          MemberNodes = members
-                          UsedNamespaces = usedNamespaceDeclarations }
+                        CheckedTypeDefinition (
+                            FullTypeIdentifier.create name (FullNamespaceName.toParsedName currentNamespaceName),
+                            file,
+                            attributes,
+                            extends,
+                            members,
+                            usedNamespaceDeclarations
+                        )
                 | TopLevelNode.UsingNamespace ns ->
                     usings.Add(FullNamespaceName.append ns currentNamespaceName)
                 | TopLevelNode.Error msg -> // TODO: Error nodes should be treated as UserState in parser stage, TypeChecker should have to deal with parser errors.
@@ -160,8 +202,6 @@ module TypeChecker =
                 lookup.Add(id, ty)
                 ty
 
-    type private NamedType = Choice<CheckedTypeDefinition, UByte.Resolver.ResolvedTypeDefinition>
-
     [<IsReadOnly; Struct; NoComparison; NoEquality>]
     type private CheckedTypeAttributes =
         { Flags: Model.TypeDefinitionFlags
@@ -189,7 +229,6 @@ module TypeChecker =
         | _ -> Error(AmbiguousTypeIdentifier(identifier, Seq.map fst matches))
 
     let private checkTypeAttributes errors (declarations: IReadOnlyDictionary<FullTypeIdentifier, _>) namedTypeLookup =
-        let lookup = Dictionary<_, CheckedTypeAttributes> declarations.Count
         let inheritedTypeBuilder = ImmutableArray.CreateBuilder<NamedType>()
 
         for (ty: CheckedTypeDefinition) in declarations.Values do
@@ -213,12 +252,33 @@ module TypeChecker =
                 | Ok ty -> inheritedTypeBuilder.Add ty
                 | Error error -> addErrorMessage errors inheritedTypeName ty.Source error
 
-            lookup.Add(ty.Identifier, { Flags = flags; InheritedTypes = inheritedTypeBuilder.ToImmutable() })
+            ty.Flags <- flags
+            ty.InheritedTypes <- inheritedTypeBuilder.ToImmutable()
 
-        lookup
+    let private findTypeMembers errors (declarations: IReadOnlyDictionary<FullTypeIdentifier, _>) =
+        let methodNameLookup = Dictionary<CheckedTypeDefinition, _>()
 
-    let private checkTypeMembers errors (declarations: IReadOnlyDictionary<FullTypeIdentifier, _>) =
-        ()
+        for ty in declarations.Values do
+            let methods = Dictionary<ParsedIdentifier, CheckedMethod>() // TODO: Allow overloading by parameter count AND parameter types.
+            methodNameLookup.Add(ty, methods)
+
+            for node in ty.MemberNodes do
+                match node.Content with
+                | TypeMemberNode.MethodDeclaration(name, attributes, parameters, returns, body) ->
+                    // TODO: Check for duplicate methods.
+                    methods.Add (
+                        name.Content,
+                        CheckedMethod (
+                            name,
+                            attributes,
+                            parameters,
+                            returns,
+                            body
+                        )
+                    )
+                //| TypeMemberNode.FieldDeclaration _
+
+        struct((), methodNameLookup)
 
     let check files imports =
         let errors = ImmutableArray.CreateBuilder()
@@ -235,7 +295,11 @@ module TypeChecker =
                     | ValueSome imported -> ValueSome(Choice2Of2 imported)
                     | ValueNone -> ValueNone
 
-        let typeAttributeLookup = checkTypeAttributes errors declaredTypesLookup namedTypeLookup
+        checkTypeAttributes errors declaredTypesLookup namedTypeLookup
+
+        let struct((), methodNameLookup) = findTypeMembers errors declaredTypesLookup
+
+        //checkDefinedMethods
 
         { CheckedModule.DefinedTypes =
             failwith "TODO: Get defined types"

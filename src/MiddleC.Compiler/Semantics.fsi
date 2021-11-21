@@ -3,6 +3,8 @@
 open System.Collections.Immutable
 open System.Runtime.CompilerServices
 
+open UByte.Format
+
 open MiddleC.Compiler.Parser
 
 [<IsReadOnly; Struct; NoComparison; StructuralEquality>]
@@ -47,14 +49,31 @@ type SemanticError =
       Source: ParsedFile
       Message: SemanticErrorMessage }
 
-[<NoComparison; NoEquality>]
-type CheckedTypeDefinition
+[<Sealed>]
+type CheckedTypeDefinition =
+    interface System.IEquatable<CheckedTypeDefinition>
+
+    member Identifier : FullTypeIdentifier
+    member Flags : Model.TypeDefinitionFlags
+
+    override Equals : obj -> bool
+    override GetHashCode : unit -> int32
+
+type NamedType = Choice<CheckedTypeDefinition, UByte.Resolver.ResolvedTypeDefinition>
+
+[<Sealed>]
+type CheckedMethod =
+    member Name : IdentifierNode
+    member Flags : Model.MethodFlags
+
+type NamedMethod = Choice<CheckedMethod, UByte.Resolver.ResolvedMethod>
 
 type CheckedTypeDefinition with
-    member Identifier : FullTypeIdentifier
+    member InheritedTypes : ImmutableArray<NamedType>
+    member Methods : ImmutableArray<CheckedMethod>
 
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
-type CheckedModule =
+type CheckedModule = // TODO: Make this a normal Sealed class to prevent construction elsewhere.
     { DefinedTypes: ImmutableArray<CheckedTypeDefinition>
       Errors: ImmutableArray<SemanticError> }
 
