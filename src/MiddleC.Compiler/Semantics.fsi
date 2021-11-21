@@ -110,10 +110,12 @@ type CheckedStatement =
 type CheckedMethodBody =
     | Defined of ImmutableArray<CheckedStatement>
 
-//[<RequireQualifiedAccess; NoComparison; StructuralEquality>]
-//type CheckedMethodSignature =
-//    { ParameterTypes:
-//      ReturnTypes: ImmutableArray<CheckedType> }
+[<RequireQualifiedAccess; IsReadOnly; Struct; NoComparison; StructuralEquality>]
+type CheckedMethodSignature =
+    { ParameterTypes: ImmutableArray<CheckedType>
+      ReturnTypes: ImmutableArray<CheckedType> }
+
+    interface System.IEquatable<CheckedMethodSignature>
 
 [<Sealed>]
 type CheckedMethod =
@@ -123,6 +125,7 @@ type CheckedMethod =
     member Visibility : UByte.Format.Model.VisibilityFlags
     member Parameters : ImmutableArray<CheckedParameter>
     member ReturnTypes : ImmutableArray<CheckedType>
+    member Signature : CheckedMethodSignature
     member Body : CheckedMethodBody
 
 type NamedMethod = Choice<CheckedMethod, UByte.Resolver.ResolvedMethod>
@@ -140,6 +143,10 @@ type CheckedModule =
     member EntryPoint : CheckedMethod voption
     member Errors : ImmutableArray<SemanticError>
     member ImportedModules : ImmutableArray<UByte.Resolver.ResolvedModule>
+
+[<RequireQualifiedAccess>]
+module CheckedType =
+    val primitive : UByte.Format.Model.PrimitiveType -> CheckedType
 
 [<RequireQualifiedAccess>]
 module TypeChecker =

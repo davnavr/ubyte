@@ -110,18 +110,17 @@ let write (mdl: CheckedModule) =
             | CheckedType.ValueType(CheckedValueType.Primitive prim) ->
                 AnyType.primitive prim)
 
-    let struct(msignatures, methodSignatureLookup: CheckedMethod -> MethodSignatureIndex) =
+    let struct(msignatures, methodSignatureLookup: CheckedMethodSignature -> MethodSignatureIndex) =
         createIndexedLookup
             EqualityComparer.Default // TODO: Compare method signatures instead to reduce number of method signatures in output.
-            (fun method ->
-                { MethodSignature.ReturnTypes =
-                    let mutable rtypes = Array.zeroCreate method.ReturnTypes.Length
-                    for i = 0 to rtypes.Length - 1 do rtypes.[i] <- typeSignatureLookup method.ReturnTypes.[i]
-                    Unsafe.As<TypeSignatureIndex[], ImmutableArray<TypeSignatureIndex>> &rtypes
-                  MethodSignature.ParameterTypes =
-                    let mutable ptypes = Array.zeroCreate method.Parameters.Length
-                    for i = 0 to ptypes.Length - 1 do ptypes.[i] <- typeSignatureLookup(method.Parameters.ItemRef(i).Type)
-                    Unsafe.As<TypeSignatureIndex[], ImmutableArray<TypeSignatureIndex>> &ptypes })
+            (fun signature ->
+                let inline getSignatureArray (types: ImmutableArray<_>) =
+                    let mutable types' = Array.zeroCreate types.Length
+                    for i = 0 to types'.Length - 1 do types'.[i] <- typeSignatureLookup types.[i]
+                    Unsafe.As<TypeSignatureIndex[], ImmutableArray<TypeSignatureIndex>> &types'
+
+                { MethodSignature.ReturnTypes = getSignatureArray signature.ReturnTypes
+                  MethodSignature.ParameterTypes = getSignatureArray signature.ParameterTypes })
 
     let struct(importedTypeDefinitions, typeImportLookup: _ -> TypeDefinitionIndex) =
         createIndexedLookup
@@ -132,20 +131,45 @@ let write (mdl: CheckedModule) =
                   TypeNamespace = failwith "TODO: Get namespace from UByte.Resolver"
                   TypeParameters = 0u })
 
+    let translateExternalType (rm: UByte.Resolver.ResolvedModule) =
+        function
+        | AnyType.ValueType(ValueType.Primitive prim) -> CheckedType.primitive prim
+        | AnyType.SafePointer _ -> raise(NotImplementedException "TODO: Add support for managed pointers")
+        | bad -> failwithf "TODO: Implement translation of %A" bad
+
     let struct(importedMethodDefinitions, methodImportLookup: _ -> MethodIndex) =
+        let importedSignatureLookup = Dictionary<_, _>()
         createIndexedLookup
             EqualityComparer.Default
             (fun (method: UByte.Resolver.ResolvedMethod) ->
                 { MethodImport.MethodOwner = typeImportLookup method.DeclaringType
                   MethodImport.MethodName = identifierIndexLookup method.Name
-                  MethodImport.TypeParameters = 0u })
+                  MethodImport.TypeParameters = 0u
+                  MethodImport.Signature =
+                    match importedSignatureLookup.TryGetValue method with
+                    | true, existing -> existing
+                    | false, _ ->
+                        let translated =
+                            let inline translateMethodType (types: ImmutableArray<TypeSignatureIndex>) =
+                                let rm = method.DeclaringModule
+                                let mutable mtypes = Array.zeroCreate types.Length
+                                for i = 0 to mtypes.Length - 1 do
+                                    mtypes.[i] <- translateExternalType rm (rm.TypeSignatureAt types.[i])
+                                Unsafe.As<CheckedType[], ImmutableArray<CheckedType>> &mtypes
+
+                            { CheckedMethodSignature.ReturnTypes = translateMethodType method.Signature.ReturnTypes
+                              CheckedMethodSignature.ParameterTypes = translateMethodType method.Signature.ParameterTypes }
+
+                        importedSignatureLookup.Add(method, translated)
+                        translated
+                    |> methodSignatureLookup })
 
     let struct(definedTypeIndices, definedTypeList, definedMethodIndices, methodBodyLookup) =
         writeTypeDefinitions identifierIndexLookup namespaceIndexLookup typeImportLookup mdl.DefinedTypes
 
     // Type definitions, method definitions, and field definitions can only be refered to by index after method bodies have been
     // generated.
-    let code = writeMethodBodies methodBodyLookup
+    let code = ImmutableArray.Empty //writeMethodBodies methodBodyLookup
 
     let fieldImportCount = uint32
     let methodImportCount = uint32 importedMethodDefinitions.Count
@@ -174,7 +198,7 @@ let write (mdl: CheckedModule) =
                   Method.MethodVisibility = method.Visibility
                   Method.MethodFlags = method.Flags
                   Method.TypeParameters = ImmutableArray.Empty
-                  Method.Signature = methodSignatureLookup method
+                  Method.Signature = methodSignatureLookup method.Signature
                   Method.MethodAnnotations = ImmutableArray.Empty
                   Method.Body =
                     match method.Body with

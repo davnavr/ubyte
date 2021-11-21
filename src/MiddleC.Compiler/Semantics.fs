@@ -121,6 +121,10 @@ and [<RequireQualifiedAccess>] CheckedParameter =
 and [<RequireQualifiedAccess>] CheckedMethodBody =
     | Defined of ImmutableArray<CheckedStatement>
 
+and [<RequireQualifiedAccess; Struct; NoComparison; StructuralEquality>] CheckedMethodSignature =
+    { ParameterTypes: ImmutableArray<CheckedType>
+      ReturnTypes: ImmutableArray<CheckedType> }
+
 and [<Sealed>] CheckedMethod
     (
         owner: CheckedTypeDefinition,
@@ -133,6 +137,7 @@ and [<Sealed>] CheckedMethod
     =
     let mutable flags = Unchecked.defaultof<Model.MethodFlags>
     let mutable parameters = ImmutableArray<CheckedParameter>.Empty
+    let mutable parameterTypes = ImmutableArray<CheckedType>.Empty
     let mutable returns = ImmutableArray<CheckedType>.Empty
     let mutable body = Unchecked.defaultof<CheckedMethodBody>
 
@@ -144,8 +149,15 @@ and [<Sealed>] CheckedMethod
     member _.BodyNode = methodBodyNode
     member _.Visibility with get() = Model.VisibilityFlags.Unspecified
     member _.Flags with get() = flags and set value = flags <- value
-    member _.Parameters with get() = parameters and set value = parameters <- value
+
+    member _.Parameters
+        with get() = parameters
+        and set value =
+            parameters <- value
+            parameterTypes <- ImmutableArray.CreateRange(Seq.map (fun { CheckedParameter.Type = ty } -> ty) parameters)
+
     member _.ReturnTypes with get() = returns and set value = returns <- value
+    member _.Signature = { CheckedMethodSignature.ReturnTypes = returns; CheckedMethodSignature.ParameterTypes = parameterTypes }
     member _.Body with get() = body and set value = body <- value
 
 and NamedMethod = Choice<CheckedMethod, UByte.Resolver.ResolvedMethod>
