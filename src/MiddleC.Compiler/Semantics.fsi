@@ -124,11 +124,19 @@ type CheckedTypeDefinition with
     member InheritedTypes : ImmutableArray<NamedType>
     member Methods : ImmutableArray<CheckedMethod>
 
-[<RequireQualifiedAccess; NoComparison; NoEquality>]
-type CheckedModule = // TODO: Make this a normal Sealed class to prevent construction elsewhere.
-    { DefinedTypes: ImmutableArray<CheckedTypeDefinition>
-      Errors: ImmutableArray<SemanticError> }
+[<Sealed>]
+type CheckedModule =
+    member Name : UByte.Format.Model.Name
+    member Version : UByte.Format.Model.VersionNumbers
+    member DefinedTypes : ImmutableArray<CheckedTypeDefinition>
+    member EntryPoint : CheckedMethod voption
+    member Errors : ImmutableArray<SemanticError>
 
 [<RequireQualifiedAccess>]
 module TypeChecker =
-    val check : files: ImmutableArray<ParsedFile> -> imports: ImmutableArray<UByte.Resolver.ResolvedModule> -> CheckedModule
+    val check :
+        name: string ->
+        version: seq<uint32> ->
+        files: ImmutableArray<ParsedFile> ->
+        imports: ImmutableArray<UByte.Resolver.ResolvedModule> ->
+        CheckedModule

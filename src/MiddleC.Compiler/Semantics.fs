@@ -182,10 +182,22 @@ and [<Sealed>] CheckedTypeDefinition
 
     interface IEquatable<CheckedTypeDefinition> with member _.Equals other = identifier = other.Identifier
 
-[<RequireQualifiedAccess>]
-type CheckedModule =
-    { DefinedTypes: ImmutableArray<CheckedTypeDefinition>
-      Errors: ImmutableArray<SemanticError> }
+[<Sealed>]
+type CheckedModule
+    (
+        name: Model.Name,
+        version: Model.VersionNumbers,
+        types: ImmutableArray<CheckedTypeDefinition>,
+        main: CheckedMethod voption,
+        errors: ImmutableArray<SemanticError>
+    )
+    =
+    member val Identifier = { Model.ModuleIdentifier.ModuleName = name; Model.ModuleIdentifier.Version = version }
+    member _.Name = name
+    member _.Version = version
+    member _.DefinedTypes = types
+    member _.EntryPoint = main
+    member _.Errors = errors
 
 [<RequireQualifiedAccess>]
 module CheckedType =
@@ -449,7 +461,7 @@ module TypeChecker =
                 | MethodBodyNode.External(name, library) ->
                     raise(NotImplementedException "TODO: External methods are not yet supported")
 
-    let check files imports =
+    let check name version files imports =
         let errors = ImmutableArray.CreateBuilder()
         let declaredTypesLookup = findTypeDeclarations errors files
 
@@ -477,10 +489,12 @@ module TypeChecker =
         // bodies can begin.
         checkMethodBodies errors methodNameLookup
 
-        entryPointMethod
-        { CheckedModule.DefinedTypes =
-            failwith "TODO: Get defined types"
-          CheckedModule.Errors =
+        CheckedModule (
+            Model.Name.ofStr name,
+            Model.VersionNumbers(ImmutableArray.CreateRange version),
+            declaredTypesLookup.Values.ToImmutableArray(),
+            entryPointMethod,
             if errors.Count <> errors.Capacity
             then errors.ToImmutable()
-            else errors.MoveToImmutable() }
+            else errors.MoveToImmutable()
+        )
