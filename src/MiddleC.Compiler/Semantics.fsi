@@ -35,9 +35,10 @@ type FullTypeIdentifier =
 
 [<NoComparison; NoEquality>]
 type SemanticErrorMessage =
-    | DuplicateTypeDefinition of FullTypeIdentifier
-    | UndefinedTypeIdentifier of TypeIdentifier
     | AmbiguousTypeIdentifier of TypeIdentifier * matches: seq<FullTypeIdentifier>
+    | DuplicateTypeDefinition of FullTypeIdentifier
+    | MultipleEntryPoints
+    | UndefinedTypeIdentifier of TypeIdentifier
     | UnknownError of message: string
 
     override ToString : unit -> string
@@ -63,6 +64,7 @@ type NamedType = Choice<CheckedTypeDefinition, UByte.Resolver.ResolvedTypeDefini
 
 [<Sealed>]
 type CheckedMethod =
+    member DeclaringType : CheckedTypeDefinition
     member Name : IdentifierNode
     member Flags : Model.MethodFlags
 

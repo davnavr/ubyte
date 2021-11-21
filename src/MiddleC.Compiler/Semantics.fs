@@ -45,9 +45,10 @@ module FullTypeIdentifier =
         create id.Name (fnamespace.AddRange id.Namespace)
 
 type SemanticErrorMessage =
-    | DuplicateTypeDefinition of FullTypeIdentifier
-    | UndefinedTypeIdentifier of TypeIdentifier
     | AmbiguousTypeIdentifier of TypeIdentifier * matches: seq<FullTypeIdentifier>
+    | DuplicateTypeDefinition of FullTypeIdentifier
+    | MultipleEntryPoints
+    | UndefinedTypeIdentifier of TypeIdentifier
     | UnknownError of message: string
 
     override this.ToString() =
@@ -59,6 +60,7 @@ type SemanticErrorMessage =
                 .Append(" could refer to any of the following types: ")
                 .AppendJoin(", ", matches)
                 .ToString()
+        | MultipleEntryPoints -> "Only one entry point method in a module is allowed"
         | UnknownError message -> message
 
 type SemanticError =
@@ -71,6 +73,7 @@ type NamedType = Choice<CheckedTypeDefinition, UByte.Resolver.ResolvedTypeDefini
 
 and [<Sealed>] CheckedMethod
     (
+        owner: CheckedTypeDefinition,
         name: IdentifierNode,
         attributes: ParsedNodeArray<MethodAttributeNode>,
         parameters: ImmutableArray<IdentifierNode * ParsedNode<AnyTypeNode>>,
@@ -80,7 +83,9 @@ and [<Sealed>] CheckedMethod
     =
     let mutable flags = Unchecked.defaultof<Model.MethodFlags>
 
+    member _.DeclaringType = owner
     member _.Name = name
+    member _.AttributeNodes = attributes
     member _.BodyNode = body
     member _.Flags with get() = flags and set value = flags <- value
 
@@ -175,7 +180,7 @@ module TypeChecker =
 
         let lookup = Dictionary<FullTypeIdentifier, CheckedTypeDefinition>()
         for file in files do inner errors file lookup FullNamespaceName.empty ImmutableArray.Empty file.Nodes
-        lookup :> IReadOnlyDictionary<_, _>
+        lookup
 
     let private namespaceSearchString (FullNamespaceName ns) =
         if not ns.IsDefaultOrEmpty then
@@ -228,7 +233,7 @@ module TypeChecker =
         | 0 -> Error(UndefinedTypeIdentifier identifier)
         | _ -> Error(AmbiguousTypeIdentifier(identifier, Seq.map fst matches))
 
-    let private checkTypeAttributes errors (declarations: IReadOnlyDictionary<FullTypeIdentifier, _>) namedTypeLookup =
+    let private checkTypeAttributes errors (declarations: Dictionary<FullTypeIdentifier, _>) namedTypeLookup =
         let inheritedTypeBuilder = ImmutableArray.CreateBuilder<NamedType>()
 
         for (ty: CheckedTypeDefinition) in declarations.Values do
@@ -255,7 +260,7 @@ module TypeChecker =
             ty.Flags <- flags
             ty.InheritedTypes <- inheritedTypeBuilder.ToImmutable()
 
-    let private findTypeMembers errors (declarations: IReadOnlyDictionary<FullTypeIdentifier, _>) =
+    let private findTypeMembers errors (declarations: Dictionary<FullTypeIdentifier, _>) =
         let methodNameLookup = Dictionary<CheckedTypeDefinition, _>()
 
         for ty in declarations.Values do
@@ -269,6 +274,7 @@ module TypeChecker =
                     methods.Add (
                         name.Content,
                         CheckedMethod (
+                            ty,
                             name,
                             attributes,
                             parameters,
@@ -279,6 +285,25 @@ module TypeChecker =
                 //| TypeMemberNode.FieldDeclaration _
 
         struct((), methodNameLookup)
+
+    let private checkDefinedMethods
+        errors
+        (declarations: Dictionary<CheckedTypeDefinition, Dictionary<_, CheckedMethod>>)
+        (entryPointMethod: byref<_ voption>)
+        =
+        for definedMethods in declarations.Values do
+            for method in definedMethods.Values do
+                for attr in method.AttributeNodes do
+                    match attr.Content with
+                    | MethodAttributeNode.Entrypoint ->
+                        match entryPointMethod with
+                        | ValueNone -> entryPointMethod <- ValueSome method
+                        | ValueSome _ -> addErrorMessage errors attr method.DeclaringType.Source MultipleEntryPoints
+                    | _ ->
+                        failwith "TODO: Set other method flags"
+
+                // TODO: Validate method parameters and return types.
+                ()
 
     let check files imports =
         let errors = ImmutableArray.CreateBuilder()
@@ -298,9 +323,16 @@ module TypeChecker =
         checkTypeAttributes errors declaredTypesLookup namedTypeLookup
 
         let struct((), methodNameLookup) = findTypeMembers errors declaredTypesLookup
+        let mutable entryPointMethod = ValueNone
 
-        //checkDefinedMethods
+        checkDefinedMethods errors methodNameLookup &entryPointMethod
 
+        // The types that are defined, the types of fields, and the types of methods have been determined, so analysis of method
+        // bodies can begin.
+
+        //checkMethodBodies
+
+        entryPointMethod
         { CheckedModule.DefinedTypes =
             failwith "TODO: Get defined types"
           CheckedModule.Errors =
