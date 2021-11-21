@@ -370,6 +370,7 @@ module TypeChecker =
 
     let private findTypeMembers errors (declarations: Dictionary<FullTypeIdentifier, _>) =
         let methodNameLookup = Dictionary<CheckedTypeDefinition, _>()
+        let definedMethodList = ImmutableArray.CreateBuilder()
 
         for ty in declarations.Values do
             let methods = Dictionary<ParsedIdentifier, CheckedMethod>() // TODO: Allow overloading by parameter count AND parameter types.
@@ -379,8 +380,7 @@ module TypeChecker =
                 match node.Content with
                 | TypeMemberNode.MethodDeclaration(name, attributes, parameters, returns, body) ->
                     // TODO: Check for duplicate methods.
-                    methods.Add (
-                        name.Content,
+                    let method =
                         CheckedMethod (
                             ty,
                             name,
@@ -389,8 +389,12 @@ module TypeChecker =
                             returns,
                             body
                         )
-                    )
+
+                    methods.Add(name.Content, method)
+                    definedMethodList.Add method
                 //| TypeMemberNode.FieldDeclaration _
+
+            ty.Methods <- definedMethodList.ToImmutable()
 
         struct((), methodNameLookup)
 
