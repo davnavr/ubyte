@@ -142,6 +142,7 @@ and [<Sealed>] CheckedMethod
     member _.ParameterNodes = methodParameterNodes
     member _.ReturnTypeNodes = returnTypeNodes
     member _.BodyNode = methodBodyNode
+    member _.Visibility with get() = Model.VisibilityFlags.Unspecified
     member _.Flags with get() = flags and set value = flags <- value
     member _.Parameters with get() = parameters and set value = parameters <- value
     member _.ReturnTypes with get() = returns and set value = returns <- value
@@ -169,6 +170,7 @@ and [<Sealed>] CheckedTypeDefinition
     member _.InheritanceNodes = inheritedTypeNodes
     member _.MemberNodes = typeMemberNodes
     member _.UsedNamespaces = usedNamespaceDeclarations
+    member _.Visibility with get() = Model.VisibilityFlags.Unspecified
     member _.Flags with get() = flags and set value = flags <- value
     member _.InheritedTypes with get() = inheritedTypeDefinitions and set value = inheritedTypeDefinitions <- value
     member _.Methods with get() = methods and set value = methods <- value

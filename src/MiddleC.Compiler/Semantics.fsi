@@ -56,6 +56,7 @@ type CheckedTypeDefinition =
 
     member Identifier : FullTypeIdentifier
     member Flags : UByte.Format.Model.TypeDefinitionFlags
+    member Visibility : UByte.Format.Model.VisibilityFlags
 
     override Equals : obj -> bool
     override GetHashCode : unit -> int32
@@ -119,6 +120,7 @@ type CheckedMethod =
     member DeclaringType : CheckedTypeDefinition
     member Name : IdentifierNode
     member Flags : UByte.Format.Model.MethodFlags
+    member Visibility : UByte.Format.Model.VisibilityFlags
     member Parameters : ImmutableArray<CheckedParameter>
     member ReturnTypes : ImmutableArray<CheckedType>
     member Body : CheckedMethodBody
