@@ -559,6 +559,17 @@ module RegisterType =
             pointerTypeSizes.[size] <- rtype
             rtype
 
+module AnyType =
+    let private primitives = Dictionary()
+
+    let primitive t =
+        match primitives.TryGetValue t with
+        | true, existing -> existing
+        | false, _ ->
+            let rtype = AnyType.ValueType(ValueType.Primitive t)
+            primitives.[t] <- rtype
+            rtype
+
 module VersionNumbers =
     let empty = VersionNumbers ImmutableArray.Empty
     let semver major minor patch = VersionNumbers(ImmutableArray.Create(major, minor, item3 = patch))

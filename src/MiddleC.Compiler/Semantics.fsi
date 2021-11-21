@@ -109,6 +109,11 @@ type CheckedStatement =
 type CheckedMethodBody =
     | Defined of ImmutableArray<CheckedStatement>
 
+//[<RequireQualifiedAccess; NoComparison; StructuralEquality>]
+//type CheckedMethodSignature =
+//    { ParameterTypes:
+//      ReturnTypes: ImmutableArray<CheckedType> }
+
 [<Sealed>]
 type CheckedMethod =
     member DeclaringType : CheckedTypeDefinition
@@ -128,9 +133,11 @@ type CheckedTypeDefinition with
 type CheckedModule =
     member Name : UByte.Format.Model.Name
     member Version : UByte.Format.Model.VersionNumbers
+    member Identifier : UByte.Format.Model.ModuleIdentifier
     member DefinedTypes : ImmutableArray<CheckedTypeDefinition>
     member EntryPoint : CheckedMethod voption
     member Errors : ImmutableArray<SemanticError>
+    member ImportedModules : ImmutableArray<UByte.Resolver.ResolvedModule>
 
 [<RequireQualifiedAccess>]
 module TypeChecker =

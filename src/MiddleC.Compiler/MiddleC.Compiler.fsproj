@@ -11,6 +11,8 @@
     <Compile Include="Parser.fs" />
     <Compile Include="Semantics.fsi" />
     <Compile Include="Semantics.fs" />
+    <Compile Include="CodeGenerator.fsi" />
+    <Compile Include="CodeGenerator.fs" />
 
     <PackageReference Include="FParsec" Version="1.1.1" />
 

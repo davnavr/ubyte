@@ -59,7 +59,7 @@ let main argv =
             ImmutableArray.Empty
 
     if result.Errors.IsDefaultOrEmpty then
-        failwith "TODO: Emit .binmdl file" result
+        UByte.Format.WriteModule.toPath outputFilePath (MiddleC.Compiler.CodeGenerator.write result)
         0
     else
         for error in result.Errors do

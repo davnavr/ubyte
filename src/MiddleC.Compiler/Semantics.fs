@@ -187,6 +187,7 @@ type CheckedModule
     (
         name: Model.Name,
         version: Model.VersionNumbers,
+        imports: ImmutableArray<UByte.Resolver.ResolvedModule>,
         types: ImmutableArray<CheckedTypeDefinition>,
         main: CheckedMethod voption,
         errors: ImmutableArray<SemanticError>
@@ -195,6 +196,7 @@ type CheckedModule
     member val Identifier = { Model.ModuleIdentifier.ModuleName = name; Model.ModuleIdentifier.Version = version }
     member _.Name = name
     member _.Version = version
+    member _.ImportedModules = imports
     member _.DefinedTypes = types
     member _.EntryPoint = main
     member _.Errors = errors
@@ -490,11 +492,13 @@ module TypeChecker =
         checkMethodBodies errors methodNameLookup
 
         CheckedModule (
-            Model.Name.ofStr name,
-            Model.VersionNumbers(ImmutableArray.CreateRange version),
-            declaredTypesLookup.Values.ToImmutableArray(),
-            entryPointMethod,
-            if errors.Count <> errors.Capacity
-            then errors.ToImmutable()
-            else errors.MoveToImmutable()
+            name = Model.Name.ofStr name,
+            version = Model.VersionNumbers(ImmutableArray.CreateRange version),
+            imports = imports,
+            types = declaredTypesLookup.Values.ToImmutableArray(),
+            main = entryPointMethod,
+            errors =
+                if errors.Count <> errors.Capacity
+                then errors.ToImmutable()
+                else errors.MoveToImmutable()
         )

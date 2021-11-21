@@ -1178,6 +1178,10 @@ module RegisterType =
     val pointer : size: uint32 -> RegisterType
 
 [<RequireQualifiedAccess>]
+module AnyType =
+    val primitive : PrimitiveType -> AnyType
+
+[<RequireQualifiedAccess>]
 module Name =
     val tryOfStr : name: ustring -> Name voption
 

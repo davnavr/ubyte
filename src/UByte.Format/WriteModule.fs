@@ -466,6 +466,6 @@ let toStream (stream: Stream) (md: Module) =
 
 let toFile (destination: FileInfo) md =
     if isNull destination then nullArg(nameof destination)
-    toStream (destination.OpenWrite()) md
+    toStream (destination.Open FileMode.Create) md
 
 let toPath destination md = toFile (FileInfo destination) md
