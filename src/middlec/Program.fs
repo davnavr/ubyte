@@ -45,10 +45,12 @@ let main argv =
 
     if args.Contains <@ Import @> then raise(System.NotImplementedException "Module imports are not yet supported")
 
-    let parsedInputFiles = parseInputFiles args
+    let result = MiddleC.Compiler.Semantics.TypeChecker.check (parseInputFiles args) ImmutableArray.Empty
 
-    let result = MiddleC.Compiler.Semantics.TypeChecker.check parsedInputFiles ImmutableArray.Empty
-
-    failwith "TODO: Emit .binmdl file" result
-
-    0
+    if result.Errors.IsDefaultOrEmpty then
+        failwith "TODO: Emit .binmdl file" result
+        0
+    else
+        for error in result.Errors do
+            eprintfn "ERR %s(%i,%i): %O" error.Source.Source error.Line error.Column error.Message
+        -1
