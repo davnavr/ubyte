@@ -38,7 +38,7 @@ let private writeTypeDefinitions
     =
     //let definedFieldIndices = Dictionary<CheckedField, uint32>()
     let definedMethodIndices = Dictionary<CheckedMethod, uint32>()
-    let methodBodyLookup = Dictionary<CheckedMethod, struct(CodeIndex * _)>()
+    let methodBodyLookup = Dictionary<CheckedMethod, CodeIndex>()
     let definedTypeIndices = Dictionary<CheckedTypeDefinition, uint32> types.Length
     let definedTypeList = List types.Length
 
@@ -49,8 +49,8 @@ let private writeTypeDefinitions
             definedMethodIndices.Add(method, uint32 definedMethodIndices.Count)
 
             match method.Body with
-            | CheckedMethodBody.Defined statements ->
-                methodBodyLookup.Add(method, struct(CodeIndex.Index(uint32 methodBodyLookup.Count), statements))
+            | CheckedMethodBody.Defined _ ->
+                methodBodyLookup.Add(method, CodeIndex.Index(uint32 methodBodyLookup.Count))
 
         definedTypeIndices.Add(definition, uint32 definedTypeIndices.Count)
 
@@ -123,7 +123,7 @@ let write (mdl: CheckedModule) =
                     for i = 0 to ptypes.Length - 1 do ptypes.[i] <- typeSignatureLookup(method.Parameters.ItemRef(i).Type)
                     Unsafe.As<TypeSignatureIndex[], ImmutableArray<TypeSignatureIndex>> &ptypes })
 
-    let struct(importedTypeDefinitions, typeImportLookup: UByte.Resolver.ResolvedTypeDefinition -> TypeDefinitionIndex) =
+    let struct(importedTypeDefinitions, typeImportLookup: _ -> TypeDefinitionIndex) =
         createIndexedLookup
             EqualityComparer.Default
             (fun (ty: UByte.Resolver.ResolvedTypeDefinition) ->
@@ -132,14 +132,54 @@ let write (mdl: CheckedModule) =
                   TypeNamespace = failwith "TODO: Get namespace from UByte.Resolver"
                   TypeParameters = 0u })
 
+    let struct(importedMethodDefinitions, methodImportLookup: _ -> MethodIndex) =
+        createIndexedLookup
+            EqualityComparer.Default
+            (fun (method: UByte.Resolver.ResolvedMethod) ->
+                { MethodImport.MethodOwner = typeImportLookup method.DeclaringType
+                  MethodImport.MethodName = identifierIndexLookup method.Name
+                  MethodImport.TypeParameters = 0u })
+
     let struct(definedTypeIndices, definedTypeList, definedMethodIndices, methodBodyLookup) =
         writeTypeDefinitions identifierIndexLookup namespaceIndexLookup typeImportLookup mdl.DefinedTypes
 
     // Type definitions, method definitions, and field definitions can only be refered to by index after method bodies have been
     // generated.
-    //writeMethodBodies
+    let code = writeMethodBodies methodBodyLookup
+
+    let fieldImportCount = uint32
+    let methodImportCount = uint32 importedMethodDefinitions.Count
+    let typeImportCount = uint32 importedTypeDefinitions.Count
+
+    let typeDefinitionIndex tdef = TypeDefinitionIndex.Index(uint32 importedTypeDefinitions.Count + definedTypeIndices.[tdef])
+    let methodDefinitionIndex method = MethodIndex.Index(uint32 importedMethodDefinitions.Count + definedMethodIndices.[method])
 
     //writeDebugInformation
+
+    let finalTypeDefinitions =
+        let mutable definitions = Array.zeroCreate definedTypeList.Count
+        for i = 0 to definitions.Length - 1 do
+            // TODO: Ensure no changes to import lists are made
+            definitions.[i] <- definedTypeList.[i] typeImportCount fieldImportCount methodImportCount
+        Unsafe.As<TypeDefinition[], ImmutableArray<TypeDefinition>> &definitions
+
+    let finalMethodDefinitions =
+        let mutable definitions = Array.zeroCreate definedMethodIndices.Count
+        for KeyValue(method, index) in definedMethodIndices do
+            definitions.[int32 index] <-
+                { Method.MethodOwner =
+                    // TODO: Check import txtmdl example to see that type index of method owner is correct.
+                    typeDefinitionIndex method.DeclaringType
+                  Method.MethodName = identifierIndexLookup(method.Name.Content.ToString())
+                  Method.MethodVisibility = method.Visibility
+                  Method.MethodFlags = method.Flags
+                  Method.TypeParameters = ImmutableArray.Empty
+                  Method.Signature = methodSignatureLookup method
+                  Method.MethodAnnotations = ImmutableArray.Empty
+                  Method.Body =
+                    match method.Body with
+                    | CheckedMethodBody.Defined _ -> MethodBody.Defined methodBodyLookup.[method] }
+        Unsafe.As<Method[], ImmutableArray<Method>> &definitions
 
     { Module.Magic = UByte.Format.Model.magic
       Module.FormatVersion = UByte.Format.Model.currentFormatVersion
@@ -155,11 +195,13 @@ let write (mdl: CheckedModule) =
         { ModuleImports.ImportedModules = moduleImportArray
           ModuleImports.ImportedTypes = importedTypeDefinitions.ToImmutable()
           ModuleImports.ImportedFields = ImmutableArray.Empty
-          ModuleImports.ImportedMethods = failwith "TODO: Get imported methods" }
+          ModuleImports.ImportedMethods = importedMethodDefinitions.ToImmutable() }
       Module.Definitions =
-        { ModuleDefinitions.DefinedTypes =
-            let mutable definitions = Array.zeroCreate definedTypeList.Count
-            for i = 0 to definitions.Length - 1 do definitions.[i] <- failwith "TODO: The types" definedTypeList.[i]
-            Unsafe.As<TypeDefinition[], ImmutableArray<TypeDefinition>> &definitions } 
+        { ModuleDefinitions.DefinedTypes = finalTypeDefinitions
+          ModuleDefinitions.DefinedFields = ImmutableArray.Empty
+          ModuleDefinitions.DefinedMethods = finalMethodDefinitions }
       // TODO: String literals should be stored as UTF-8 to avoid endianness issues.
-      }
+      Module.Data = ImmutableArray.Empty
+      Module.Code = code
+      Module.EntryPoint = ValueOption.map methodDefinitionIndex mdl.EntryPoint
+      Module.Debug = () }
