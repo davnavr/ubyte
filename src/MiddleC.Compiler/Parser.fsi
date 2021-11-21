@@ -2,11 +2,12 @@
 
 open System
 open System.Collections.Immutable
+open System.Diagnostics
 open System.Runtime.CompilerServices
 
 open FParsec
 
-[<RequireQualifiedAccess; IsReadOnly; Struct; StructuralComparison; StructuralEquality>]
+[<RequireQualifiedAccess; IsReadOnly; Struct; StructuralComparison; StructuralEquality; DebuggerDisplay("{ToString()}")>]
 type ParsedIdentifier =
     internal
     | Identifier of string
@@ -27,7 +28,7 @@ type ParsedNodeArray<'Content> = ImmutableArray<ParsedNode<'Content>>
 
 type ParsedNamespaceName = ParsedNodeArray<ParsedIdentifier>
 
-[<RequireQualifiedAccess; IsReadOnly; Struct; NoComparison; StructuralEquality>]
+[<RequireQualifiedAccess; IsReadOnly; Struct; NoComparison; StructuralEquality; DebuggerDisplay("{ToString()}")>]
 type TypeIdentifier =
     { Name: IdentifierNode
       Namespace: ParsedNamespaceName }

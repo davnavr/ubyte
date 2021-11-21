@@ -3,7 +3,6 @@
 open System
 open System.Collections.Generic
 open System.Collections.Immutable
-open System.Runtime.CompilerServices
 
 open MiddleC.Compiler.Parser
 
@@ -79,9 +78,48 @@ and [<NoComparison; StructuralEquality>] CheckedValueType =
 and [<NoComparison; StructuralEquality>] CheckedType =
     | ValueType of CheckedValueType
 
-and CheckedParameter =
+and [<RequireQualifiedAccess>] CheckedExpression =
+    | LiteralBoolean of bool
+    | LiteralSignedInteger of int64
+
+    override this.ToString() =
+        match this with
+        | LiteralBoolean true -> "true"
+        | LiteralBoolean false -> "false"
+        | LiteralSignedInteger i -> string i
+
+and TypedExpression =
+    { Expression: CheckedExpression
+      Type: CheckedType
+      Node: ParsedNode<ExpressionNode> }
+
+    override this.ToString() =
+        match this with
+        | { Expression = CheckedExpression.LiteralBoolean _ as expr } ->
+            expr.ToString() // add casting syntax?
+        | { Expression = CheckedExpression.LiteralSignedInteger _ as expr } ->
+            match this.Type with
+            | CheckedType.ValueType(CheckedValueType.Primitive prim) ->
+                expr.ToString() // + prefix
+            //| _ ->
+            //    "figure out casting syntax (" + expr.ToString() + ")"
+
+and [<RequireQualifiedAccess>] CheckedStatement =
+    | Return of ImmutableArray<TypedExpression>
+    | Empty
+
+    override this.ToString() =
+        match this with
+        | Return value when value.IsDefaultOrEmpty -> "return;"
+        | Return values -> System.Text.StringBuilder("return ").AppendJoin(", ", values).Append(';').ToString()
+        | Empty -> ";"
+
+and [<RequireQualifiedAccess>] CheckedParameter =
     { Name: IdentifierNode
       Type: CheckedType }
+
+and [<RequireQualifiedAccess>] CheckedMethodBody =
+    | Defined of ImmutableArray<CheckedStatement>
 
 and [<Sealed>] CheckedMethod
     (
@@ -90,22 +128,24 @@ and [<Sealed>] CheckedMethod
         attributes: ParsedNodeArray<MethodAttributeNode>,
         methodParameterNodes: ImmutableArray<IdentifierNode * ParsedNode<AnyTypeNode>>,
         returnTypeNodes: ParsedNodeArray<AnyTypeNode>,
-        body: MethodBodyNode
+        methodBodyNode: MethodBodyNode
     )
     =
     let mutable flags = Unchecked.defaultof<Model.MethodFlags>
     let mutable parameters = ImmutableArray<CheckedParameter>.Empty
     let mutable returns = ImmutableArray<CheckedType>.Empty
+    let mutable body = Unchecked.defaultof<CheckedMethodBody>
 
     member _.DeclaringType = owner
     member _.Name = name
     member _.AttributeNodes = attributes
     member _.ParameterNodes = methodParameterNodes
     member _.ReturnTypeNodes = returnTypeNodes
-    member _.BodyNode = body
+    member _.BodyNode = methodBodyNode
     member _.Flags with get() = flags and set value = flags <- value
     member _.Parameters with get() = parameters and set value = parameters <- value
     member _.ReturnTypes with get() = returns and set value = returns <- value
+    member _.Body with get() = body and set value = body <- value
 
 and NamedMethod = Choice<CheckedMethod, UByte.Resolver.ResolvedMethod>
 
@@ -146,6 +186,18 @@ and [<Sealed>] CheckedTypeDefinition
 type CheckedModule =
     { DefinedTypes: ImmutableArray<CheckedTypeDefinition>
       Errors: ImmutableArray<SemanticError> }
+
+[<RequireQualifiedAccess>]
+module CheckedType =
+    let primitives = Dictionary()
+
+    let primitive ptype =
+        match primitives.TryGetValue ptype with
+        | true, existing -> existing
+        | false, _ ->
+            let ty = CheckedType.ValueType(CheckedValueType.Primitive ptype)
+            primitives.[ptype] <- ty
+            ty
 
 [<RequireQualifiedAccess>]
 module TypeChecker =
@@ -317,7 +369,7 @@ module TypeChecker =
     let private checkDefinedMethods
         errors
         anyTypeChecker
-        (declarations: Dictionary<CheckedTypeDefinition, Dictionary<_, CheckedMethod>>)
+        (declarations: Dictionary<CheckedTypeDefinition, Dictionary<ParsedIdentifier, CheckedMethod>>)
         (entryPointMethod: byref<_ voption>)
         =
         let parameterNameLookup = HashSet<ParsedIdentifier>()
@@ -341,7 +393,7 @@ module TypeChecker =
                     match anyTypeChecker ty with
                     | Ok ptype ->
                         if parameterNameLookup.Add name.Content then
-                            parameters.Add { CheckedParameter.Name = name; Type = ptype }
+                            parameters.Add { CheckedParameter.Name = name; CheckedParameter.Type = ptype }
                         else
                             addErrorMessage errors name method.DeclaringType.Source (DuplicateParameter name.Content)
                     | Error error ->
@@ -356,9 +408,46 @@ module TypeChecker =
                     | Error error -> addErrorMessage errors ty method.DeclaringType.Source error
                     // TODO: If an error occurs, add a placeholder return type
 
-                // TODO: Update method parameters and return types.
                 method.Parameters <- parameters.ToImmutable()
                 method.ReturnTypes <- returns.ToImmutable()
+
+    let private checkMethodBodies
+        errors
+        (declarations: Dictionary<CheckedTypeDefinition, Dictionary<ParsedIdentifier, CheckedMethod>>)
+        =
+        let statements = ImmutableArray.CreateBuilder<CheckedStatement>()
+        let localVariableLookup = HashSet()
+        let inScopeLocals = Stack()
+
+        let checkParsedExpression expr =
+            let inline ok expression ty =
+                Ok { TypedExpression.Expression = expression; Type = ty; Node = expr }
+
+            match expr.Content with
+            | ExpressionNode.LiteralBool value ->
+                ok (CheckedExpression.LiteralBoolean value) (CheckedType.primitive Model.PrimitiveType.Bool)
+            | ExpressionNode.LiteralS32 value ->
+                ok (CheckedExpression.LiteralSignedInteger(int64 value)) (CheckedType.primitive Model.PrimitiveType.S32)
+            | bad -> raise(NotImplementedException(sprintf "TODO: Add support for expression %A" bad))
+
+        for methods in declarations.Values do
+            for method in methods.Values do
+                statements.Clear()
+                match method.BodyNode with
+                | MethodBodyNode.Defined nodes ->
+                    for bodyStatementNode in nodes do
+                        match bodyStatementNode.Content with
+                        | StatementNode.Return value(*s*) ->
+                            // TODO: Check that types of return values match method return types
+                            match checkParsedExpression value with
+                            | Ok expr -> statements.Add(CheckedStatement.Return(ImmutableArray.Create expr))
+                            | Error error -> addErrorMessage errors value method.DeclaringType.Source error
+                        | StatementNode.Empty -> statements.Add CheckedStatement.Empty
+                        | bad -> raise(NotImplementedException(sprintf "TODO: Add support for statement %A" bad))
+
+                    method.Body <- CheckedMethodBody.Defined(statements.ToImmutable())
+                | MethodBodyNode.External(name, library) ->
+                    raise(NotImplementedException "TODO: External methods are not yet supported")
 
     let check files imports =
         let errors = ImmutableArray.CreateBuilder()
@@ -384,10 +473,9 @@ module TypeChecker =
 
         checkDefinedMethods errors anyTypeChecker methodNameLookup &entryPointMethod
 
-        // The types that are defined, the types of fields, and the types of methods have been determined, so analysis of method
+        // The types defined in this module, types of fields, and types of methods have been determined, so analysis of method
         // bodies can begin.
-
-        //checkMethodBodies
+        checkMethodBodies errors methodNameLookup
 
         entryPointMethod
         { CheckedModule.DefinedTypes =

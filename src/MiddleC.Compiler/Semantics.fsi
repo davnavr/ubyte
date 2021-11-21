@@ -1,6 +1,7 @@
 ﻿namespace MiddleC.Compiler.Semantics
 
 open System.Collections.Immutable
+open System.Diagnostics
 open System.Runtime.CompilerServices
 
 open MiddleC.Compiler.Parser
@@ -18,7 +19,7 @@ module FullNamespaceName =
     val append : nested: ParsedNamespaceName -> parent: FullNamespaceName -> FullNamespaceName
     val toParsedName : FullNamespaceName -> ParsedNamespaceName
 
-[<IsReadOnly; Struct; NoComparison; StructuralEquality>]
+[<IsReadOnly; Struct; NoComparison; StructuralEquality; DebuggerDisplay("{ToString()}")>]
 type FullTypeIdentifier =
     internal
     | FullTypeIdentifier of TypeIdentifier
@@ -79,6 +80,35 @@ type CheckedParameter =
     { Name: IdentifierNode
       Type: CheckedType }
 
+[<RequireQualifiedAccess; NoComparison; NoEquality; DebuggerDisplay("{ToString()}")>]
+type CheckedExpression =
+    | LiteralBoolean of bool
+    | LiteralSignedInteger of int64
+    //| LiteralUnsignedInteger of uint64
+    
+    override ToString : unit -> string
+
+[<RequireQualifiedAccess; NoComparison; NoEquality; DebuggerDisplay("{ToString()}")>]
+type TypedExpression =
+    { Expression: CheckedExpression
+      Type: CheckedType
+      Node: ParsedNode<ExpressionNode> }
+
+    override ToString : unit -> string
+
+/// Simplified representation of a statement that has been type checked, constructs such as if-statements and while loops are
+/// lowered.
+[<RequireQualifiedAccess; NoComparison; NoEquality; DebuggerDisplay("{ToString()}")>]
+type CheckedStatement =
+    | Return of ImmutableArray<TypedExpression>
+    | Empty
+
+    override ToString : unit -> string
+
+[<RequireQualifiedAccess; NoComparison; NoEquality>]
+type CheckedMethodBody =
+    | Defined of ImmutableArray<CheckedStatement>
+
 [<Sealed>]
 type CheckedMethod =
     member DeclaringType : CheckedTypeDefinition
@@ -86,6 +116,7 @@ type CheckedMethod =
     member Flags : UByte.Format.Model.MethodFlags
     member Parameters : ImmutableArray<CheckedParameter>
     member ReturnTypes : ImmutableArray<CheckedType>
+    member Body : CheckedMethodBody
 
 type NamedMethod = Choice<CheckedMethod, UByte.Resolver.ResolvedMethod>
 
