@@ -3,8 +3,6 @@
 open System.Collections.Immutable
 open System.Runtime.CompilerServices
 
-open UByte.Format
-
 open MiddleC.Compiler.Parser
 
 [<IsReadOnly; Struct; NoComparison; StructuralEquality>]
@@ -36,6 +34,7 @@ type FullTypeIdentifier =
 [<NoComparison; NoEquality>]
 type SemanticErrorMessage =
     | AmbiguousTypeIdentifier of TypeIdentifier * matches: seq<FullTypeIdentifier>
+    | DuplicateParameter of ParsedIdentifier
     | DuplicateTypeDefinition of FullTypeIdentifier
     | MultipleEntryPoints
     | UndefinedTypeIdentifier of TypeIdentifier
@@ -55,18 +54,38 @@ type CheckedTypeDefinition =
     interface System.IEquatable<CheckedTypeDefinition>
 
     member Identifier : FullTypeIdentifier
-    member Flags : Model.TypeDefinitionFlags
+    member Flags : UByte.Format.Model.TypeDefinitionFlags
 
     override Equals : obj -> bool
     override GetHashCode : unit -> int32
 
 type NamedType = Choice<CheckedTypeDefinition, UByte.Resolver.ResolvedTypeDefinition>
 
+[<RequireQualifiedAccess; NoComparison; StructuralEquality>]
+type CheckedValueType =
+    | Primitive of UByte.Format.Model.PrimitiveType
+
+    interface System.IEquatable<CheckedValueType>
+
+/// Represents a type, modeled after the type system of the binary format.
+[<RequireQualifiedAccess; NoComparison; StructuralEquality>]
+type CheckedType =
+    | ValueType of CheckedValueType
+
+    interface System.IEquatable<CheckedType>
+
+[<RequireQualifiedAccess; NoComparison; NoEquality>]
+type CheckedParameter =
+    { Name: IdentifierNode
+      Type: CheckedType }
+
 [<Sealed>]
 type CheckedMethod =
     member DeclaringType : CheckedTypeDefinition
     member Name : IdentifierNode
-    member Flags : Model.MethodFlags
+    member Flags : UByte.Format.Model.MethodFlags
+    member Parameters : ImmutableArray<CheckedParameter>
+    member ReturnTypes : ImmutableArray<CheckedType>
 
 type NamedMethod = Choice<CheckedMethod, UByte.Resolver.ResolvedMethod>
 

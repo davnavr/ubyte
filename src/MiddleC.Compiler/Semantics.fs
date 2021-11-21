@@ -46,6 +46,7 @@ module FullTypeIdentifier =
 
 type SemanticErrorMessage =
     | AmbiguousTypeIdentifier of TypeIdentifier * matches: seq<FullTypeIdentifier>
+    | DuplicateParameter of ParsedIdentifier
     | DuplicateTypeDefinition of FullTypeIdentifier
     | MultipleEntryPoints
     | UndefinedTypeIdentifier of TypeIdentifier
@@ -53,14 +54,15 @@ type SemanticErrorMessage =
 
     override this.ToString() =
         match this with
-        | DuplicateTypeDefinition id -> "Duplicate definition of type " + id.ToString()
-        | UndefinedTypeIdentifier id -> "The type definition " + id.ToString() + " does not exist"
         | AmbiguousTypeIdentifier(id, matches) ->
             System.Text.StringBuilder(id.ToString())
                 .Append(" could refer to any of the following types: ")
                 .AppendJoin(", ", matches)
                 .ToString()
+        | DuplicateParameter id -> "A parameter with the name " + id.ToString() + " was already defined"
+        | DuplicateTypeDefinition id -> "Duplicate definition of type " + id.ToString()
         | MultipleEntryPoints -> "Only one entry point method in a module is allowed"
+        | UndefinedTypeIdentifier id -> "The type definition " + id.ToString() + " does not exist"
         | UnknownError message -> message
 
 type SemanticError =
@@ -71,23 +73,39 @@ type SemanticError =
 
 type NamedType = Choice<CheckedTypeDefinition, UByte.Resolver.ResolvedTypeDefinition>
 
+and [<NoComparison; StructuralEquality>] CheckedValueType =
+    | Primitive of Model.PrimitiveType
+
+and [<NoComparison; StructuralEquality>] CheckedType =
+    | ValueType of CheckedValueType
+
+and CheckedParameter =
+    { Name: IdentifierNode
+      Type: CheckedType }
+
 and [<Sealed>] CheckedMethod
     (
         owner: CheckedTypeDefinition,
         name: IdentifierNode,
         attributes: ParsedNodeArray<MethodAttributeNode>,
-        parameters: ImmutableArray<IdentifierNode * ParsedNode<AnyTypeNode>>,
-        returns: ParsedNodeArray<AnyTypeNode>,
+        methodParameterNodes: ImmutableArray<IdentifierNode * ParsedNode<AnyTypeNode>>,
+        returnTypeNodes: ParsedNodeArray<AnyTypeNode>,
         body: MethodBodyNode
     )
     =
     let mutable flags = Unchecked.defaultof<Model.MethodFlags>
+    let mutable parameters = ImmutableArray<CheckedParameter>.Empty
+    let mutable returns = ImmutableArray<CheckedType>.Empty
 
     member _.DeclaringType = owner
     member _.Name = name
     member _.AttributeNodes = attributes
+    member _.ParameterNodes = methodParameterNodes
+    member _.ReturnTypeNodes = returnTypeNodes
     member _.BodyNode = body
     member _.Flags with get() = flags and set value = flags <- value
+    member _.Parameters with get() = parameters and set value = parameters <- value
+    member _.ReturnTypes with get() = returns and set value = returns <- value
 
 and NamedMethod = Choice<CheckedMethod, UByte.Resolver.ResolvedMethod>
 
@@ -207,11 +225,6 @@ module TypeChecker =
                 lookup.Add(id, ty)
                 ty
 
-    [<IsReadOnly; Struct; NoComparison; NoEquality>]
-    type private CheckedTypeAttributes =
-        { Flags: Model.TypeDefinitionFlags
-          InheritedTypes: ImmutableArray<NamedType> }
-
     let private matchingNamedTypes namedTypeLookup (namespaces: ImmutableArray<FullNamespaceName>) (id: TypeIdentifier) =
         let matches = List<FullTypeIdentifier * NamedType>()
 
@@ -232,6 +245,21 @@ module TypeChecker =
         | 1 -> Ok(snd matches.[0])
         | 0 -> Error(UndefinedTypeIdentifier identifier)
         | _ -> Error(AmbiguousTypeIdentifier(identifier, Seq.map fst matches))
+
+    let private checkAnyType namedTypeLookup: _ -> Result<_, SemanticErrorMessage> =
+        let primitives = Dictionary<Model.PrimitiveType, CheckedType>()
+
+        fun (atype: ParsedNode<AnyTypeNode>) ->
+            match atype.Content with
+            | AnyTypeNode.Primitive prim ->
+                match primitives.TryGetValue prim with
+                | true, existing -> Ok existing
+                | false, _ ->
+                    let ty = CheckedType.ValueType(CheckedValueType.Primitive prim)
+                    primitives.Add(prim, ty)
+                    Ok ty
+            | bad ->
+                raise(NotImplementedException(sprintf "TODO: Add support for type %A" bad))
 
     let private checkTypeAttributes errors (declarations: Dictionary<FullTypeIdentifier, _>) namedTypeLookup =
         let inheritedTypeBuilder = ImmutableArray.CreateBuilder<NamedType>()
@@ -288,9 +316,14 @@ module TypeChecker =
 
     let private checkDefinedMethods
         errors
+        anyTypeChecker
         (declarations: Dictionary<CheckedTypeDefinition, Dictionary<_, CheckedMethod>>)
         (entryPointMethod: byref<_ voption>)
         =
+        let parameterNameLookup = HashSet<ParsedIdentifier>()
+        let parameters = ImmutableArray.CreateBuilder()
+        let returns = ImmutableArray.CreateBuilder()
+
         for definedMethods in declarations.Values do
             for method in definedMethods.Values do
                 for attr in method.AttributeNodes do
@@ -302,8 +335,30 @@ module TypeChecker =
                     | _ ->
                         failwith "TODO: Set other method flags"
 
-                // TODO: Validate method parameters and return types.
-                ()
+                parameterNameLookup.Clear()
+
+                for (name, ty) in method.ParameterNodes do
+                    match anyTypeChecker ty with
+                    | Ok ptype ->
+                        if parameterNameLookup.Add name.Content then
+                            parameters.Add { CheckedParameter.Name = name; Type = ptype }
+                        else
+                            addErrorMessage errors name method.DeclaringType.Source (DuplicateParameter name.Content)
+                    | Error error ->
+                        addErrorMessage errors ty method.DeclaringType.Source error
+                    // TODO: If an error occurs, add a placeholder parameter
+
+                returns.Clear()
+
+                for ty in method.ReturnTypeNodes do
+                    match anyTypeChecker ty with
+                    | Ok rtype -> returns.Add rtype
+                    | Error error -> addErrorMessage errors ty method.DeclaringType.Source error
+                    // TODO: If an error occurs, add a placeholder return type
+
+                // TODO: Update method parameters and return types.
+                method.Parameters <- parameters.ToImmutable()
+                method.ReturnTypes <- returns.ToImmutable()
 
     let check files imports =
         let errors = ImmutableArray.CreateBuilder()
@@ -322,10 +377,12 @@ module TypeChecker =
 
         checkTypeAttributes errors declaredTypesLookup namedTypeLookup
 
+        let anyTypeChecker = checkAnyType namedTypeLookup
+
         let struct((), methodNameLookup) = findTypeMembers errors declaredTypesLookup
         let mutable entryPointMethod = ValueNone
 
-        checkDefinedMethods errors methodNameLookup &entryPointMethod
+        checkDefinedMethods errors anyTypeChecker methodNameLookup &entryPointMethod
 
         // The types that are defined, the types of fields, and the types of methods have been determined, so analysis of method
         // bodies can begin.
