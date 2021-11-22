@@ -56,17 +56,91 @@
         }
       ]
     },
+    "type": {
+      "patterns": [
+        {
+          "match": "(((char|s|u|f)(32|64))|([su](8|16))|bool)",
+          "captures": {
+            "1": {
+              "name": "storage.type.middlec"
+            }
+          }
+        }
+      ]
+    },
     "type-declaration": {
-      "begin": "\\b(type)\\s+([a-zA-Z0-9]\\w*)",
+      "begin": "\\b(type)\\s+([a-zA-Z0-9]\\w*)(\\s+(abstract|inheritable|public|private))*",
       "beginCaptures": {
         "1": {
           "name": "storage.type.class.middlec"
         },
         "2": {
           "name": "entity.name.type.middlec"
+        },
+        "3": {
+          "name": "storage.modifier.middlec"
         }
       },
-      "end": "\\}"
+      "end": "\\}",
+      "patterns": [
+        {
+          "include": "#type-declaration"
+        },
+        {
+          "begin": "\\b(method)\\s+([a-zA-Z0-9]\\w*)(\\s+(entrypoint|instance|abstract|virtual|public|private))*",
+          "beginCaptures": {
+            "1": {
+              "name": "storage.type.function.middlec"
+            },
+            "2": {
+              "name": "entity.name.function.middlec"
+            },
+            "3": {
+              "name": "storage.modifier.middlec"
+            }
+          },
+          "end": "\\}",
+          "patterns": [
+            {
+              "include": "#method-parameters"
+            },
+            {
+              "include": "#method-return-types"
+            }
+          ]
+        }
+      ]
+    },
+    "method-parameters": {
+      "begin": "\\(",
+      "end": "\\)",
+      "patterns": [
+        {
+          "include": "#type"
+        },
+        {
+          "match": "\\s*([a-zA-Z0-9]\\w*)",
+          "captures": {
+            "1": {
+              "name": "variable.parameter.middlec"
+            }
+          }
+        }
+      ]
+    },
+    "method-return-types": {
+      "begin": "(\\-\\>)\\s+\\(",
+      "beginCaptures": {
+        "1": {
+          "name": "keyword.other.middlec"
+        }
+      },
+      "end": "\\)",
+      "patterns": [
+        {
+          "include": "#type"
+        }
+      ]
     }
   }
 }
