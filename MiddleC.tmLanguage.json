@@ -1,0 +1,72 @@
+{
+  "name": "MiddleC",
+  "scopeName": "source.mdlc",
+  "fileTypes": [
+    "mdlc"
+  ],
+  "foldingStartMarker": "\\{",
+  "foldingStopMarker": "\\}",
+  "patterns": [
+    {
+      "include": "#declaration"
+    }
+  ],
+  "repository": {
+    "comment": {
+      "patterns": [
+        {
+          "match": "(^\\s+)?(\\/\\/.*)",
+          "captures": {
+            "2": {
+              "name": "comment.line.double-slash.middlec"
+            }
+          }
+        },
+        {
+          "name": "comment.block.middlec",
+          "begin": "\\/\\*",
+          "end": "\\*\\/"
+        }
+      ]
+    },
+    "declaration": {
+      "patterns": [
+        {
+          "include": "#namespace-declaration"
+        },
+        {
+          "include": "#type-declaration"
+        },
+        {
+          "include": "#comment"
+        }
+      ]
+    },
+    "namespace-declaration": {
+      "begin": "\\b(namespace)",
+      "beginCaptures": {
+        "1": {
+          "name": "keyword.other.middlec"
+        }
+      },
+      "end": "\\}",
+      "patterns": [
+        {
+          "include": "#declaration"
+        }
+      ]
+    },
+    "type-declaration": {
+      "begin": "\\b(type)\\s+([a-zA-Z0-9]\\w*)",
+      "beginCaptures": {
+        "1": {
+          "name": "storage.type.class.middlec"
+        },
+        "2": {
+          "name": "entity.name.type.middlec"
+        }
+      },
+      "end": "\\}"
+    }
+  }
+}
