@@ -45,11 +45,18 @@ type AnyTypeNode =
 
 [<RequireQualifiedAccess>]
 type ExpressionNode =
-    | LiteralCharacterArray of AnyTypeNode * elements: string
     | LiteralBool of bool
     | LiteralChar32 of uint32
     | LiteralU32 of uint32
     | LiteralS32 of int32
+    | Local of IdentifierNode
+    | MethodCall of ParsedNamespaceName * ParsedNodeArray<ParsedIdentifier> * arguments: ParsedNodeArray<ExpressionNode>
+    | NewObject of ParsedNode<AnyTypeNode> * ParsedNode<ConstructionExpression>
+
+and [<RequireQualifiedAccess>] ConstructionExpression =
+    | String of string
+    | ArrayElements of elements: ParsedNodeArray<ExpressionNode>
+    | ConstructorCall of arguments: ParsedNodeArray<ExpressionNode>
 
 and ParsedExpression = ParsedNode<ExpressionNode>
 
@@ -61,6 +68,7 @@ type StatementNode =
     | While of condition: ParsedExpression * body: ParsedNodeArray<StatementNode>
     | Goto of IdentifierNode
     | Label of IdentifierNode
+    | LocalDeclaration of constant: bool * name: IdentifierNode * ParsedNode<AnyTypeNode> * value: ParsedExpression
     | Return of ParsedExpression
     | Empty
 
@@ -71,9 +79,10 @@ type TypeAttributeNode =
 
 [<RequireQualifiedAccess>]
 type MethodAttributeNode =
+    | Abstract
     | Entrypoint
     | Instance
-    | Abstract
+    | Private
     | Virtual
 
 [<RequireQualifiedAccess>]
@@ -109,15 +118,15 @@ module AnyTypeNode =
 module private CollectionParsers =
     [<RequireQualifiedAccess>]
     module ImmutableArray =
-        let inline foldState (builder: ImmutableArray<_>.Builder) element =
+        let inline private foldState (builder: ImmutableArray<_>.Builder) element =
             builder.Add element
             builder
 
-        let inline stateFromFirstElement element = foldState (ImmutableArray.CreateBuilder()) element
+        let inline private stateFromFirstElement element = foldState (ImmutableArray.CreateBuilder()) element
 
-        let inline resultFromState (builder: ImmutableArray<_>.Builder) = builder.ToImmutable()
+        let inline private resultFromState (builder: ImmutableArray<_>.Builder) = builder.ToImmutable()
 
-        let inline resultForEmptySequence () = ImmutableArray.Empty
+        let inline private resultForEmptySequence () = ImmutableArray.Empty
 
         let many p =
             Inline.Many (
@@ -139,6 +148,29 @@ module private CollectionParsers =
                 resultForEmptySequence = resultForEmptySequence
             )
 
+        let sepBy p sep = sepByCommon p sep false
+        let sepBy1 p sep = sepByCommon p sep true
+
+    [<RequireQualifiedAccess>]
+    module Dictionary =
+        let inline private foldState (lookup: Dictionary<_, _>) (KeyValue(key, value)) =
+            lookup.Add(key, value)
+            lookup
+
+        let inline private stateFromFirstElement pair = foldState (Dictionary()) pair
+
+        let inline private resultForEmptySequence () = Dictionary()
+
+        let private sepByCommon p sep hasFirstElement =
+            Inline.SepBy (
+                stateFromFirstElement,
+                (fun builder _ element -> foldState builder element),
+                id,
+                p,
+                sep,
+                ?firstElementParser = (if hasFirstElement then Some p else None),
+                resultForEmptySequence = resultForEmptySequence
+            )
 
         let sepBy p sep = sepByCommon p sep false
         let sepBy1 p sep = sepByCommon p sep true
@@ -150,6 +182,10 @@ type ParsedFile = { Source: string; Nodes: ParsedNodeArray<TopLevelNode> }
 module Parse =
     let private semicolon = skipChar ';'
     let private comma = skipChar ','
+    let private equals = skipChar '='
+    let private dquote = skipChar '\"'
+    let private period = skipChar '.'
+    let private namespaceNameSeparator = skipString "::"
 
     let private betweenCurlyBrackets inner = between (skipChar '{') (skipChar '}') inner
 
@@ -180,12 +216,12 @@ module Parse =
         |> withNodeContent
 
     let private namespaceNameNode : Parser<ParsedNamespaceName, unit> =
-        CollectionParsers.ImmutableArray.sepBy1 validIdentifierNode (skipString "::")
+        CollectionParsers.ImmutableArray.sepBy1 validIdentifierNode namespaceNameSeparator
 
     let private typeIdentifierNode : Parser<ParsedTypeIdentifier, unit> =
         choice [
             pipe2
-                (namespaceNameNode .>> skipString "::")
+                (namespaceNameNode .>> namespaceNameSeparator)
                 validIdentifierNode
                 (fun ns name -> { TypeIdentifier.Name = name; TypeIdentifier.Namespace = ns })
             |> attempt
@@ -231,7 +267,22 @@ module Parse =
             (fun btype modifiers -> (List.fold (fun mf m -> fun ty -> m(mf ty)) id modifiers) btype)
         |> withNodeContent
 
-    let private expression : Parser<ParsedExpression, _> =
+    let private stringlit : Parser<string, _> =
+        let escape =
+            anyChar |>> function
+            | 'n' -> "\n"
+            | 'r' -> "\r"
+            | 't' -> "\t"
+            | c -> string c
+
+        stringsSepBy
+            (manySatisfy (isNoneOf [| '\"'; '\\'; '\n' |]))
+            (skipChar '\\' >>. escape)
+        |> between dquote dquote
+
+    let private expression, private expressionRef: Parser<ParsedExpression, _> * _ = createParserForwardedToRef()
+
+    expressionRef.Value <-
         // TODO: If integer literal is out of range, generate an error node.
         let unsignedIntegerLiteralOptions = NumberLiteralOptions.AllowBinary ||| NumberLiteralOptions.AllowHexadecimal
         let signedIntegerLiteralOptions = unsignedIntegerLiteralOptions ||| NumberLiteralOptions.AllowMinusSign
@@ -245,6 +296,39 @@ module Parse =
                 skipString "false" >>% ExpressionNode.LiteralBool false
                 numberlit signedIntegerLiteralOptions Int32.Parse ExpressionNode.LiteralS32
                 numberlit unsignedIntegerLiteralOptions UInt32.Parse ExpressionNode.LiteralU32
+
+                let arguments =
+                    betweenParenthesis(CollectionParsers.ImmutableArray.sepBy (whitespace >>. expression .>> whitespace) comma)
+
+                skipString "new"
+                >>. whitespace
+                >>. anyTypeNode
+                .>> whitespace
+                .>>. (choice
+                    [
+                        stringlit |>> ConstructionExpression.String
+                        arguments |>> ConstructionExpression.ConstructorCall
+
+                        CollectionParsers.ImmutableArray.sepBy1 (whitespace >>. expression .>> whitespace) comma
+                        |> betweenCurlyBrackets
+                        |>> ConstructionExpression.ArrayElements
+                    ]
+                    |> withNodeContent)
+                |>> ExpressionNode.NewObject
+
+                let typeMemberName =
+                    validIdentifierNode .>> namespaceNameSeparator
+                    |> attempt
+                    |> CollectionParsers.ImmutableArray.many
+
+                tuple3
+                    typeMemberName
+                    (CollectionParsers.ImmutableArray.sepBy1 validIdentifierNode period .>> whitespace)
+                    (whitespace >>. arguments)
+                |>> ExpressionNode.MethodCall
+                |> attempt
+
+                validIdentifierNode |>> ExpressionNode.Local
             |]
         //|> errorNodeHandler TopLevelNode.Error
         |> withNodeContent
@@ -269,6 +353,13 @@ module Parse =
 
                 // TODO: How to parse else if?
 
+                tuple4
+                    (choice [ skipString "let" >>% true; skipString "var" >>% false ])
+                    (whitespace >>. validIdentifierNode)
+                    (whitespace >>. anyTypeNode .>> whitespace)
+                    (equals >>. whitespace >>. expression)
+                |>> StatementNode.LocalDeclaration
+
                 expression |>> StatementNode.Expression
                 skipString "return" >>. whitespace >>. expression |>> StatementNode.Return
                 followedBy semicolon >>% StatementNode.Empty
@@ -292,7 +383,20 @@ module Parse =
 
         let methodBodyNode : Parser<MethodBodyNode, _> =
             choice [|
-                //skipString "external" >>.
+                let externalMethodProperties =
+                    CollectionParsers.Dictionary.sepBy
+                        (whitespace
+                        >>. pipe2
+                            (many1Chars letter .>> whitespace .>> equals .>> whitespace)
+                            (withNodeContent stringlit)
+                            (fun key value -> KeyValuePair(key, value))
+                        .>> whitespace)
+                        comma
+
+                skipString "external"
+                >>. whitespace
+                >>. betweenCurlyBrackets externalMethodProperties
+                |>> fun keys -> MethodBodyNode.External(keys.["entry"], keys.["library"])
 
                 block |>> MethodBodyNode.Defined
             |]
@@ -308,6 +412,7 @@ module Parse =
                         "abstract", MethodAttributeNode.Abstract
                         "entrypoint", MethodAttributeNode.Entrypoint
                         "instance", MethodAttributeNode.Instance
+                        "private", MethodAttributeNode.Private
                         "virtual", MethodAttributeNode.Virtual
                     |])
                     (whitespace >>. methodParameterNodes .>> whitespace .>> skipString "->" .>> whitespace)

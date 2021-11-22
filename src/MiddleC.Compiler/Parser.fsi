@@ -47,15 +47,20 @@ type AnyTypeNode =
 
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
 type ExpressionNode =
-    //| LiteralArrayObject of AnyTypeNode * elements: ParsedNodeArray<ExpressionNode>
-    //| LiteralString 
-    | LiteralCharacterArray of AnyTypeNode * elements: string
     | LiteralBool of bool
     | LiteralChar32 of uint32
     | LiteralU32 of uint32
     | LiteralS32 of int32
+    | Local of IdentifierNode
+    | MethodCall of ParsedNamespaceName * ParsedNodeArray<ParsedIdentifier> * arguments: ParsedNodeArray<ExpressionNode>
+    | NewObject of ParsedNode<AnyTypeNode> * ParsedNode<ConstructionExpression>
     //| UnaryOperation
     //| BinaryOperation
+
+and [<RequireQualifiedAccess; NoComparison; NoEquality>] ConstructionExpression =
+    | String of string
+    | ArrayElements of elements: ParsedNodeArray<ExpressionNode>
+    | ConstructorCall of arguments: ParsedNodeArray<ExpressionNode>
 
 and ParsedExpression = ParsedNode<ExpressionNode>
 
@@ -68,6 +73,7 @@ type StatementNode =
     | While of condition: ParsedExpression * body: ParsedNodeArray<StatementNode>
     | Goto of IdentifierNode
     | Label of IdentifierNode
+    | LocalDeclaration of constant: bool * name: IdentifierNode * ParsedNode<AnyTypeNode> * value: ParsedExpression
     | Return of ParsedExpression
     | Empty
 
@@ -82,10 +88,11 @@ type TypeAttributeNode =
 
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
 type MethodAttributeNode =
+    | Abstract
     /// Indicates that the method is the entry point of the module, can only be applied to one method in an entire module.
     | Entrypoint
     | Instance
-    | Abstract
+    | Private
     | Virtual
 
 [<RequireQualifiedAccess; NoComparison; NoEquality>]

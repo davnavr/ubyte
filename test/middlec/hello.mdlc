@@ -6,7 +6,7 @@ type Program {
         HelloWorld::Program.Print(message);
     }
 
-    method Print private (char32[] message) -> () external {
+    method Print private (message char32[]) -> () external {
         entry = "testhelperprintln",
         library = "runmdl"
     }
