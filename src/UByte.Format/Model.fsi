@@ -1169,6 +1169,10 @@ module VersionNumbers =
     val ofList : version: uvarint list -> VersionNumbers
 
 [<RequireQualifiedAccess>]
+module Index =
+    val inline toInt : index: Index<'Kind> -> int32
+
+[<RequireQualifiedAccess>]
 module MethodSignature =
     val empty : MethodSignature
 

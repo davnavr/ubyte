@@ -533,6 +533,9 @@ module Name =
         | ValueSome name' -> name'
         | ValueNone -> invalidArg (nameof name) "The name must not be empty"
 
+module Index =
+    let inline toInt (Index index) = Checked.int32 index
+
 module MethodSignature =
     let empty =
         { ReturnTypes = ImmutableArray.Empty
