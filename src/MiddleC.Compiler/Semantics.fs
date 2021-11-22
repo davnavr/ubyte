@@ -120,6 +120,7 @@ and [<RequireQualifiedAccess>] CheckedParameter =
 
 and [<RequireQualifiedAccess>] CheckedMethodBody =
     | Defined of ImmutableArray<CheckedStatement>
+    | External of string * library: string
 
 and [<RequireQualifiedAccess; Struct; NoComparison; StructuralEquality>] CheckedMethodSignature =
     { ParameterTypes: ImmutableArray<CheckedType>
@@ -136,6 +137,7 @@ and [<Sealed>] CheckedMethod
     )
     =
     let mutable flags = Unchecked.defaultof<Model.MethodFlags>
+    let mutable visibility = Unchecked.defaultof<Model.VisibilityFlags>
     let mutable parameters = ImmutableArray<CheckedParameter>.Empty
     let mutable parameterTypes = ImmutableArray<CheckedType>.Empty
     let mutable returns = ImmutableArray<CheckedType>.Empty
@@ -147,7 +149,7 @@ and [<Sealed>] CheckedMethod
     member _.ParameterNodes = methodParameterNodes
     member _.ReturnTypeNodes = returnTypeNodes
     member _.BodyNode = methodBodyNode
-    member _.Visibility with get() = Model.VisibilityFlags.Unspecified
+    member _.Visibility with get() = visibility and set value = visibility <- value
     member _.Flags with get() = flags and set value = flags <- value
 
     member _.Parameters
@@ -416,6 +418,9 @@ module TypeChecker =
                         match entryPointMethod with
                         | ValueNone -> entryPointMethod <- ValueSome method
                         | ValueSome _ -> addErrorMessage errors attr method.DeclaringType.Source MultipleEntryPoints
+                    | MethodAttributeNode.Private ->
+                        // TODO: Check for duplicate visibility flags
+                        method.Visibility <- Model.VisibilityFlags.Private
                     | _ ->
                         failwith "TODO: Set other method flags"
 
@@ -479,7 +484,7 @@ module TypeChecker =
 
                     method.Body <- CheckedMethodBody.Defined(statements.ToImmutable())
                 | MethodBodyNode.External(name, library) ->
-                    raise(NotImplementedException "TODO: External methods are not yet supported")
+                    method.Body <- CheckedMethodBody.External(name.Content, library.Content)
 
     let check name version files imports =
         let errors = ImmutableArray.CreateBuilder()

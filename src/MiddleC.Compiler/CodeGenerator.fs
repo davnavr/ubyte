@@ -51,6 +51,7 @@ let private writeTypeDefinitions
             match method.Body with
             | CheckedMethodBody.Defined statements ->
                 methodBodyLookup.Add(method, struct(CodeIndex.Index(uint32 methodBodyLookup.Count), statements))
+            | CheckedMethodBody.External _ -> ()
 
         definedTypeIndices.Add(definition, uint32 definedTypeIndices.Count)
 
@@ -231,7 +232,9 @@ let write (mdl: CheckedModule) =
                     match method.Body with
                     | CheckedMethodBody.Defined _ ->
                         let struct(index, _) = methodBodyLookup.[method]
-                        MethodBody.Defined index }
+                        MethodBody.Defined index
+                    | CheckedMethodBody.External(name, library) ->
+                        MethodBody.External(identifierIndexLookup library, identifierIndexLookup name) }
         Unsafe.As<Method[], ImmutableArray<Method>> &definitions
 
     { Module.Magic = UByte.Format.Model.magic

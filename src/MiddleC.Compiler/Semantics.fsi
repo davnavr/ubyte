@@ -109,6 +109,7 @@ type CheckedStatement =
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
 type CheckedMethodBody =
     | Defined of ImmutableArray<CheckedStatement>
+    | External of string * library: string
 
 [<RequireQualifiedAccess; IsReadOnly; Struct; NoComparison; StructuralEquality>]
 type CheckedMethodSignature =
