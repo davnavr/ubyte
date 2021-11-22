@@ -18,3 +18,7 @@ type CodeBuilder =
     member Const_i : PrimitiveType * value: varint -> CodeBuilderRegister
 
     member Ret : values: ImmutableArray<CodeBuilderRegister> -> unit
+
+    member Nop : unit -> unit
+
+    member Finish : unit -> Code

@@ -11,11 +11,12 @@ type CodeBuilderRegister = internal CodeBuilderRegister of uint32
 [<Sealed>]
 type CodeBlockBuilder () =
     member val Instructions = ImmutableArray.CreateBuilder<InstructionSet.Instruction>()
+    member val TemporaryCount = 0u with get, set
     //member val LocalRegisters = ImmutableArray.CreateBuilder<struct(TemporaryIndex * LocalIndex)>()
 
 [<Sealed>]
 type CodeBuilder (argumentRegisterCount: uint32) =
-    let blocks = ImmutableArray.CreateBuilder<CodeBlockBuilder>()
+    let blocks = System.Collections.Generic.List<CodeBlockBuilder>()
     do blocks.Add(CodeBlockBuilder())
     let registers = ImmutableArray.CreateBuilder<struct(CodeBlockIndex * TemporaryIndex)>()
     let mutable nextRegisterIndex = argumentRegisterCount //let locals = Dictionary
@@ -26,6 +27,8 @@ type CodeBuilder (argumentRegisterCount: uint32) =
         CodeBuilderRegister index
 
     member _.CurrentBlockIndex = CodeBlockIndex.Index(uint32 blocks.Count - 1u)
+
+    member this.CurrentBlock = blocks.[Index.toInt this.CurrentBlockIndex]
 
     member this.RegisterIndexOf (CodeBuilderRegister index) =
         if index < argumentRegisterCount then
@@ -39,12 +42,13 @@ type CodeBuilder (argumentRegisterCount: uint32) =
                 failwith "TODO: Do a local register lookup"
         |> RegisterIndex.Index
 
-    member _.AddRegister() =
-        let register = CodeBuilderRegister nextLocalIndex
-        nextLocalIndex <- nextLocalIndex + 1u
+    member this.AddRegister() =
+        let register = CodeBuilderRegister nextRegisterIndex
+        registers.Add(struct(this.CurrentBlockIndex, TemporaryIndex.Index this.CurrentBlock.TemporaryCount))
+        this.CurrentBlock.TemporaryCount <- this.CurrentBlock.TemporaryCount + 1u
+        nextRegisterIndex <- nextRegisterIndex + 1u
         register
 
-    member this.CurrentBlock = blocks.[Index.toInt this.CurrentBlockIndex]
 
     member this.Const_i(ty, value) =
         this.CurrentBlock.Instructions.Add(InstructionSet.Const_i(ty, value))
@@ -54,3 +58,17 @@ type CodeBuilder (argumentRegisterCount: uint32) =
         let mutable indices = Array.zeroCreate values.Length
         for i = 0 to indices.Length - 1 do indices.[i] <- this.RegisterIndexOf values.[i]
         this.CurrentBlock.Instructions.Add(InstructionSet.Ret(Unsafe.As<RegisterIndex[], ImmutableArray<RegisterIndex>> &indices))
+
+    member this.Nop() = this.CurrentBlock.Instructions.Add InstructionSet.Nop
+
+    member _.Finish() =
+        // TODO: Handle usage of local variables.
+        { Code.LocalCount = nextLocalIndex
+          Code.Blocks =
+            let mutable codes = Array.zeroCreate blocks.Count
+            for i = 0 to codes.Length - 1 do
+                codes.[i] <-
+                    { CodeBlock.ExceptionHandler = ValueNone
+                      CodeBlock.Locals = ImmutableArray.Empty
+                      CodeBlock.Instructions = blocks.[i].Instructions.ToImmutable() }
+            Unsafe.As<CodeBlock[], ImmutableArray<CodeBlock>> &codes }

@@ -38,7 +38,7 @@ let private writeTypeDefinitions
     =
     //let definedFieldIndices = Dictionary<CheckedField, uint32>()
     let definedMethodIndices = Dictionary<CheckedMethod, uint32>()
-    let methodBodyLookup = Dictionary<_, CodeIndex>()
+    let methodBodyLookup = Dictionary<_, struct(CodeIndex * _)>()
     let definedTypeIndices = Dictionary<CheckedTypeDefinition, uint32> types.Length
     let definedTypeList = List types.Length
 
@@ -50,7 +50,7 @@ let private writeTypeDefinitions
 
             match method.Body with
             | CheckedMethodBody.Defined statements ->
-                methodBodyLookup.Add(statements, CodeIndex.Index(uint32 methodBodyLookup.Count))
+                methodBodyLookup.Add(method, struct(CodeIndex.Index(uint32 methodBodyLookup.Count), statements))
 
         definedTypeIndices.Add(definition, uint32 definedTypeIndices.Count)
 
@@ -83,11 +83,31 @@ let private writeTypeDefinitions
 
     struct(definedTypeIndices, definedTypeList, definedMethodIndices, methodBodyLookup)
 
-let private writeMethodBodies (methodBodyLookup: Dictionary<ImmutableArray<CheckedStatement>, CodeIndex>) =
+let writeCheckedExpression (code: UByte.Format.CodeBuilder) (expression: TypedExpression) =
+    match expression.Expression with
+    | CheckedExpression.LiteralSignedInteger value ->
+        match expression.Type with
+        | CheckedType.ValueType(CheckedValueType.Primitive ptype) ->
+            code.Const_i(ptype, Checked.int32 value)
+    | bad ->
+        invalidOp(sprintf "TODO: Handle code generation for %O" bad)
+
+let private writeMethodBodies (methodBodyLookup: Dictionary<CheckedMethod, struct(CodeIndex * ImmutableArray<_>)>) =
     let mutable bodies = Array.zeroCreate methodBodyLookup.Count
-    for KeyValue(statements, Index index) in methodBodyLookup do
-        let code = failwith "BAD"
-        bodies.[int32 index] <- code
+    for KeyValue(method, struct(Index index, statements)) in methodBodyLookup do
+        let code = UByte.Format.CodeBuilder(uint32 method.Parameters.Length)
+        let registers = ImmutableArray.CreateBuilder()
+
+        for statement in statements do
+            registers.Clear()
+
+            match statement with
+            | CheckedStatement.Return values ->
+                for expression in values do registers.Add(writeCheckedExpression code expression)
+                code.Ret(registers.ToImmutable())
+            | CheckedStatement.Empty -> code.Nop()
+
+        bodies.[int32 index] <- code.Finish()
     Unsafe.As<Code[], ImmutableArray<Code>> &bodies
 
 let write (mdl: CheckedModule) =
@@ -209,7 +229,9 @@ let write (mdl: CheckedModule) =
                   Method.MethodAnnotations = ImmutableArray.Empty
                   Method.Body =
                     match method.Body with
-                    | CheckedMethodBody.Defined statements -> MethodBody.Defined methodBodyLookup.[statements] }
+                    | CheckedMethodBody.Defined _ ->
+                        let struct(index, _) = methodBodyLookup.[method]
+                        MethodBody.Defined index }
         Unsafe.As<Method[], ImmutableArray<Method>> &definitions
 
     { Module.Magic = UByte.Format.Model.magic
