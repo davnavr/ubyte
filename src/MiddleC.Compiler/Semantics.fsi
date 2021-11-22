@@ -105,6 +105,7 @@ type TypedExpression =
 /// lowered.
 [<RequireQualifiedAccess; NoComparison; NoEquality; DebuggerDisplay("{ToString()}")>]
 type CheckedStatement =
+    | LocalDeclaration of constant: bool * name: IdentifierNode * CheckedType * value: TypedExpression
     | Return of ImmutableArray<TypedExpression>
     | Empty
 
@@ -142,6 +143,7 @@ type CheckedTypeDefinition with
 [<NoComparison; NoEquality>]
 type SemanticErrorMessage =
     | AmbiguousTypeIdentifier of TypeIdentifier * matches: seq<FullTypeIdentifier>
+    | DuplicateLocalDeclaration of ParsedIdentifier
     | DuplicateParameter of ParsedIdentifier
     | DuplicateTypeDefinition of FullTypeIdentifier
     | InvalidElementType of CheckedType

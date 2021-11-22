@@ -106,11 +106,22 @@ and TypedExpression =
                 "figure out casting syntax (" + expr.ToString() + ")"
 
 and [<RequireQualifiedAccess>] CheckedStatement =
+    | LocalDeclaration of constant: bool * name: IdentifierNode * CheckedType * value: TypedExpression
     | Return of ImmutableArray<TypedExpression>
     | Empty
 
     override this.ToString() =
         match this with
+        | LocalDeclaration(constant, name, ty, value) ->
+            System.Text.StringBuilder(if constant then "let" else "var")
+                .Append(' ')
+                .Append(name.ToString())
+                .Append(' ')
+                .Append(ty.ToString())
+                .Append(" = ")
+                .Append(value.ToString())
+                .Append(';')
+                .ToString()
         | Return value when value.IsDefaultOrEmpty -> "return;"
         | Return values -> System.Text.StringBuilder("return ").AppendJoin(", ", values).Append(';').ToString()
         | Empty -> ";"
@@ -201,6 +212,7 @@ and [<Sealed>] CheckedTypeDefinition
 
 type SemanticErrorMessage =
     | AmbiguousTypeIdentifier of TypeIdentifier * matches: seq<FullTypeIdentifier>
+    | DuplicateLocalDeclaration of ParsedIdentifier
     | DuplicateParameter of ParsedIdentifier
     | DuplicateTypeDefinition of FullTypeIdentifier
     | InvalidElementType of CheckedType
@@ -215,6 +227,7 @@ type SemanticErrorMessage =
                 .Append(" could refer to any of the following types: ")
                 .AppendJoin(", ", matches)
                 .ToString()
+        | DuplicateLocalDeclaration id -> "Duplicate local declaration " + id.ToString()
         | DuplicateParameter id -> "A parameter with the name " + id.ToString() + " was already defined"
         | DuplicateTypeDefinition id -> "Duplicate definition of type " + id.ToString()
         | InvalidElementType ty ->
@@ -261,9 +274,27 @@ module CheckedType =
             ty
 
 [<RequireQualifiedAccess>]
+module SemanticError =
+    let ofNode (node: ParsedNode<_>) source message =
+        { Line = node.Line; Column = node.Column; Source = source; Message = message }
+
+[<RequireQualifiedAccess>]
 module TypeChecker =
-    let private addErrorMessage (errors: ImmutableArray<_>.Builder) (node: ParsedNode<_>) source message =
-        errors.Add { Line = node.Line; Column = node.Column; Source = source; Message = message }
+    let private addErrorMessage (errors: ImmutableArray<_>.Builder) node source message =
+        errors.Add(SemanticError.ofNode node source message)
+
+    [<Struct>]
+    type CheckResultBuilder =
+        member inline _.Bind(result: Result<'T, SemanticError>, body: 'T -> _) =
+            match result with
+            | Ok value -> body value
+            | Error error -> Error error
+
+        member inline _.Return value = Result<'T, SemanticError>.Ok value
+
+        member inline _.ReturnFrom(value: Result<'T, SemanticError>) = value
+
+    let private validated = CheckResultBuilder()
 
     let private findTypeDeclarations errors (files: ImmutableArray<ParsedFile>) =
         let rec inner
@@ -359,7 +390,7 @@ module TypeChecker =
         | 0 -> Error(UndefinedTypeIdentifier identifier)
         | _ -> Error(AmbiguousTypeIdentifier(identifier, Seq.map fst matches))
 
-    let private checkAnyType namedTypeLookup: _ -> Result<_, SemanticErrorMessage> =
+    let private checkAnyType namedTypeLookup: _ -> Result<_, SemanticError> =
         let cachedTypeLookup valueFactory =
             let lookup = Dictionary<'Key, 'Value>()
             fun key ->
@@ -370,8 +401,7 @@ module TypeChecker =
                     | Ok ty as result ->
                         lookup.Add(key, ty)
                         result
-                    | Error(message: SemanticErrorMessage) ->
-                        Error message
+                    | Error _ as error -> error
 
         let primitiveTypeCache = cachedTypeLookup (CheckedValueType.Primitive >> CheckedType.ValueType >> Ok)
         let valueElementTypes = cachedTypeLookup (CheckedElementType.ValueType >> Ok)
@@ -449,7 +479,7 @@ module TypeChecker =
         struct((), methodNameLookup)
 
     let private checkDefinedMethods
-        errors
+        (errors: ImmutableArray<_>.Builder)
         anyTypeChecker
         (declarations: Dictionary<CheckedTypeDefinition, Dictionary<ParsedIdentifier, CheckedMethod>>)
         (entryPointMethod: byref<_ voption>)
@@ -482,7 +512,7 @@ module TypeChecker =
                         else
                             addErrorMessage errors name method.DeclaringType.Source (DuplicateParameter name.Content)
                     | Error error ->
-                        addErrorMessage errors ty method.DeclaringType.Source error
+                        errors.Add error
                     // TODO: If an error occurs, add a placeholder parameter
 
                 returns.Clear()
@@ -490,21 +520,22 @@ module TypeChecker =
                 for ty in method.ReturnTypeNodes do
                     match anyTypeChecker ty with
                     | Ok rtype -> returns.Add rtype
-                    | Error error -> addErrorMessage errors ty method.DeclaringType.Source error
+                    | Error error -> errors.Add error
                     // TODO: If an error occurs, add a placeholder return type
 
                 method.Parameters <- parameters.ToImmutable()
                 method.ReturnTypes <- returns.ToImmutable()
 
     let private checkMethodBodies
-        errors
+        (errors: ImmutableArray<_>.Builder)
+        namedTypeLookup
         (declarations: Dictionary<CheckedTypeDefinition, Dictionary<ParsedIdentifier, CheckedMethod>>)
         =
         let statements = ImmutableArray.CreateBuilder<CheckedStatement>()
         let localVariableLookup = HashSet()
-        let inScopeLocals = Stack()
+        //let inScopeLocals = Stack()
 
-        let checkParsedExpression expr =
+        let checkParsedExpression expr: Result<_, SemanticError> =
             let inline ok expression ty =
                 Ok { TypedExpression.Expression = expression; Type = ty; Node = expr }
 
@@ -518,17 +549,40 @@ module TypeChecker =
         for methods in declarations.Values do
             for method in methods.Values do
                 statements.Clear()
+                localVariableLookup.Clear()
+
                 match method.BodyNode with
                 | MethodBodyNode.Defined nodes ->
                     for bodyStatementNode in nodes do
-                        match bodyStatementNode.Content with
-                        | StatementNode.Return value(*s*) ->
-                            // TODO: Check that types of return values match method return types
-                            match checkParsedExpression value with
-                            | Ok expr -> statements.Add(CheckedStatement.Return(ImmutableArray.Create expr))
-                            | Error error -> addErrorMessage errors value method.DeclaringType.Source error
-                        | StatementNode.Empty -> statements.Add CheckedStatement.Empty
-                        | bad -> raise(NotImplementedException(sprintf "TODO: Add support for statement %A" bad))
+                        let result =
+                            match bodyStatementNode.Content with
+                            | StatementNode.LocalDeclaration(constant, name, ty, value) ->
+                                validated {
+                                    // TODO: Check that type of local and type of value is compatible.
+                                    let! ltype = checkAnyType namedTypeLookup ty
+                                    let! lvalue = checkParsedExpression value
+                                    if localVariableLookup.Add name.Content then
+                                        return CheckedStatement.LocalDeclaration(constant, name, ltype, lvalue)
+                                    else
+                                        return!
+                                            SemanticError.ofNode
+                                                name
+                                                method.DeclaringType.Source
+                                                (DuplicateLocalDeclaration name.Content)
+                                            |> Error
+                                }
+                            | StatementNode.Return value(*s*) ->
+                                // TODO: Check that types of return values match method return types
+                                validated {
+                                    let! expr = checkParsedExpression value
+                                    return CheckedStatement.Return(ImmutableArray.Create expr)
+                                }
+                            | StatementNode.Empty -> Ok CheckedStatement.Empty
+                            | bad -> raise(NotImplementedException(sprintf "TODO: Add support for statement %O" bad))
+
+                        match result with
+                        | Ok statement -> statements.Add statement
+                        | Error error -> errors.Add error
 
                     method.Body <- CheckedMethodBody.Defined(statements.ToImmutable())
                 | MethodBodyNode.External(name, library) ->
@@ -560,7 +614,7 @@ module TypeChecker =
 
         // The types defined in this module, types of fields, and types of methods have been determined, so analysis of method
         // bodies can begin.
-        checkMethodBodies errors methodNameLookup
+        checkMethodBodies errors namedTypeLookup methodNameLookup
 
         CheckedModule (
             name = Model.Name.ofStr name,
