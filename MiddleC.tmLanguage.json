@@ -106,6 +106,20 @@
             },
             {
               "include": "#method-return-types"
+            },
+            {
+              "begin": "(external)\\s*\\{",
+              "beginCaptures": {
+                "1": {
+                  "name": "storage.modifier.middlec"
+                }
+              },
+              "end": "\\}",
+              "patterns": [
+                {
+                  "include": "#literal-string"
+                }
+              ]
             }
           ]
         }
@@ -139,6 +153,21 @@
       "patterns": [
         {
           "include": "#type"
+        }
+      ]
+    },
+    "literal-string": {
+      "patterns": [
+        {
+          "match": "(\"(.|(\\\\([nt])))*\")",
+          "captures": {
+            "1": {
+              "name": "string.quoted.double.middlec"
+            },
+            "3": {
+              "name": "string.other.middlec"
+            }
+          }
         }
       ]
     }
