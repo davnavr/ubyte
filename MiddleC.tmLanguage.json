@@ -114,10 +114,19 @@
                   "name": "storage.modifier.middlec"
                 }
               },
-              "end": "\\}",
+              "end": "(^|;|\\s+)(?=\\})",
               "patterns": [
                 {
                   "include": "#literal-string"
+                }
+              ]
+            },
+            {
+              "begin": "\\s*\\{",
+              "end": "(^|;|\\s+)(?=\\})",
+              "patterns": [
+                {
+                  "include": "#statement"
                 }
               ]
             }
@@ -165,7 +174,83 @@
               "name": "string.quoted.double.middlec"
             },
             "3": {
-              "name": "string.other.middlec"
+              "name": "constant.character.escape.middlec"
+            }
+          }
+        }
+      ]
+    },
+    "literal-integer": {
+      "patterns": [
+        {
+          "name": "constant.numeric.middlec",
+          "match": "(0x[0-9_A-F]+)|(0b[01]+)|([0-9_]+)"
+        }
+      ]
+    },
+    "expression": {
+      "patterns": [
+        {
+          "include": "#literal-string"
+        },
+        {
+          "include": "#literal-integer"
+        },
+        {
+          "begin": "\\(",
+          "end": "\\)",
+          "patterns": [
+            {
+              "include": "#expression"
+            }
+          ]
+        }
+      ]
+    },
+    "statement": {
+      "patterns": [
+        {
+          "include": "#expression"
+        },
+        {
+          "begin": "(return)(\\s+|(?=\\;))",
+          "beginCaptures": {
+            "1": {
+              "name": "keyword.control.middlec"
+            }
+          },
+          "end": "\\;",
+          "patterns": [
+            {
+              "include": "#expression"
+            }
+          ]
+        },
+        {
+          "begin": "(let|var)\\s+([a-zA-Z0-9]\\w*)",
+          "beginCaptures": {
+            "1": {
+              "name": "storage.modifier.middlec"
+            },
+            "2": {
+              "name": "variable.other.middlec"
+            }
+          },
+          "end": "\\;",
+          "patterns": [
+            {
+              "include": "#type"
+            },
+            {
+              "include": "#expression"
+            }
+          ]
+        },
+        {
+          "match": "(\\;)",
+          "captures": {
+            "1": {
+              "name": "punctuation.terminator.middlec"
             }
           }
         }
