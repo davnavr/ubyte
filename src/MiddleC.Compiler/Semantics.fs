@@ -43,40 +43,41 @@ module FullTypeIdentifier =
     let ofTypeIdentifier (FullNamespaceName fnamespace) (id: inref<TypeIdentifier>) =
         create id.Name (fnamespace.AddRange id.Namespace)
 
-type SemanticErrorMessage =
-    | AmbiguousTypeIdentifier of TypeIdentifier * matches: seq<FullTypeIdentifier>
-    | DuplicateParameter of ParsedIdentifier
-    | DuplicateTypeDefinition of FullTypeIdentifier
-    | MultipleEntryPoints
-    | UndefinedTypeIdentifier of TypeIdentifier
-    | UnknownError of message: string
-
-    override this.ToString() =
-        match this with
-        | AmbiguousTypeIdentifier(id, matches) ->
-            System.Text.StringBuilder(id.ToString())
-                .Append(" could refer to any of the following types: ")
-                .AppendJoin(", ", matches)
-                .ToString()
-        | DuplicateParameter id -> "A parameter with the name " + id.ToString() + " was already defined"
-        | DuplicateTypeDefinition id -> "Duplicate definition of type " + id.ToString()
-        | MultipleEntryPoints -> "Only one entry point method in a module is allowed"
-        | UndefinedTypeIdentifier id -> "The type definition " + id.ToString() + " does not exist"
-        | UnknownError message -> message
-
-type SemanticError =
-    { Line: uint32
-      Column: uint32
-      Source: ParsedFile
-      Message: SemanticErrorMessage }
-
 type NamedType = Choice<CheckedTypeDefinition, UByte.Resolver.ResolvedTypeDefinition>
 
 and [<NoComparison; StructuralEquality>] CheckedValueType =
     | Primitive of Model.PrimitiveType
 
-and [<NoComparison; StructuralEquality>] CheckedType =
+    override this.ToString() =
+        match this with
+        | Primitive pt -> pt.ToString().ToLowerInvariant()
+
+and [<RequireQualifiedAccess; NoComparison; StructuralEquality>] CheckedReferenceType =
+    | Any
+    | Array of CheckedElementType
+
+    override this.ToString() =
+        match this with
+        | Any -> "anyobj"
+        | Array etype -> etype.ToString() + "[]"
+
+and [<RequireQualifiedAccess; NoComparison; StructuralEquality>] CheckedElementType =
     | ValueType of CheckedValueType
+    | ReferenceType of CheckedReferenceType
+
+    override this.ToString() =
+        match this with
+        | ValueType vt -> vt.ToString()
+        | ReferenceType rt -> rt.ToString()
+
+and [<RequireQualifiedAccess; NoComparison; StructuralEquality>] CheckedType =
+    | ValueType of CheckedValueType
+    | ReferenceType of CheckedReferenceType
+
+    override this.ToString() =
+        match this with
+        | ValueType vt -> vt.ToString()
+        | ReferenceType rt -> rt.ToString()
 
 and [<RequireQualifiedAccess>] CheckedExpression =
     | LiteralBoolean of bool
@@ -101,8 +102,8 @@ and TypedExpression =
             match this.Type with
             | CheckedType.ValueType(CheckedValueType.Primitive prim) ->
                 expr.ToString() // + prefix
-            //| _ ->
-            //    "figure out casting syntax (" + expr.ToString() + ")"
+            | _ ->
+                "figure out casting syntax (" + expr.ToString() + ")"
 
 and [<RequireQualifiedAccess>] CheckedStatement =
     | Return of ImmutableArray<TypedExpression>
@@ -197,6 +198,36 @@ and [<Sealed>] CheckedTypeDefinition
     override _.GetHashCode() = identifier.GetHashCode()
 
     interface IEquatable<CheckedTypeDefinition> with member _.Equals other = identifier = other.Identifier
+
+type SemanticErrorMessage =
+    | AmbiguousTypeIdentifier of TypeIdentifier * matches: seq<FullTypeIdentifier>
+    | DuplicateParameter of ParsedIdentifier
+    | DuplicateTypeDefinition of FullTypeIdentifier
+    | InvalidElementType of CheckedType
+    | MultipleEntryPoints
+    | UndefinedTypeIdentifier of TypeIdentifier
+    | UnknownError of message: string
+
+    override this.ToString() =
+        match this with
+        | AmbiguousTypeIdentifier(id, matches) ->
+            System.Text.StringBuilder(id.ToString())
+                .Append(" could refer to any of the following types: ")
+                .AppendJoin(", ", matches)
+                .ToString()
+        | DuplicateParameter id -> "A parameter with the name " + id.ToString() + " was already defined"
+        | DuplicateTypeDefinition id -> "Duplicate definition of type " + id.ToString()
+        | InvalidElementType ty ->
+            ty.ToString() + " is not a valid element type, only value types and reference types are allowed"
+        | MultipleEntryPoints -> "Only one entry point method in a module is allowed"
+        | UndefinedTypeIdentifier id -> "The type definition " + id.ToString() + " does not exist"
+        | UnknownError message -> message
+
+type SemanticError =
+    { Line: uint32
+      Column: uint32
+      Source: ParsedFile
+      Message: SemanticErrorMessage }
 
 [<Sealed>]
 type CheckedModule
@@ -329,19 +360,36 @@ module TypeChecker =
         | _ -> Error(AmbiguousTypeIdentifier(identifier, Seq.map fst matches))
 
     let private checkAnyType namedTypeLookup: _ -> Result<_, SemanticErrorMessage> =
-        let primitives = Dictionary<Model.PrimitiveType, CheckedType>()
-
-        fun (atype: ParsedNode<AnyTypeNode>) ->
-            match atype.Content with
-            | AnyTypeNode.Primitive prim ->
-                match primitives.TryGetValue prim with
+        let cachedTypeLookup valueFactory =
+            let lookup = Dictionary<'Key, 'Value>()
+            fun key ->
+                match lookup.TryGetValue key with
                 | true, existing -> Ok existing
                 | false, _ ->
-                    let ty = CheckedType.ValueType(CheckedValueType.Primitive prim)
-                    primitives.Add(prim, ty)
-                    Ok ty
-            | bad ->
-                raise(NotImplementedException(sprintf "TODO: Add support for type %A" bad))
+                    match valueFactory key with
+                    | Ok ty as result ->
+                        lookup.Add(key, ty)
+                        result
+                    | Error(message: SemanticErrorMessage) ->
+                        Error message
+
+        let primitiveTypeCache = cachedTypeLookup (CheckedValueType.Primitive >> CheckedType.ValueType >> Ok)
+        let valueElementTypes = cachedTypeLookup (CheckedElementType.ValueType >> Ok)
+        let referenceElementTypes = cachedTypeLookup (CheckedElementType.ReferenceType >> Ok)
+        let arrayTypeCache = cachedTypeLookup <| fun etype -> //(CheckedReferenceType.Array >> CheckedType.ReferenceType >> Ok)
+            match etype with
+            | CheckedType.ValueType vt -> valueElementTypes vt
+            | CheckedType.ReferenceType rt -> referenceElementTypes rt
+            |> Result.map (CheckedReferenceType.Array >> CheckedType.ReferenceType)
+
+        let rec inner (atype: ParsedNode<AnyTypeNode>) =
+            match atype.Content with
+            | AnyTypeNode.Primitive prim -> primitiveTypeCache prim
+            | AnyTypeNode.Array elemt ->
+                match inner elemt with
+                | Ok etype -> arrayTypeCache etype
+                | Error _ as error -> error
+        inner
 
     let private checkTypeAttributes errors (declarations: Dictionary<FullTypeIdentifier, _>) namedTypeLookup =
         let inheritedTypeBuilder = ImmutableArray.CreateBuilder<NamedType>()

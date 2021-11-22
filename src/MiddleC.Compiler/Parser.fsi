@@ -42,7 +42,7 @@ type ParsedTypeIdentifier = ParsedNode<TypeIdentifier>
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
 type AnyTypeNode =
     | Primitive of UByte.Format.Model.PrimitiveType
-    | Array of AnyTypeNode
+    | Array of ParsedNode<AnyTypeNode>
     //| ObjectReference of Choice<TypeNode, ParsedTypeIdentifier>
 
 [<RequireQualifiedAccess; NoComparison; NoEquality>]

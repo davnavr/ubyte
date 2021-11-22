@@ -32,24 +32,6 @@ type FullTypeIdentifier =
 
     interface System.IEquatable<FullTypeIdentifier>
 
-[<NoComparison; NoEquality>]
-type SemanticErrorMessage =
-    | AmbiguousTypeIdentifier of TypeIdentifier * matches: seq<FullTypeIdentifier>
-    | DuplicateParameter of ParsedIdentifier
-    | DuplicateTypeDefinition of FullTypeIdentifier
-    | MultipleEntryPoints
-    | UndefinedTypeIdentifier of TypeIdentifier
-    | UnknownError of message: string
-
-    override ToString : unit -> string
-
-[<RequireQualifiedAccess; NoComparison; NoEquality>]
-type SemanticError =
-    { Line: uint32
-      Column: uint32
-      Source: ParsedFile
-      Message: SemanticErrorMessage }
-
 [<Sealed>]
 type CheckedTypeDefinition =
     interface System.IEquatable<CheckedTypeDefinition>
@@ -63,16 +45,38 @@ type CheckedTypeDefinition =
 
 type NamedType = Choice<CheckedTypeDefinition, UByte.Resolver.ResolvedTypeDefinition>
 
-[<RequireQualifiedAccess; NoComparison; StructuralEquality>]
+[<RequireQualifiedAccess; NoComparison; StructuralEquality; DebuggerDisplay("{ToString()}")>]
 type CheckedValueType =
     | Primitive of UByte.Format.Model.PrimitiveType
 
+    override ToString : unit -> string
+
     interface System.IEquatable<CheckedValueType>
 
+[<RequireQualifiedAccess; NoComparison; StructuralEquality; DebuggerDisplay("{ToString()}")>]
+type CheckedElementType =
+    | ValueType of CheckedValueType
+    | ReferenceType of CheckedReferenceType
+
+    override ToString : unit -> string
+
+    interface System.IEquatable<CheckedElementType>
+
+and [<RequireQualifiedAccess; NoComparison; StructuralEquality; DebuggerDisplay("{ToString()}")>] CheckedReferenceType =
+    | Any
+    | Array of CheckedElementType
+
+    override ToString : unit -> string
+
+    interface System.IEquatable<CheckedReferenceType>
+
 /// Represents a type, modeled after the type system of the binary format.
-[<RequireQualifiedAccess; NoComparison; StructuralEquality>]
+[<RequireQualifiedAccess; NoComparison; StructuralEquality; DebuggerDisplay("{ToString()}")>]
 type CheckedType =
     | ValueType of CheckedValueType
+    | ReferenceType of CheckedReferenceType
+
+    override ToString : unit -> string
 
     interface System.IEquatable<CheckedType>
 
@@ -134,6 +138,25 @@ type NamedMethod = Choice<CheckedMethod, UByte.Resolver.ResolvedMethod>
 type CheckedTypeDefinition with
     member InheritedTypes : ImmutableArray<NamedType>
     member Methods : ImmutableArray<CheckedMethod>
+
+[<NoComparison; NoEquality>]
+type SemanticErrorMessage =
+    | AmbiguousTypeIdentifier of TypeIdentifier * matches: seq<FullTypeIdentifier>
+    | DuplicateParameter of ParsedIdentifier
+    | DuplicateTypeDefinition of FullTypeIdentifier
+    | InvalidElementType of CheckedType
+    | MultipleEntryPoints
+    | UndefinedTypeIdentifier of TypeIdentifier
+    | UnknownError of message: string
+
+    override ToString : unit -> string
+
+[<RequireQualifiedAccess; NoComparison; NoEquality>]
+type SemanticError =
+    { Line: uint32
+      Column: uint32
+      Source: ParsedFile
+      Message: SemanticErrorMessage }
 
 [<Sealed>]
 type CheckedModule =

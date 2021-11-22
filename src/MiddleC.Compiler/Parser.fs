@@ -41,7 +41,7 @@ type ParsedTypeIdentifier = ParsedNode<TypeIdentifier>
 [<RequireQualifiedAccess>]
 type AnyTypeNode =
     | Primitive of UByte.Format.Model.PrimitiveType
-    | Array of AnyTypeNode
+    | Array of ParsedNode<AnyTypeNode>
 
 [<RequireQualifiedAccess>]
 type ExpressionNode =
@@ -235,7 +235,7 @@ module Parse =
     let private attributes attributes : Parser<ParsedNodeArray<_>, _> =
         let parsers =
             Array.map
-                (fun struct(name, attribute) -> skipString name >>% attribute)
+                (fun struct(name, attribute) -> stringReturn name attribute)
                 attributes
 
         choice parsers
@@ -246,26 +246,35 @@ module Parse =
     let private anyTypeNode : Parser<ParsedNode<AnyTypeNode>, unit> =
         let primitiveTypeNode =
             Array.map
-                (fun struct(name, ty) -> skipString name >>% AnyTypeNode.Primitive ty)
+                (fun struct(name, ty) -> stringReturn name (AnyTypeNode.Primitive ty))
                 [|
                     "s32", UByte.Format.Model.PrimitiveType.S32
                     "char32", UByte.Format.Model.PrimitiveType.Char32
                 |]
             |> choice
 
-        let typeNodeModifiers = choice [|
-            skipString "[]" >>% AnyTypeNode.Array
-        |]
+        let parser = OperatorPrecedenceParser<ParsedNode<AnyTypeNode>, unit, _>()
 
-        let baseTypeNodes = choice [|
-            primitiveTypeNode
-        |]
+        parser.TermParser <-
+            choice [|
+                primitiveTypeNode
+            |]
+            |> withNodeContent
+            .>> whitespace
 
-        pipe2
-            (baseTypeNodes .>> whitespace)
-            (many (typeNodeModifiers .>> whitespace))
-            (fun btype modifiers -> (List.fold (fun mf m -> fun ty -> m(mf ty)) id modifiers) btype)
-        |> withNodeContent
+        let typeNodeMapping mapping (node: ParsedNode<AnyTypeNode>) =
+            { node with Content = mapping node }
+
+        PostfixOperator<_, unit, unit> (
+            "[]",
+            whitespace,
+            precedence = 1,
+            isAssociative = true,
+            mapping = typeNodeMapping AnyTypeNode.Array
+        )
+        |> parser.AddOperator
+
+        parser.ExpressionParser
 
     let private stringlit : Parser<string, _> =
         let escape =
@@ -292,8 +301,8 @@ module Parse =
         whitespace
         >>. choice
             [|
-                skipString "true" >>% ExpressionNode.LiteralBool true
-                skipString "false" >>% ExpressionNode.LiteralBool false
+                stringReturn "true" (ExpressionNode.LiteralBool true)
+                stringReturn "false" (ExpressionNode.LiteralBool false)
                 numberlit signedIntegerLiteralOptions Int32.Parse ExpressionNode.LiteralS32
                 numberlit unsignedIntegerLiteralOptions UInt32.Parse ExpressionNode.LiteralU32
 
@@ -354,7 +363,7 @@ module Parse =
                 // TODO: How to parse else if?
 
                 tuple4
-                    (choice [ skipString "let" >>% true; skipString "var" >>% false ])
+                    (choice [ stringReturn "let" true; stringReturn "var" false ])
                     (whitespace >>. validIdentifierNode)
                     (whitespace >>. anyTypeNode .>> whitespace)
                     (equals >>. whitespace >>. expression)
