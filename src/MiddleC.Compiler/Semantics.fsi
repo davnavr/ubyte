@@ -90,6 +90,7 @@ type CheckedExpression =
     | LiteralBoolean of bool
     | LiteralSignedInteger of int64
     | LiteralUnsignedInteger of uint64
+    | MethodCall of NamedMethod * arguments: ImmutableArray<TypedExpression>
     | NewArray of CheckedElementType * elements: ImmutableArray<TypedExpression>
 
     override ToString : unit -> string
@@ -100,6 +101,16 @@ and [<RequireQualifiedAccess; NoComparison; NoEquality; DebuggerDisplay("{ToStri
       Node: ParsedNode<ExpressionNode> }
 
     override ToString : unit -> string
+
+and [<Sealed>] CheckedMethod =
+    member DeclaringType : CheckedTypeDefinition
+    member Name : IdentifierNode
+    member Flags : UByte.Format.Model.MethodFlags
+    member Visibility : UByte.Format.Model.VisibilityFlags
+    member Parameters : ImmutableArray<CheckedParameter>
+    member ReturnTypes : ImmutableArray<CheckedType>
+
+and NamedMethod = Choice<CheckedMethod, UByte.Resolver.ResolvedMethod>
 
 /// Simplified representation of a statement that has been type checked, constructs such as if-statements and while loops are
 /// lowered.
@@ -124,18 +135,9 @@ type CheckedMethodSignature =
 
     interface System.IEquatable<CheckedMethodSignature>
 
-[<Sealed>]
-type CheckedMethod =
-    member DeclaringType : CheckedTypeDefinition
-    member Name : IdentifierNode
-    member Flags : UByte.Format.Model.MethodFlags
-    member Visibility : UByte.Format.Model.VisibilityFlags
-    member Parameters : ImmutableArray<CheckedParameter>
-    member ReturnTypes : ImmutableArray<CheckedType>
+type CheckedMethod with
     member Signature : CheckedMethodSignature
     member Body : CheckedMethodBody
-
-type NamedMethod = Choice<CheckedMethod, UByte.Resolver.ResolvedMethod>
 
 type CheckedTypeDefinition with
     member InheritedTypes : ImmutableArray<NamedType>
@@ -148,10 +150,12 @@ type SemanticErrorMessage =
     | DuplicateLocalDeclaration of ParsedIdentifier
     | DuplicateParameter of ParsedIdentifier
     | DuplicateTypeDefinition of FullTypeIdentifier
+    | FirstClassFunctionsNotSupported
     | InvalidCharacterType of ParsedNode<AnyTypeNode>
     | InvalidElementType of CheckedType
     | MultipleEntryPoints
     | UndefinedTypeIdentifier of TypeIdentifier
+    | UndefinedMethod of FullTypeIdentifier * methodName: IdentifierNode
     | UnknownError of message: string
 
     override ToString : unit -> string

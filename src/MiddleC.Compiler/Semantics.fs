@@ -3,6 +3,7 @@
 open System
 open System.Collections.Generic
 open System.Collections.Immutable
+open System.Runtime.CompilerServices
 
 open MiddleC.Compiler.Parser
 
@@ -83,6 +84,7 @@ and [<RequireQualifiedAccess>] CheckedExpression =
     | LiteralBoolean of bool
     | LiteralSignedInteger of int64
     | LiteralUnsignedInteger of uint64
+    | MethodCall of NamedMethod * arguments: ImmutableArray<TypedExpression>
     | NewArray of CheckedElementType * elements: ImmutableArray<TypedExpression>
 
     override this.ToString() =
@@ -91,6 +93,8 @@ and [<RequireQualifiedAccess>] CheckedExpression =
         | LiteralBoolean false -> "false"
         | LiteralSignedInteger i -> string i
         | LiteralUnsignedInteger i -> string i
+        | MethodCall(method, arguments) ->
+            System.Text.StringBuilder(method.ToString()).Append('(').AppendJoin(", ", arguments).Append(')').ToString()
         | NewArray(etype, elements) ->
             System.Text.StringBuilder("new ").Append(etype.ToString()).Append("[] { ").AppendJoin(", ", elements).Append(" }")
                 .ToString()
@@ -102,7 +106,7 @@ and TypedExpression =
 
     override this.ToString() =
         match this with
-        | { Expression = (CheckedExpression.LiteralBoolean _ | CheckedExpression.NewArray _) as expr } ->
+        | { Expression = (CheckedExpression.LiteralBoolean _ | CheckedExpression.NewArray _ | CheckedExpression.MethodCall _) as expr } ->
             expr.ToString() // add casting syntax?
         | { Expression = (CheckedExpression.LiteralSignedInteger _ | CheckedExpression.LiteralUnsignedInteger _) as expr } ->
             match this.Type with
@@ -196,6 +200,7 @@ and [<Sealed>] CheckedTypeDefinition
     member _.AttributeNodes = typeAttributeNodes
     member _.InheritanceNodes = inheritedTypeNodes
     member _.MemberNodes = typeMemberNodes
+    /// A list of all namespaces that are in scope.
     member _.UsedNamespaces = usedNamespaceDeclarations
     member _.Visibility with get() = Model.VisibilityFlags.Unspecified
     member _.Flags with get() = flags and set value = flags <- value
@@ -217,10 +222,12 @@ type SemanticErrorMessage =
     | DuplicateLocalDeclaration of ParsedIdentifier
     | DuplicateParameter of ParsedIdentifier
     | DuplicateTypeDefinition of FullTypeIdentifier
+    | FirstClassFunctionsNotSupported
     | InvalidCharacterType of ParsedNode<AnyTypeNode>
     | InvalidElementType of CheckedType
     | MultipleEntryPoints
     | UndefinedTypeIdentifier of TypeIdentifier
+    | UndefinedMethod of FullTypeIdentifier * methodName: IdentifierNode
     | UnknownError of message: string
 
     override this.ToString() =
@@ -234,12 +241,15 @@ type SemanticErrorMessage =
         | DuplicateLocalDeclaration id -> "Duplicate local declaration " + id.ToString()
         | DuplicateParameter id -> "A parameter with the name " + id.ToString() + " was already defined"
         | DuplicateTypeDefinition id -> "Duplicate definition of type " + id.ToString()
+        | FirstClassFunctionsNotSupported -> "First-class functions are not supported"
         | InvalidCharacterType ty ->
             ty.Content.ToString() + " is not a valid character type"
         | InvalidElementType ty ->
             ty.ToString() + " is not a valid element type, only value types and reference types are allowed"
         | MultipleEntryPoints -> "Only one entry point method in a module is allowed"
         | UndefinedTypeIdentifier id -> "The type definition " + id.ToString() + " does not exist"
+        | UndefinedMethod(declaringTypeName, methodName) ->
+            "A method named " + methodName.Content.ToString() + " could not be found in the type " + declaringTypeName.ToString()
         | UnknownError message -> message
 
 type SemanticError =
@@ -411,10 +421,17 @@ module TypeChecker =
 
         matches
 
+    /// <summary>
+    /// Searches for a type corresponding to the <paramref name="identifier"/> given the <paramref name="namespaces"/> that are
+    /// currently in scope.
+    /// </summary>
+    /// <param name="namedTypeLookup">Function used to retrieve a type definition given its exact namespace and name.</param>
+    /// <param name="namespaces">The list of namespaces that are currently in scope.</param>
+    /// <param name="identifier">The name of the type.</param>
     let private findNamedType namedTypeLookup namespaces identifier =
         let matches = matchingNamedTypes namedTypeLookup namespaces identifier
         match matches.Count with
-        | 1 -> Ok(snd matches.[0])
+        | 1 -> Ok matches.[0]
         | 0 -> Error(UndefinedTypeIdentifier identifier)
         | _ -> Error(AmbiguousTypeIdentifier(identifier, Seq.map fst matches))
 
@@ -470,7 +487,7 @@ module TypeChecker =
 
             for inheritedTypeName in ty.InheritanceNodes do
                 match findNamedType namedTypeLookup ty.UsedNamespaces inheritedTypeName.Content with
-                | Ok ty -> inheritedTypeBuilder.Add ty
+                | Ok(_, ty) -> inheritedTypeBuilder.Add ty
                 | Error error -> addErrorMessage errors inheritedTypeName ty.Source error
 
             ty.Flags <- flags
@@ -557,25 +574,29 @@ module TypeChecker =
     let private checkMethodBodies
         (errors: ImmutableArray<_>.Builder)
         namedTypeLookup
+        namedMethodLookup
         (declarations: Dictionary<CheckedTypeDefinition, Dictionary<ParsedIdentifier, CheckedMethod>>)
         =
         let statements = ImmutableArray.CreateBuilder<CheckedStatement>()
         let localVariableLookup = HashSet()
         //let inScopeLocals = Stack()
 
-        let checkParsedExpression source expr: Result<_, SemanticError> =
+        let rec checkParsedExpression (method: CheckedMethod) expr: Result<_, SemanticError> =
             let inline ok expression ty =
                 Ok { TypedExpression.Expression = expression; Type = ty; Node = expr }
+
+            let inline error node message =
+                Error(SemanticError.ofNode node method.DeclaringType.Source message)
 
             match expr.Content with
             | ExpressionNode.LiteralBool value ->
                 ok (CheckedExpression.LiteralBoolean value) (CheckedType.primitive Model.PrimitiveType.Bool)
             | ExpressionNode.LiteralS32 value ->
                 ok (CheckedExpression.LiteralSignedInteger(int64 value)) (CheckedType.primitive Model.PrimitiveType.S32)
-            | ExpressionNode.NewObject({ Content = AnyTypeNode.Array etype }, oconstructor) ->
+            | ExpressionNode.NewObject({ Content = AnyTypeNode.Array etype } as ty, oconstructor) ->
                 match oconstructor.Content with
                 | ConstructionExpression.ConstructorCall _ ->
-                    Error(SemanticError.ofNode oconstructor source SemanticErrorMessage.ArrayConstructorCall)
+                    error oconstructor SemanticErrorMessage.ArrayConstructorCall
                 | ConstructionExpression.String str ->
                     match etype.Content with
                     | AnyTypeNode.Primitive Model.PrimitiveType.Char32 ->
@@ -590,11 +611,42 @@ module TypeChecker =
                         let etype = CheckedElementType.primitive Model.PrimitiveType.Char32
                         ok (CheckedExpression.NewArray(etype, characters.ToImmutable())) (CheckedType.array etype)
                     // TODO: Add case for UTF-16 strings
-                    | _ ->
-                        SemanticErrorMessage.InvalidCharacterType etype
-                        |> SemanticError.ofNode oconstructor source
-                        |> Error
+                    | _ -> error ty (SemanticErrorMessage.InvalidCharacterType etype)
                 | bad -> raise(NotImplementedException "TODO: Add support for array literals")
+            | ExpressionNode.Symbol(snamespace, snames, ValueSome arguments) ->
+                if snames.IsDefaultOrEmpty then
+                    raise(NotImplementedException "Return an error if a namespace is used instead of a method name")
+                elif not snamespace.IsDefaultOrEmpty || snames.Length = 2 then
+                    validated {
+                        let methodName = snames.[1]
+                        let! (declaringTypeName, declaringType) =
+                            findNamedType
+                                namedTypeLookup
+                                method.DeclaringType.UsedNamespaces
+                                { TypeIdentifier.Name = snames.[0]; Namespace = snamespace }
+                            |> Result.mapError (SemanticError.ofNode expr method.DeclaringType.Source)
+
+                        return!
+                            match namedMethodLookup declaringType methodName.Content with
+                            | ValueSome method ->
+                                // TODO: Check that argument types are compatible with method types.
+                                let mutable arguments = Array.zeroCreate<TypedExpression> arguments.Length
+                                failwith "A"
+                                ok
+                                    (CheckedExpression.MethodCall(method, Unsafe.As<TypedExpression[], ImmutableArray<TypedExpression>> &arguments))
+                                    (failwith "TODO: Get the method return type")
+                            | ValueNone ->
+                                error methodName (SemanticErrorMessage.UndefinedMethod(declaringTypeName, methodName))
+                    }
+                elif snames.Length = 1 then
+                    raise(NotImplementedException "Return an error if a type name was used instead of a method name")
+                else
+                    error expr SemanticErrorMessage.FirstClassFunctionsNotSupported
+            | ExpressionNode.Symbol(snamespace, snames, ValueNone) ->
+                if snamespace.IsDefaultOrEmpty then
+                    raise(NotImplementedException(sprintf "TODO: LOCAL ACCESS %A" snames))
+                else
+                    raise(NotImplementedException(sprintf "TODO: GLOBAL FIELD ACCESS %A::%A" snamespace snames))
             | bad -> raise(NotImplementedException(sprintf "TODO: Add support for expression %A" bad))
 
         for methods in declarations.Values do
@@ -610,12 +662,12 @@ module TypeChecker =
                             | StatementNode.Expression expression ->
                                 Result.map
                                     CheckedStatement.Expression
-                                    (checkParsedExpression method.DeclaringType.Source expression)
+                                    (checkParsedExpression method expression)
                             | StatementNode.LocalDeclaration(constant, name, ty, value) ->
                                 validated {
                                     // TODO: Check that type of local and type of value is compatible.
                                     let! ltype = checkAnyType namedTypeLookup ty
-                                    let! lvalue = checkParsedExpression method.DeclaringType.Source value
+                                    let! lvalue = checkParsedExpression method value
                                     if localVariableLookup.Add name.Content then
                                         return CheckedStatement.LocalDeclaration(constant, name, ltype, lvalue)
                                     else
@@ -629,7 +681,7 @@ module TypeChecker =
                             | StatementNode.Return value(*s*) ->
                                 // TODO: Check that types of return values match method return types
                                 validated {
-                                    let! expr = checkParsedExpression method.DeclaringType.Source value
+                                    let! expr = checkParsedExpression method value
                                     return CheckedStatement.Return(ImmutableArray.Create expr)
                                 }
                             | StatementNode.Empty -> Ok CheckedStatement.Empty
@@ -663,13 +715,23 @@ module TypeChecker =
         let anyTypeChecker = checkAnyType namedTypeLookup
 
         let struct((), methodNameLookup) = findTypeMembers errors declaredTypesLookup
-        let mutable entryPointMethod = ValueNone
 
+        let namedMethodLookup: NamedType -> ParsedIdentifier -> NamedMethod voption =
+            fun declaringType methodName ->
+                match declaringType with
+                | Choice1Of2 defined ->
+                    match methodNameLookup.[defined].TryGetValue methodName with
+                    | true, method -> ValueSome(Choice1Of2 method)
+                    | false, _ -> ValueNone
+                | Choice2Of2 imported ->
+                    failwithf "TODO: Handle lookup of imported method for %O.%O" declaringType methodName
+
+        let mutable entryPointMethod = ValueNone
         checkDefinedMethods errors anyTypeChecker methodNameLookup &entryPointMethod
 
         // The types defined in this module, types of fields, and types of methods have been determined, so analysis of method
         // bodies can begin.
-        checkMethodBodies errors namedTypeLookup methodNameLookup
+        checkMethodBodies errors namedTypeLookup namedMethodLookup methodNameLookup
 
         CheckedModule (
             name = Model.Name.ofStr name,
