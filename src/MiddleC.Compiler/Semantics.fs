@@ -82,12 +82,18 @@ and [<RequireQualifiedAccess; NoComparison; StructuralEquality>] CheckedType =
 and [<RequireQualifiedAccess>] CheckedExpression =
     | LiteralBoolean of bool
     | LiteralSignedInteger of int64
+    | LiteralUnsignedInteger of uint64
+    | NewArray of CheckedElementType * elements: ImmutableArray<TypedExpression>
 
     override this.ToString() =
         match this with
         | LiteralBoolean true -> "true"
         | LiteralBoolean false -> "false"
         | LiteralSignedInteger i -> string i
+        | LiteralUnsignedInteger i -> string i
+        | NewArray(etype, elements) ->
+            System.Text.StringBuilder("new ").Append(etype.ToString()).Append("[] { ").AppendJoin(", ", elements).Append(" }")
+                .ToString()
 
 and TypedExpression =
     { Expression: CheckedExpression
@@ -96,9 +102,9 @@ and TypedExpression =
 
     override this.ToString() =
         match this with
-        | { Expression = CheckedExpression.LiteralBoolean _ as expr } ->
+        | { Expression = (CheckedExpression.LiteralBoolean _ | CheckedExpression.NewArray _) as expr } ->
             expr.ToString() // add casting syntax?
-        | { Expression = CheckedExpression.LiteralSignedInteger _ as expr } ->
+        | { Expression = (CheckedExpression.LiteralSignedInteger _ | CheckedExpression.LiteralUnsignedInteger _) as expr } ->
             match this.Type with
             | CheckedType.ValueType(CheckedValueType.Primitive prim) ->
                 expr.ToString() // + prefix
@@ -106,22 +112,17 @@ and TypedExpression =
                 "figure out casting syntax (" + expr.ToString() + ")"
 
 and [<RequireQualifiedAccess>] CheckedStatement =
+    | Expression of TypedExpression
     | LocalDeclaration of constant: bool * name: IdentifierNode * CheckedType * value: TypedExpression
     | Return of ImmutableArray<TypedExpression>
     | Empty
 
     override this.ToString() =
         match this with
+        | Expression expression -> expression.ToString() + ";"
         | LocalDeclaration(constant, name, ty, value) ->
-            System.Text.StringBuilder(if constant then "let" else "var")
-                .Append(' ')
-                .Append(name.ToString())
-                .Append(' ')
-                .Append(ty.ToString())
-                .Append(" = ")
-                .Append(value.ToString())
-                .Append(';')
-                .ToString()
+            System.Text.StringBuilder(if constant then "let" else "var").Append(' ') .Append(name.ToString()).Append(' ')
+                .Append(ty.ToString()).Append(" = ").Append(value.ToString()).Append(';').ToString()
         | Return value when value.IsDefaultOrEmpty -> "return;"
         | Return values -> System.Text.StringBuilder("return ").AppendJoin(", ", values).Append(';').ToString()
         | Empty -> ";"
@@ -212,9 +213,11 @@ and [<Sealed>] CheckedTypeDefinition
 
 type SemanticErrorMessage =
     | AmbiguousTypeIdentifier of TypeIdentifier * matches: seq<FullTypeIdentifier>
+    | ArrayConstructorCall
     | DuplicateLocalDeclaration of ParsedIdentifier
     | DuplicateParameter of ParsedIdentifier
     | DuplicateTypeDefinition of FullTypeIdentifier
+    | InvalidCharacterType of ParsedNode<AnyTypeNode>
     | InvalidElementType of CheckedType
     | MultipleEntryPoints
     | UndefinedTypeIdentifier of TypeIdentifier
@@ -227,9 +230,12 @@ type SemanticErrorMessage =
                 .Append(" could refer to any of the following types: ")
                 .AppendJoin(", ", matches)
                 .ToString()
+        | ArrayConstructorCall -> "Cannot create new array instance with a constructor call, use array literal syntax instead"
         | DuplicateLocalDeclaration id -> "Duplicate local declaration " + id.ToString()
         | DuplicateParameter id -> "A parameter with the name " + id.ToString() + " was already defined"
         | DuplicateTypeDefinition id -> "Duplicate definition of type " + id.ToString()
+        | InvalidCharacterType ty ->
+            ty.Content.ToString() + " is not a valid character type"
         | InvalidElementType ty ->
             ty.ToString() + " is not a valid element type, only value types and reference types are allowed"
         | MultipleEntryPoints -> "Only one entry point method in a module is allowed"
@@ -270,6 +276,28 @@ module CheckedType =
         | true, existing -> existing
         | false, _ ->
             let ty = CheckedType.ValueType(CheckedValueType.Primitive ptype)
+            primitives.[ptype] <- ty
+            ty
+
+    let arrays = Dictionary()
+
+    let array etype =
+        match arrays.TryGetValue etype with
+        | true, existing -> existing
+        | false, _ ->
+            let ty = CheckedType.ReferenceType(CheckedReferenceType.Array etype)
+            arrays.[etype] <- ty
+            ty
+
+[<RequireQualifiedAccess>]
+module CheckedElementType =
+    let primitives = Dictionary()
+
+    let primitive ptype =
+        match primitives.TryGetValue ptype with
+        | true, existing -> existing
+        | false, _ ->
+            let ty = CheckedElementType.ValueType(CheckedValueType.Primitive ptype)
             primitives.[ptype] <- ty
             ty
 
@@ -535,7 +563,7 @@ module TypeChecker =
         let localVariableLookup = HashSet()
         //let inScopeLocals = Stack()
 
-        let checkParsedExpression expr: Result<_, SemanticError> =
+        let checkParsedExpression source expr: Result<_, SemanticError> =
             let inline ok expression ty =
                 Ok { TypedExpression.Expression = expression; Type = ty; Node = expr }
 
@@ -544,6 +572,29 @@ module TypeChecker =
                 ok (CheckedExpression.LiteralBoolean value) (CheckedType.primitive Model.PrimitiveType.Bool)
             | ExpressionNode.LiteralS32 value ->
                 ok (CheckedExpression.LiteralSignedInteger(int64 value)) (CheckedType.primitive Model.PrimitiveType.S32)
+            | ExpressionNode.NewObject({ Content = AnyTypeNode.Array etype }, oconstructor) ->
+                match oconstructor.Content with
+                | ConstructionExpression.ConstructorCall _ ->
+                    Error(SemanticError.ofNode oconstructor source SemanticErrorMessage.ArrayConstructorCall)
+                | ConstructionExpression.String str ->
+                    match etype.Content with
+                    | AnyTypeNode.Primitive Model.PrimitiveType.Char32 ->
+                        let characters = ImmutableArray.CreateBuilder()
+
+                        for rune in str.EnumerateRunes() do
+                            { TypedExpression.Expression = CheckedExpression.LiteralUnsignedInteger(uint64 rune.Value)
+                              TypedExpression.Type = CheckedType.primitive Model.PrimitiveType.Char32
+                              TypedExpression.Node = expr }
+                            |> characters.Add
+
+                        let etype = CheckedElementType.primitive Model.PrimitiveType.Char32
+                        ok (CheckedExpression.NewArray(etype, characters.ToImmutable())) (CheckedType.array etype)
+                    // TODO: Add case for UTF-16 strings
+                    | _ ->
+                        SemanticErrorMessage.InvalidCharacterType etype
+                        |> SemanticError.ofNode oconstructor source
+                        |> Error
+                | bad -> raise(NotImplementedException "TODO: Add support for array literals")
             | bad -> raise(NotImplementedException(sprintf "TODO: Add support for expression %A" bad))
 
         for methods in declarations.Values do
@@ -556,11 +607,15 @@ module TypeChecker =
                     for bodyStatementNode in nodes do
                         let result =
                             match bodyStatementNode.Content with
+                            | StatementNode.Expression expression ->
+                                Result.map
+                                    CheckedStatement.Expression
+                                    (checkParsedExpression method.DeclaringType.Source expression)
                             | StatementNode.LocalDeclaration(constant, name, ty, value) ->
                                 validated {
                                     // TODO: Check that type of local and type of value is compatible.
                                     let! ltype = checkAnyType namedTypeLookup ty
-                                    let! lvalue = checkParsedExpression value
+                                    let! lvalue = checkParsedExpression method.DeclaringType.Source value
                                     if localVariableLookup.Add name.Content then
                                         return CheckedStatement.LocalDeclaration(constant, name, ltype, lvalue)
                                     else
@@ -574,7 +629,7 @@ module TypeChecker =
                             | StatementNode.Return value(*s*) ->
                                 // TODO: Check that types of return values match method return types
                                 validated {
-                                    let! expr = checkParsedExpression value
+                                    let! expr = checkParsedExpression method.DeclaringType.Source value
                                     return CheckedStatement.Return(ImmutableArray.Create expr)
                                 }
                             | StatementNode.Empty -> Ok CheckedStatement.Empty

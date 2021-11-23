@@ -89,12 +89,12 @@ type CheckedParameter =
 type CheckedExpression =
     | LiteralBoolean of bool
     | LiteralSignedInteger of int64
-    //| LiteralUnsignedInteger of uint64
-    
+    | LiteralUnsignedInteger of uint64
+    | NewArray of CheckedElementType * elements: ImmutableArray<TypedExpression>
+
     override ToString : unit -> string
 
-[<RequireQualifiedAccess; NoComparison; NoEquality; DebuggerDisplay("{ToString()}")>]
-type TypedExpression =
+and [<RequireQualifiedAccess; NoComparison; NoEquality; DebuggerDisplay("{ToString()}")>] TypedExpression =
     { Expression: CheckedExpression
       Type: CheckedType
       Node: ParsedNode<ExpressionNode> }
@@ -105,6 +105,7 @@ type TypedExpression =
 /// lowered.
 [<RequireQualifiedAccess; NoComparison; NoEquality; DebuggerDisplay("{ToString()}")>]
 type CheckedStatement =
+    | Expression of TypedExpression
     | LocalDeclaration of constant: bool * name: IdentifierNode * CheckedType * value: TypedExpression
     | Return of ImmutableArray<TypedExpression>
     | Empty
@@ -143,9 +144,11 @@ type CheckedTypeDefinition with
 [<NoComparison; NoEquality>]
 type SemanticErrorMessage =
     | AmbiguousTypeIdentifier of TypeIdentifier * matches: seq<FullTypeIdentifier>
+    | ArrayConstructorCall
     | DuplicateLocalDeclaration of ParsedIdentifier
     | DuplicateParameter of ParsedIdentifier
     | DuplicateTypeDefinition of FullTypeIdentifier
+    | InvalidCharacterType of ParsedNode<AnyTypeNode>
     | InvalidElementType of CheckedType
     | MultipleEntryPoints
     | UndefinedTypeIdentifier of TypeIdentifier
