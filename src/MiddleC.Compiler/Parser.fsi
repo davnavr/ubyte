@@ -51,8 +51,8 @@ type ExpressionNode =
     | LiteralChar32 of uint32
     | LiteralU32 of uint32
     | LiteralS32 of int32
-    | Local of IdentifierNode // TODO: Remove this, have one node case shared for fields AND locals AND arguments
-    | MethodCall of ParsedNamespaceName * ParsedNodeArray<ParsedIdentifier> * arguments: ParsedNodeArray<ExpressionNode>
+    /// Represents a local, parameter, field, or method call.
+    | Symbol of ParsedNamespaceName * ParsedNodeArray<ParsedIdentifier> * arguments: ParsedNodeArray<ExpressionNode> voption
     | NewObject of ParsedNode<AnyTypeNode> * ParsedNode<ConstructionExpression>
     //| UnaryOperation
     //| BinaryOperation

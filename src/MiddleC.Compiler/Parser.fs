@@ -49,8 +49,7 @@ type ExpressionNode =
     | LiteralChar32 of uint32
     | LiteralU32 of uint32
     | LiteralS32 of int32
-    | Local of IdentifierNode
-    | MethodCall of ParsedNamespaceName * ParsedNodeArray<ParsedIdentifier> * arguments: ParsedNodeArray<ExpressionNode>
+    | Symbol of ParsedNamespaceName * ParsedNodeArray<ParsedIdentifier> * arguments: ParsedNodeArray<ExpressionNode> voption
     | NewObject of ParsedNode<AnyTypeNode> * ParsedNode<ConstructionExpression>
 
 and [<RequireQualifiedAccess>] ConstructionExpression =
@@ -186,6 +185,8 @@ module Parse =
     let private dquote = skipChar '\"'
     let private period = skipChar '.'
     let private namespaceNameSeparator = skipString "::"
+
+    let private vopt p = choice [ p |>> ValueSome; preturn ValueNone ]
 
     let private betweenCurlyBrackets inner = between (skipChar '{') (skipChar '}') inner
 
@@ -325,19 +326,11 @@ module Parse =
                     |> withNodeContent)
                 |>> ExpressionNode.NewObject
 
-                let typeMemberName =
-                    validIdentifierNode .>> namespaceNameSeparator
-                    |> attempt
-                    |> CollectionParsers.ImmutableArray.many
-
                 tuple3
-                    typeMemberName
+                    (CollectionParsers.ImmutableArray.many(attempt (validIdentifierNode .>> namespaceNameSeparator)))
                     (CollectionParsers.ImmutableArray.sepBy1 validIdentifierNode period .>> whitespace)
-                    (whitespace >>. arguments)
-                |>> ExpressionNode.MethodCall
-                |> attempt
-
-                validIdentifierNode |>> ExpressionNode.Local
+                    (vopt arguments)
+                |>> ExpressionNode.Symbol
             |]
         //|> errorNodeHandler TopLevelNode.Error
         |> withNodeContent
