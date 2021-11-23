@@ -574,7 +574,7 @@ module TypeChecker =
     let private checkMethodBodies
         (errors: ImmutableArray<_>.Builder)
         namedTypeLookup
-        namedMethodLookup
+        (namedMethodLookup: _ -> _ -> NamedMethod voption)
         (declarations: Dictionary<CheckedTypeDefinition, Dictionary<ParsedIdentifier, CheckedMethod>>)
         =
         let statements = ImmutableArray.CreateBuilder<CheckedStatement>()
@@ -626,17 +626,25 @@ module TypeChecker =
                                 { TypeIdentifier.Name = snames.[0]; Namespace = snamespace }
                             |> Result.mapError (SemanticError.ofNode expr method.DeclaringType.Source)
 
-                        return!
-                            match namedMethodLookup declaringType methodName.Content with
-                            | ValueSome method ->
-                                // TODO: Check that argument types are compatible with method types.
-                                let mutable arguments = Array.zeroCreate<TypedExpression> arguments.Length
-                                failwith "A"
-                                ok
-                                    (CheckedExpression.MethodCall(method, Unsafe.As<TypedExpression[], ImmutableArray<TypedExpression>> &arguments))
-                                    (failwith "TODO: Get the method return type")
-                            | ValueNone ->
-                                error methodName (SemanticErrorMessage.UndefinedMethod(declaringTypeName, methodName))
+                        match namedMethodLookup declaringType methodName.Content with
+                        | ValueSome callee ->
+                            let! methodArgumentExpressions = checkArgumentExpressions method arguments
+                            let methodReturnTypes =
+                                match callee with
+                                | Choice1Of2 defined ->
+                                    match defined.ReturnTypes.Length with
+                                    | 0 ->
+                                        raise(NotImplementedException "Methods that return no values are not yet supported")
+                                    | 1 ->
+                                        defined.ReturnTypes
+                                    | _ ->
+                                        raise(NotImplementedException "Methods with multiple return types are not yet supported")
+                                | Choice2Of2 _ -> raise(NotImplementedException "Retrieval of return types from imported methods is not yet supported")
+
+                            return! ok
+                                (CheckedExpression.MethodCall(callee, methodArgumentExpressions)) methodReturnTypes.[0]
+                        | ValueNone ->
+                            return! error methodName (SemanticErrorMessage.UndefinedMethod(declaringTypeName, methodName))
                     }
                 elif snames.Length = 1 then
                     raise(NotImplementedException "Return an error if a type name was used instead of a method name")
@@ -648,6 +656,21 @@ module TypeChecker =
                 else
                     raise(NotImplementedException(sprintf "TODO: GLOBAL FIELD ACCESS %A::%A" snamespace snames))
             | bad -> raise(NotImplementedException(sprintf "TODO: Add support for expression %A" bad))
+
+        and checkArgumentExpressions method (arguments: ImmutableArray<_>) =
+            if arguments.IsDefaultOrEmpty then
+                Ok ImmutableArray.Empty
+            else
+                let mutable expressions, i, error = Array.zeroCreate arguments.Length, 0, ValueNone
+
+                while i < expressions.Length && error.IsNone do
+                    match checkParsedExpression method arguments.[i] with
+                    | Ok expr -> expressions.[i] <- expr
+                    | Error err -> error <- ValueSome err
+
+                match error with
+                | ValueNone -> Ok(Unsafe.As<TypedExpression[], ImmutableArray<TypedExpression>> &expressions)
+                | ValueSome err -> Error err
 
         for methods in declarations.Values do
             for method in methods.Values do
