@@ -23,11 +23,17 @@ type IdentifierNode = ParsedNode<ParsedIdentifier>
 
 type ParsedNodeArray<'Content> = ImmutableArray<ParsedNode<'Content>>
 
-type ParsedNamespaceName = ParsedNodeArray<ParsedIdentifier>
+type ParsedNamespaceName = ParsedNodeArray<ParsedIdentifier> // TODO: Create wrapper for ParsedNamespaceName to override equality implementation.
 
-[<RequireQualifiedAccess; Struct; NoComparison; StructuralEquality>]
+[<RequireQualifiedAccess; Struct; NoComparison; CustomEquality>]
 type TypeIdentifier =
     { Name: IdentifierNode; Namespace: ParsedNamespaceName }
+
+    override id.GetHashCode() =
+        let mutable hash = HashCode()
+        hash.Add id.Name.Content
+        for ns in id.Namespace do hash.Add ns.Content
+        hash.ToHashCode()
 
     override this.ToString() =
         let sb = System.Text.StringBuilder()
@@ -35,6 +41,20 @@ type TypeIdentifier =
             for ns in this.Namespace do
                 sb.Append(ns.Content.ToString()).Append("::") |> ignore
         sb.Append(this.Name.Content.ToString()).ToString()
+
+    override id.Equals o =
+        match o with
+        | :? TypeIdentifier as other -> (id :> IEquatable<TypeIdentifier>).Equals other
+        | _ -> false
+
+    interface IEquatable<TypeIdentifier> with /// Might be better if this was in an IEqualityComparer implementation instead.
+        member id.Equals other =
+            let mutable equals = id.Namespace.Length = other.Namespace.Length
+            let mutable i = 0
+            while equals && i < id.Namespace.Length do
+                equals <- id.Namespace.[i].Content = other.Namespace.[i].Content
+                i <- i + 1
+            equals && id.Name.Content = other.Name.Content
 
 type ParsedTypeIdentifier = ParsedNode<TypeIdentifier>
 

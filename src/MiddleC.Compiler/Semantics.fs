@@ -378,7 +378,7 @@ module TypeChecker =
             for struct(nestedNamespaceName, nested) in nestedNamespaceDeclarations do
                 inner errors file lookup (FullNamespaceName.append nestedNamespaceName currentNamespaceName) currentUsingDeclarations nested
 
-        let lookup = Dictionary<FullTypeIdentifier, CheckedTypeDefinition>()
+        let lookup = Dictionary<FullTypeIdentifier, CheckedTypeDefinition> EqualityComparer.Default
         for file in files do inner errors file lookup FullNamespaceName.empty ImmutableArray.Empty file.Nodes
         lookup
 

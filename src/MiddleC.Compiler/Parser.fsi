@@ -28,10 +28,14 @@ type ParsedNodeArray<'Content> = ImmutableArray<ParsedNode<'Content>>
 
 type ParsedNamespaceName = ParsedNodeArray<ParsedIdentifier>
 
-[<RequireQualifiedAccess; IsReadOnly; Struct; NoComparison; StructuralEquality; DebuggerDisplay("{ToString()}")>]
+[<RequireQualifiedAccess; IsReadOnly; Struct; NoComparison; CustomEquality; DebuggerDisplay("{ToString()}")>]
 type TypeIdentifier =
     { Name: IdentifierNode
       Namespace: ParsedNamespaceName }
+
+    override GetHashCode : unit -> int32
+
+    override Equals : obj -> bool
 
     override ToString : unit -> string
 
