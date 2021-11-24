@@ -75,6 +75,8 @@ and [<RequireQualifiedAccess; NoComparison; StructuralEquality; DebuggerDisplay(
 type CheckedType =
     | ValueType of CheckedValueType
     | ReferenceType of CheckedReferenceType
+    /// Used when calling a method that does not return any values.
+    | Void
 
     override ToString : unit -> string
 
@@ -93,6 +95,8 @@ type CheckedExpression =
     | Local of ParsedIdentifier // CheckedLocal
     | MethodCall of NamedMethod * arguments: ImmutableArray<TypedExpression>
     | NewArray of CheckedElementType * elements: ImmutableArray<TypedExpression>
+    ///// Represents the absence of a value, used when a method that is called does not have any return values.
+    //| Nothing
 
     override ToString : unit -> string
 

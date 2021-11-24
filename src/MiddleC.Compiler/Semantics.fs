@@ -74,11 +74,13 @@ and [<RequireQualifiedAccess; NoComparison; StructuralEquality>] CheckedElementT
 and [<RequireQualifiedAccess; NoComparison; StructuralEquality>] CheckedType =
     | ValueType of CheckedValueType
     | ReferenceType of CheckedReferenceType
+    | Void
 
     override this.ToString() =
         match this with
         | ValueType vt -> vt.ToString()
         | ReferenceType rt -> rt.ToString()
+        | Void -> "()"
 
 and [<RequireQualifiedAccess>] CheckedExpression =
     | LiteralBoolean of bool
@@ -87,6 +89,7 @@ and [<RequireQualifiedAccess>] CheckedExpression =
     | Local of ParsedIdentifier
     | MethodCall of NamedMethod * arguments: ImmutableArray<TypedExpression>
     | NewArray of CheckedElementType * elements: ImmutableArray<TypedExpression>
+    //| Nothing
 
     override this.ToString() =
         match this with
@@ -100,6 +103,7 @@ and [<RequireQualifiedAccess>] CheckedExpression =
         | NewArray(etype, elements) ->
             System.Text.StringBuilder("new ").Append(etype.ToString()).Append("[] { ").AppendJoin(", ", elements).Append(" }")
                 .ToString()
+        //| Nothing -> "()"
 
 and TypedExpression =
     { Expression: CheckedExpression
@@ -464,6 +468,7 @@ module TypeChecker =
             match etype with
             | CheckedType.ValueType vt -> valueElementTypes vt
             | CheckedType.ReferenceType rt -> referenceElementTypes rt
+            | CheckedType.Void -> invalidOp "Cannot use void as the element type of an array"
             |> Result.map (CheckedReferenceType.Array >> CheckedType.ReferenceType)
 
         let rec inner (atype: ParsedNode<AnyTypeNode>) =
@@ -591,6 +596,8 @@ module TypeChecker =
                 else false
     }
 
+    let private voidReturnValues = ImmutableArray.Create<CheckedType> CheckedType.Void
+
     let private checkMethodBodies
         (errors: ImmutableArray<_>.Builder)
         namedTypeLookup
@@ -661,17 +668,16 @@ module TypeChecker =
                                 match callee with
                                 | Choice1Of2 defined ->
                                     match defined.ReturnTypes.Length with
-                                    | 0 ->
-                                        // TODO: Add a void type.
-                                        raise(NotImplementedException "Methods that return no values are not yet supported")
-                                    | 1 ->
-                                        defined.ReturnTypes
+                                    | 0 -> voidReturnValues
+                                    | 1 -> defined.ReturnTypes
                                     | _ ->
                                         raise(NotImplementedException "Methods with multiple return types are not yet supported")
-                                | Choice2Of2 _ -> raise(NotImplementedException "Retrieval of return types from imported methods is not yet supported")
+                                | Choice2Of2 _ ->
+                                    raise(NotImplementedException "Retrieval of return types from imported methods is not yet supported")
 
                             return! ok
-                                (CheckedExpression.MethodCall(callee, methodArgumentExpressions)) methodReturnTypes.[0]
+                                (CheckedExpression.MethodCall(callee, methodArgumentExpressions))
+                                methodReturnTypes.[0]
                         | ValueNone ->
                             return! error methodName (SemanticErrorMessage.UndefinedMethod(declaringTypeName, methodName))
                     }
