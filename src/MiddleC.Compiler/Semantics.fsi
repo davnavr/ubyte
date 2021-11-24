@@ -90,6 +90,7 @@ type CheckedExpression =
     | LiteralBoolean of bool
     | LiteralSignedInteger of int64
     | LiteralUnsignedInteger of uint64
+    | Local of ParsedIdentifier // CheckedLocal
     | MethodCall of NamedMethod * arguments: ImmutableArray<TypedExpression>
     | NewArray of CheckedElementType * elements: ImmutableArray<TypedExpression>
 
@@ -155,6 +156,7 @@ type SemanticErrorMessage =
     | InvalidElementType of CheckedType
     | MultipleEntryPoints
     | UndefinedTypeIdentifier of TypeIdentifier
+    | UndefinedLocal of ParsedIdentifier
     | UndefinedMethod of FullTypeIdentifier * methodName: IdentifierNode
     | UnknownError of message: string
 

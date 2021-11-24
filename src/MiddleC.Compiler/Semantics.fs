@@ -84,6 +84,7 @@ and [<RequireQualifiedAccess>] CheckedExpression =
     | LiteralBoolean of bool
     | LiteralSignedInteger of int64
     | LiteralUnsignedInteger of uint64
+    | Local of ParsedIdentifier
     | MethodCall of NamedMethod * arguments: ImmutableArray<TypedExpression>
     | NewArray of CheckedElementType * elements: ImmutableArray<TypedExpression>
 
@@ -93,6 +94,7 @@ and [<RequireQualifiedAccess>] CheckedExpression =
         | LiteralBoolean false -> "false"
         | LiteralSignedInteger i -> string i
         | LiteralUnsignedInteger i -> string i
+        | Local name -> name.ToString()
         | MethodCall(method, arguments) ->
             System.Text.StringBuilder(method.ToString()).Append('(').AppendJoin(", ", arguments).Append(')').ToString()
         | NewArray(etype, elements) ->
@@ -106,7 +108,7 @@ and TypedExpression =
 
     override this.ToString() =
         match this with
-        | { Expression = (CheckedExpression.LiteralBoolean _ | CheckedExpression.NewArray _ | CheckedExpression.MethodCall _) as expr } ->
+        | { Expression = (CheckedExpression.LiteralBoolean _ | CheckedExpression.NewArray _ | CheckedExpression.MethodCall _ | CheckedExpression.Local _) as expr } ->
             expr.ToString() // add casting syntax?
         | { Expression = (CheckedExpression.LiteralSignedInteger _ | CheckedExpression.LiteralUnsignedInteger _) as expr } ->
             match this.Type with
@@ -117,7 +119,7 @@ and TypedExpression =
 
 and [<RequireQualifiedAccess>] CheckedStatement =
     | Expression of TypedExpression
-    | LocalDeclaration of constant: bool * name: IdentifierNode * CheckedType * value: TypedExpression
+    | LocalDeclaration of constant: bool * name: IdentifierNode * CheckedType(* CheckedLocal *) * value: TypedExpression
     | Return of ImmutableArray<TypedExpression>
     | Empty
 
@@ -130,6 +132,11 @@ and [<RequireQualifiedAccess>] CheckedStatement =
         | Return value when value.IsDefaultOrEmpty -> "return;"
         | Return values -> System.Text.StringBuilder("return ").AppendJoin(", ", values).Append(';').ToString()
         | Empty -> ";"
+
+and [<RequireQualifiedAccess>] CheckedLocal =
+    { Name: IdentifierNode
+      NestingLevel: uint32
+      Type: CheckedType }
 
 and [<RequireQualifiedAccess>] CheckedParameter =
     { Name: IdentifierNode
@@ -177,7 +184,7 @@ and [<Sealed>] CheckedMethod
 
     member _.ReturnTypes with get() = returns and set value = returns <- value
     member _.Signature = { CheckedMethodSignature.ReturnTypes = returns; CheckedMethodSignature.ParameterTypes = parameterTypes }
-    member _.Body with get() = body and set value = body <- value
+    member _.Body with get() = body and set value = body <- value // TODO: Make available dictionary of all locals.
 
 and NamedMethod = Choice<CheckedMethod, UByte.Resolver.ResolvedMethod>
 
@@ -227,6 +234,7 @@ type SemanticErrorMessage =
     | InvalidElementType of CheckedType
     | MultipleEntryPoints
     | UndefinedTypeIdentifier of TypeIdentifier
+    | UndefinedLocal of ParsedIdentifier
     | UndefinedMethod of FullTypeIdentifier * methodName: IdentifierNode
     | UnknownError of message: string
 
@@ -248,6 +256,7 @@ type SemanticErrorMessage =
             ty.ToString() + " is not a valid element type, only value types and reference types are allowed"
         | MultipleEntryPoints -> "Only one entry point method in a module is allowed"
         | UndefinedTypeIdentifier id -> "The type definition " + id.ToString() + " does not exist"
+        | UndefinedLocal id -> "A local or parameter with the name " + id.ToString() + " does not exist"
         | UndefinedMethod(declaringTypeName, methodName) ->
             "A method named " + methodName.Content.ToString() + " could not be found in the type " + declaringTypeName.ToString()
         | UnknownError message -> message
@@ -571,14 +580,33 @@ module TypeChecker =
                 method.Parameters <- parameters.ToImmutable()
                 method.ReturnTypes <- returns.ToImmutable()
 
+    /// Compares local variables, ensuring that a local variable that is nested does not share a name with a local variable in an
+    /// outer scope.
+    let private localVariableComparer = {
+        new IEqualityComparer<CheckedLocal> with
+            member _.GetHashCode local = hash local.Name.Content
+            member _.Equals(x, y) =
+                if x.Name.Content = y.Name.Content then
+                    failwith "TODO: Compare them"
+                else false
+    }
+
     let private checkMethodBodies
         (errors: ImmutableArray<_>.Builder)
         namedTypeLookup
         (namedMethodLookup: _ -> _ -> NamedMethod voption)
         (declarations: Dictionary<CheckedTypeDefinition, Dictionary<ParsedIdentifier, CheckedMethod>>)
         =
-        let statements = ImmutableArray.CreateBuilder<CheckedStatement>()
-        let localVariableLookup = HashSet()
+        let localVariableLookup = Dictionary<ParsedIdentifier, CheckedType>() // HashSet<CheckedLocal> localVariableComparer
+        (*
+        // TODO: This should be valid middlec code:
+        if (some condition) {
+            let a bool = true;
+        }
+        else {
+           let a u32 = 5u;
+        }
+        *)
         //let inScopeLocals = Stack()
 
         let rec checkParsedExpression (method: CheckedMethod) expr: Result<_, SemanticError> =
@@ -634,6 +662,7 @@ module TypeChecker =
                                 | Choice1Of2 defined ->
                                     match defined.ReturnTypes.Length with
                                     | 0 ->
+                                        // TODO: Add a void type.
                                         raise(NotImplementedException "Methods that return no values are not yet supported")
                                     | 1 ->
                                         defined.ReturnTypes
@@ -652,7 +681,14 @@ module TypeChecker =
                     error expr SemanticErrorMessage.FirstClassFunctionsNotSupported
             | ExpressionNode.Symbol(snamespace, snames, ValueNone) ->
                 if snamespace.IsDefaultOrEmpty then
-                    raise(NotImplementedException(sprintf "TODO: LOCAL ACCESS %A" snames))
+                    if snames.Length > 1 then raise(NotImplementedException "TODO: Handle access of fields in a local")
+                    // TODO: Allow lookup of arguments.
+                    let localVariableName = snames.[0]
+                    match localVariableLookup.TryGetValue localVariableName.Content with
+                    | true, ltype ->
+                        ok (CheckedExpression.Local localVariableName.Content) ltype
+                    | false, _ ->
+                        error localVariableName (SemanticErrorMessage.UndefinedLocal localVariableName.Content)
                 else
                     raise(NotImplementedException(sprintf "TODO: GLOBAL FIELD ACCESS %A::%A" snamespace snames))
             | bad -> raise(NotImplementedException(sprintf "TODO: Add support for expression %A" bad))
@@ -667,10 +703,13 @@ module TypeChecker =
                     match checkParsedExpression method arguments.[i] with
                     | Ok expr -> expressions.[i] <- expr
                     | Error err -> error <- ValueSome err
+                    i <- i + 1
 
                 match error with
                 | ValueNone -> Ok(Unsafe.As<TypedExpression[], ImmutableArray<TypedExpression>> &expressions)
                 | ValueSome err -> Error err
+
+        let statements = ImmutableArray.CreateBuilder<CheckedStatement>()
 
         for methods in declarations.Values do
             for method in methods.Values do
@@ -691,7 +730,7 @@ module TypeChecker =
                                     // TODO: Check that type of local and type of value is compatible.
                                     let! ltype = checkAnyType namedTypeLookup ty
                                     let! lvalue = checkParsedExpression method value
-                                    if localVariableLookup.Add name.Content then
+                                    if localVariableLookup.TryAdd(name.Content, ltype) then
                                         return CheckedStatement.LocalDeclaration(constant, name, ltype, lvalue)
                                     else
                                         return!
