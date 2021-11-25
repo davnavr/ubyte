@@ -84,31 +84,119 @@ let private writeTypeDefinitions
 
     struct(definedTypeIndices, definedTypeList, definedMethodIndices, methodBodyLookup)
 
-let writeCheckedExpression (code: UByte.Format.CodeBuilder) (expression: TypedExpression) =
+/// Generates the corresponding byte code for a given expression.
+let rec private writeExpressionCode
+    nextTemporaryIndex
+    dataIndexLookup
+    typeSignatureLookup
+    (instructions: ImmutableArray<_>.Builder)
+    (expression: TypedExpression)
+    : ImmutableArray<RegisterIndex> =
+    let inline writeOneRegister() = ImmutableArray.Create(item = nextTemporaryIndex())
+
     match expression.Expression with
     | CheckedExpression.LiteralSignedInteger value ->
         match expression.Type with
         | CheckedType.ValueType(CheckedValueType.Primitive ptype) ->
-            code.Const_i(ptype, Checked.int32 value)
-    | bad ->
-        invalidOp(sprintf "TODO: Handle code generation for %O" bad)
+            // TODO: Ensure Const_i can work with 64-bit integer literals.
+            instructions.Add(InstructionSet.Const_i(ptype, Checked.int32 value))
+            writeOneRegister()
+        | _ ->
+            raise(NotImplementedException(sprintf "Cannot generate integer literal of type %O" expression.Type))
+    | CheckedExpression.NewArray(etype, elements) ->
+        match etype with
+        | CheckedElementType.ValueType(CheckedValueType.Primitive(PrimitiveType.Char32 | PrimitiveType.U32) as vtype) ->
+            let mutable bytes, isConstantExpression, constantValueCount = Array.zeroCreate(4 * elements.Length), true, 0
+            for e in elements do
+                match e.Expression with
+                | CheckedExpression.LiteralUnsignedInteger value ->
+                    // TODO: Allow selection of endianness for these constant strings.
+                    let written = BitConverter.TryWriteBytes(Span(bytes, constantValueCount * 4, bytes.Length - constantValueCount * 4), uint32 value)
+                    assert written
+                    constantValueCount <- constantValueCount + 1
+                | _ ->
+                    raise(NotImplementedException("Unsupported array element " + e.ToString()))
 
-let private writeMethodBodies (methodBodyLookup: Dictionary<CheckedMethod, struct(CodeIndex * ImmutableArray<_>)>) =
+            if isConstantExpression then
+                instructions.Add(InstructionSet.Obj_arr_const(typeSignatureLookup(CheckedType.ValueType vtype), dataIndexLookup (Unsafe.As<byte[], ImmutableArray<byte>> &bytes)))
+                writeOneRegister()
+            else
+                raise(NotImplementedException "NON-DATA arrays not yet implemented")
+        | _ ->
+            raise(NotImplementedException(sprintf "Code generation for new array containing %O is not yet implemented" etype))
+    | _ ->
+        raise(NotImplementedException(sprintf "Code generation is not yet implemented for %O" expression))
+
+let private writeMethodBodies
+    dataIndexLookup
+    typeSignatureLookup
+    (methodBodyLookup: Dictionary<CheckedMethod, struct(CodeIndex * ImmutableArray<_>)>) =
     let mutable bodies = Array.zeroCreate methodBodyLookup.Count
+
+    let localRegisterLookup = Dictionary<_, struct(CodeBlockIndex * TemporaryIndex)>()
+    let blocks = ImmutableArray.CreateBuilder<CodeBlock>()
+
+    let blockLocalMap = ImmutableArray.CreateBuilder<struct(_ * _)>()
+    let instructions = ImmutableArray.CreateBuilder<InstructionSet.Instruction>()
+    let mutable nextTemporaryIndex = 0u
+
+    let createTemporaryRegister() =
+        let index = RegisterIndex.Index nextTemporaryIndex
+        nextTemporaryIndex <- nextTemporaryIndex + 1u
+        index
+
+    let inline writeCurrentBlock () =
+        if blocks.Count > 0 then
+            blocks.Add
+                { CodeBlock.ExceptionHandler = ValueNone
+                  CodeBlock.Locals = blockLocalMap.ToImmutable()
+                  CodeBlock.Instructions = instructions.ToImmutable() }
+
+        blockLocalMap.Clear()
+        instructions.Clear()
+        nextTemporaryIndex <- 0u
+
     for KeyValue(method, struct(Index index, statements)) in methodBodyLookup do
-        let code = UByte.Format.CodeBuilder(uint32 method.Parameters.Length)
-        let registers = ImmutableArray.CreateBuilder()
+        localRegisterLookup.Clear()
+        blocks.Clear()
 
         for statement in statements do
-            registers.Clear()
-
             match statement with
-            | CheckedStatement.Return values ->
-                for expression in values do registers.Add(writeCheckedExpression code expression)
-                code.Ret(registers.ToImmutable())
-            | CheckedStatement.Empty -> code.Nop()
+            | CheckedStatement.Expression value ->
+                writeExpressionCode createTemporaryRegister dataIndexLookup typeSignatureLookup instructions value |> ignore
+            | CheckedStatement.LocalDeclaration(_, name, _, value) ->
+                let values = writeExpressionCode createTemporaryRegister dataIndexLookup typeSignatureLookup instructions value
+                if values.Length <> 1 then
+                    raise(NotImplementedException(sprintf "Code generation for local variable containing %i values is not yet implemented" values.Length))
 
-        bodies.[int32 index] <- code.Finish()
+                let (Index i) = values.[0]
+                if i >= nextTemporaryIndex then
+                    invalidOp "Expected temporary register but expression code returned a local or argument register"
+                let lindex = TemporaryIndex.Index i
+
+                blockLocalMap.Add(struct(lindex, LocalIndex.Index(uint32 localRegisterLookup.Count)))
+                localRegisterLookup.Add(name, struct(CodeBlockIndex.Index(uint32 blocks.Count), lindex))
+            | CheckedStatement.Return values ->
+                if values.IsDefaultOrEmpty then
+                    instructions.Add(InstructionSet.Ret ImmutableArray.Empty)
+                elif values.Length = 1 then
+                    let mutable returns = Array.zeroCreate values.Length
+                    for i = 0 to returns.Length - 1 do
+                        let expressions = writeExpressionCode createTemporaryRegister dataIndexLookup typeSignatureLookup instructions values.[i]
+                        if expressions.Length <> 1 then
+                            raise(NotImplementedException "TODO: Handle weird number of return values")
+                        returns.[i] <- expressions.[0]
+                    instructions.Add(InstructionSet.Ret(Unsafe.As<RegisterIndex[], ImmutableArray<RegisterIndex>> &returns))
+                else
+                    raise(NotImplementedException "Code generation for multiple return values is not yet implemented")
+            | CheckedStatement.Empty -> instructions.Add InstructionSet.Nop
+
+        writeCurrentBlock() // Writes the last block, if any
+
+        bodies.[int32 index] <-
+            { Code.LocalCount = uint32 localRegisterLookup.Count
+              Code.Blocks = blocks.ToImmutable() }
+
     Unsafe.As<Code[], ImmutableArray<Code>> &bodies
 
 let write (mdl: CheckedModule) =
@@ -118,9 +206,7 @@ let write (mdl: CheckedModule) =
     let struct(moduleImportArray, moduleImportLookup) = writeModuleImports mdl.ImportedModules
 
     let struct(identifiers, identifierIndexLookup: _ -> IdentifierIndex) =
-        createIndexedLookup
-            StringComparer.Ordinal
-            id
+        createIndexedLookup StringComparer.Ordinal id
 
     let struct(namespaces, namespaceIndexLookup: _ -> NamespaceIndex) =
         createIndexedLookup
@@ -131,12 +217,27 @@ let write (mdl: CheckedModule) =
                 for i = 0 to indices.Length - 1 do indices.[i] <- identifierIndexLookup(names.[0].Content.ToString())
                 Unsafe.As<IdentifierIndex[], ImmutableArray<IdentifierIndex>> &indices)
 
+    let struct (data, dataIndexLookup: ImmutableArray<byte> -> DataIndex) =
+        createIndexedLookup EqualityComparer.Default id
+
+    let typeSignaturesReference = ref Unchecked.defaultof<_>
+
     let struct(tsignatures, typeSignatureLookup: CheckedType -> TypeSignatureIndex) =
         createIndexedLookup
             EqualityComparer.Default
             (function
             | CheckedType.ValueType(CheckedValueType.Primitive prim) ->
-                AnyType.primitive prim)
+                AnyType.primitive prim
+            | CheckedType.ReferenceType rtype ->
+                match rtype with
+                | CheckedReferenceType.Any -> ReferenceType.Any
+                | CheckedReferenceType.Array etype ->
+                    failwith "TODO: Get element type"
+                |> AnyType.ReferenceType
+            | CheckedType.Void ->
+                invalidOp "Cannot create a type signature for void")
+
+    typeSignaturesReference.Value <- typeSignatureLookup
 
     let struct(msignatures, methodSignatureLookup: CheckedMethodSignature -> MethodSignatureIndex) =
         createIndexedLookup
@@ -197,7 +298,7 @@ let write (mdl: CheckedModule) =
 
     // Type definitions, method definitions, and field definitions can only be refered to by index after method bodies have been
     // generated.
-    let code = writeMethodBodies methodBodyLookup
+    let code = writeMethodBodies dataIndexLookup typeSignatureLookup methodBodyLookup
 
     let fieldImportCount = uint32
     let methodImportCount = uint32 importedMethodDefinitions.Count
@@ -257,7 +358,7 @@ let write (mdl: CheckedModule) =
           ModuleDefinitions.DefinedFields = ImmutableArray.Empty
           ModuleDefinitions.DefinedMethods = finalMethodDefinitions }
       // TODO: String literals should be stored as UTF-8 to avoid endianness issues.
-      Module.Data = ImmutableArray.Empty
+      Module.Data = data.ToImmutable()
       Module.Code = code
       Module.EntryPoint = ValueOption.map methodDefinitionIndex mdl.EntryPoint
       Module.Debug = () }

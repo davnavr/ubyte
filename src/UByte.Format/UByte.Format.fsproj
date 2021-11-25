@@ -15,8 +15,6 @@
     <Compile Include="WriteModule.fs" />
     <Compile Include="ParseModule.fsi" />
     <Compile Include="ParseModule.fs" />
-    <Compile Include="CodeBuilder.fsi" />
-    <Compile Include="CodeBuilder.fs" />
   </ItemGroup>
 
 </Project>
