@@ -858,6 +858,7 @@ let private setupStackFrame
     match method.Body with
     | MethodBody.Defined codei ->
         let code = method.DeclaringModule.CodeAt codei
+        if code.Blocks.IsDefaultOrEmpty then invalidOp(sprintf "Cannot invoke %O, no code blocks are defined" method)
         frame.contents <- ValueSome(StackFrame(frame.Value, args, code.LocalCount, returns, code.Blocks, method))
     | MethodBody.Abstract ->
         if not method.IsVirtual then failwith "TODO: Error for abstract method must be virtual"

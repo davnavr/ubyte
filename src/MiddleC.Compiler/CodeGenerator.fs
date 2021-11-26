@@ -266,8 +266,12 @@ let private writeMethodBodies
         nextTemporaryIndex <- nextTemporaryIndex + 1u
         index
 
+#if DEBUG
+    let writeCurrentBlock () =
+#else
     let inline writeCurrentBlock () =
-        if blocks.Count > 0 then
+#endif
+        if instructions.Count > 0 then
             blocks.Add
                 { CodeBlock.ExceptionHandler = ValueNone
                   CodeBlock.Locals = blockLocalMap.ToImmutable()
