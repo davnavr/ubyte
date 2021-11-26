@@ -172,6 +172,7 @@ let rec private writeExpressionCode
     typeSignatureLookup
     (importedMethodIndices: Dictionary<_, MethodIndex>)
     (definedMethodIndices: Dictionary<_, MethodIndex>)
+    (localRegisterLookup: Dictionary<_, _>)
     (instructions: ImmutableArray<_>.Builder)
     (expression: TypedExpression)
     : ImmutableArray<RegisterIndex>
@@ -198,6 +199,7 @@ let rec private writeExpressionCode
                     typeSignatureLookup
                     importedMethodIndices
                     definedMethodIndices
+                    localRegisterLookup
                     instructions
                     arguments.[i]
 
@@ -240,6 +242,7 @@ let rec private writeExpressionCode
                 raise(NotImplementedException "NON-DATA arrays not yet implemented")
         | _ ->
             raise(NotImplementedException(sprintf "Code generation for new array containing %O is not yet implemented" etype))
+    | CheckedExpression.Local name -> ImmutableArray.Create(item = localRegisterLookup.[name] ())
     | _ ->
         raise(NotImplementedException(sprintf "Code generation is not yet implemented for %O" expression))
 
@@ -251,7 +254,7 @@ let private writeMethodBodies
     (methodBodyLookup: Dictionary<CheckedMethod, struct(CodeIndex * ImmutableArray<_>)>) =
     let mutable bodies = Array.zeroCreate methodBodyLookup.Count
 
-    let localRegisterLookup = Dictionary<_, struct(CodeBlockIndex * TemporaryIndex)>()
+    let localRegisterLookup = Dictionary<_, _>()
     let blocks = ImmutableArray.CreateBuilder<CodeBlock>()
 
     let blockLocalMap = ImmutableArray.CreateBuilder<struct(_ * _)>()
@@ -281,26 +284,28 @@ let private writeMethodBodies
         for statement in statements do
             match statement with
             | CheckedStatement.Expression value ->
-                writeExpressionCode createTemporaryRegister dataIndexLookup typeSignatureLookup importedMethodIndices definedMethodIndices instructions value |> ignore
+                writeExpressionCode createTemporaryRegister dataIndexLookup typeSignatureLookup importedMethodIndices definedMethodIndices localRegisterLookup instructions value |> ignore
             | CheckedStatement.LocalDeclaration(_, name, _, value) ->
-                let values = writeExpressionCode createTemporaryRegister dataIndexLookup typeSignatureLookup importedMethodIndices definedMethodIndices instructions value
+                let values = writeExpressionCode createTemporaryRegister dataIndexLookup typeSignatureLookup importedMethodIndices definedMethodIndices localRegisterLookup instructions value
                 if values.Length <> 1 then
                     raise(NotImplementedException(sprintf "Code generation for local variable containing %i values is not yet implemented" values.Length))
 
                 let (Index i) = values.[0]
                 if i >= nextTemporaryIndex then
                     invalidOp "Expected temporary register but expression code returned a local or argument register"
-                let lindex = TemporaryIndex.Index i
 
-                blockLocalMap.Add(struct(lindex, LocalIndex.Index(uint32 localRegisterLookup.Count)))
-                localRegisterLookup.Add(name, struct(CodeBlockIndex.Index(uint32 blocks.Count), lindex))
+                let tindex = TemporaryIndex.Index i
+                let lindex = uint32 localRegisterLookup.Count
+
+                blockLocalMap.Add(struct(tindex, LocalIndex.Index lindex))
+                localRegisterLookup.Add(name.Content, fun() -> RegisterIndex.Index(nextTemporaryIndex + uint32 method.Parameters.Length + lindex))
             | CheckedStatement.Return values ->
                 if values.IsDefaultOrEmpty then
                     instructions.Add(InstructionSet.Ret ImmutableArray.Empty)
                 elif values.Length = 1 then
                     let mutable returns = Array.zeroCreate values.Length
                     for i = 0 to returns.Length - 1 do
-                        let expressions = writeExpressionCode createTemporaryRegister dataIndexLookup typeSignatureLookup importedMethodIndices definedMethodIndices instructions values.[i]
+                        let expressions = writeExpressionCode createTemporaryRegister dataIndexLookup typeSignatureLookup importedMethodIndices definedMethodIndices localRegisterLookup instructions values.[i]
                         if expressions.Length <> 1 then
                             raise(NotImplementedException "TODO: Handle weird number of return values")
                         returns.[i] <- expressions.[0]
