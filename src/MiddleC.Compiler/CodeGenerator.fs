@@ -60,7 +60,7 @@ let private writeMethodImports
     =
     let mutable imports = Array.zeroCreate methods.Length
     let importedSignatureLookup = Dictionary<_, _>()
-    let lookup = Dictionary<_, MethodIndex>(capacity = imports.Length, comparer = ReferenceEqualityComparer.Instance)
+    let lookup = Dictionary<UByte.Resolver.ResolvedMethod, MethodIndex>(capacity = imports.Length)
 
     for i = 0 to methods.Length - 1 do
         let method = methods.[i]
@@ -187,9 +187,38 @@ let rec private writeExpressionCode
             writeOneRegister()
         | _ ->
             raise(NotImplementedException(sprintf "Cannot generate integer literal of type %O" expression.Type))
-    | CheckedExpression.MethodCall(Choice1Of2 dmethod, arguments) ->
-        let mindex = definedMethodIndices.[dmethod]
-        failwith "METHOD CALL"
+    | CheckedExpression.MethodCall(callee, arguments) -> // TODO: Add support for instance methods and virtual methods.
+        let mutable callArgumentRegisters = Array.zeroCreate arguments.Length
+
+        for i = 0 to callArgumentRegisters.Length - 1 do
+            let results =
+                writeExpressionCode
+                    nextTemporaryIndex
+                    dataIndexLookup
+                    typeSignatureLookup
+                    importedMethodIndices
+                    definedMethodIndices
+                    instructions
+                    arguments.[i]
+
+            if results.Length <> 1 then
+                invalidOp(sprintf "Invalid number of return values (%i) for method argument" results.Length)
+
+            callArgumentRegisters.[i] <- results.[0]
+
+        let struct(returnValueCount, mindex) =
+            match callee with
+            | Choice1Of2 dmethod -> dmethod.ReturnTypes.Length, definedMethodIndices.[dmethod]
+            | Choice2Of2 imethod -> imethod.Signature.ReturnTypes.Length, importedMethodIndices.[imethod]
+
+        instructions.Add(InstructionSet.Call(InstructionSet.CallFlags.None, mindex, Unsafe.As<RegisterIndex[], ImmutableArray<RegisterIndex>> &callArgumentRegisters))
+
+        match returnValueCount with
+        | 0 -> ImmutableArray.Empty
+        | _ ->
+            let mutable returnValueRegisters = Array.zeroCreate returnValueCount
+            for i = 0 to returnValueCount - 1 do returnValueRegisters.[i] <- nextTemporaryIndex()
+            Unsafe.As<RegisterIndex[], ImmutableArray<RegisterIndex>> &returnValueRegisters
     | CheckedExpression.NewArray(etype, elements) ->
         match etype with
         | CheckedElementType.ValueType(CheckedValueType.Primitive(PrimitiveType.Char32 | PrimitiveType.U32) as vtype) ->
