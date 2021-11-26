@@ -789,6 +789,12 @@ module TypeChecker =
                         | Ok statement -> statements.Add statement
                         | Error error -> errors.Add error
 
+                    // TODO: Detect if code already defines a return, and omit the following insertion/error handler.
+                    if not method.ReturnTypes.IsDefaultOrEmpty then
+                        statements.Add(CheckedStatement.Return ImmutableArray.Empty)
+                    //else
+                    //    failwith "TODO: Error for missing return"
+
                     method.Body <- CheckedMethodBody.Defined(statements.ToImmutable())
                 | MethodBodyNode.External(name, library) ->
                     method.Body <- CheckedMethodBody.External(name.Content, library.Content)
