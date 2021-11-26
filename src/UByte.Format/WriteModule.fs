@@ -466,6 +466,7 @@ let toStream (stream: Stream) (md: Module) =
 
 let toFile (destination: FileInfo) md =
     if isNull destination then nullArg(nameof destination)
+    if not destination.Directory.Exists then destination.Directory.Create()
     toStream (destination.Open FileMode.Create) md
 
 let toPath destination md = toFile (FileInfo destination) md

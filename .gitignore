@@ -4,3 +4,6 @@ obj/
 
 # Visual Studio options
 .vs/
+
+# Module build outputs
+**/out/*.*

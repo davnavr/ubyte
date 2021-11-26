@@ -1,0 +1,40 @@
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+
+  <Import Project="..\Directory.Build.props" />
+
+  <PropertyGroup>
+    <CompilerPath>$(RootDirectory)\src\middlec\middlec.fsproj</CompilerPath>
+    <ModuleName Condition="'$(ModuleName)'==''">$(MSBuildProjectName)</ModuleName>
+    <OutputDirectory Condition="'$(OutputDirectory)'==''">$(MSBuildProjectDirectory)\out\</OutputDirectory>
+    <OutputPath Condition="'$(OutputPath)'==''">$(OutputDirectory)\$(MSBuildProjectName).binmdl</OutputPath>
+  </PropertyGroup>
+
+  <ItemDefinitionGroup>
+    <Compile>
+      <Flag>-i &quot;%(Fullpath)&quot;</Flag>
+    </Compile>
+    <Import>
+      <Flag>-r &quot;%(Fullpath)&quot;</Flag>
+    </Import>
+  </ItemDefinitionGroup>
+
+  <Target Name="Clean">
+    <Delete Files="$(OutputPath)" />
+  </Target>
+
+  <Target Name="Build" AfterTargets="Clean" Inputs="@(Compile)" Outputs="$(OutputPath)">
+
+    <PropertyGroup>
+      <CompilerFlags>--module-name &quot;$(ModuleName)&quot; -o &quot;$(OutputPath)&quot; %(Import.Flag) %(Compile.Flag)</CompilerFlags>
+    </PropertyGroup>
+
+    <Exec
+      Command="dotnet run -p &quot;$(CompilerPath)&quot; -- $(CompilerFlags)"
+      ConsoleToMsBuild="true"
+      LogStandardErrorAsError="true" />
+
+  </Target>
+
+  <Target Name="Rebuild" DependsOnTargets="Clean;Build" />
+
+</Project>

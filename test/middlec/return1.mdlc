@@ -1,9 +1,0 @@
-namespace Return1 {
-
-type Program {
-    method Main entrypoint () -> (s32) {
-        return 0;
-    }
-}
-
-}
