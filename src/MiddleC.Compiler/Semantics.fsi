@@ -82,10 +82,12 @@ type CheckedType =
 
     interface System.IEquatable<CheckedType>
 
-[<RequireQualifiedAccess; NoComparison; NoEquality>]
+[<RequireQualifiedAccess; NoComparison; NoEquality; DebuggerDisplay("{ToString()}")>]
 type CheckedParameter =
     { Name: IdentifierNode
       Type: CheckedType }
+
+    override ToString : unit -> string
 
 [<RequireQualifiedAccess; NoComparison; NoEquality; DebuggerDisplay("{ToString()}")>]
 type CheckedExpression =
@@ -107,13 +109,15 @@ and [<RequireQualifiedAccess; NoComparison; NoEquality; DebuggerDisplay("{ToStri
 
     override ToString : unit -> string
 
-and [<Sealed>] CheckedMethod =
+and [<Sealed; DebuggerDisplay("{ToString()}")>] CheckedMethod =
     member DeclaringType : CheckedTypeDefinition
     member Name : IdentifierNode
     member Flags : UByte.Format.Model.MethodFlags
     member Visibility : UByte.Format.Model.VisibilityFlags
     member Parameters : ImmutableArray<CheckedParameter>
     member ReturnTypes : ImmutableArray<CheckedType>
+
+    override ToString : unit -> string
 
 and NamedMethod = Choice<CheckedMethod, UByte.Resolver.ResolvedMethod>
 
@@ -173,15 +177,21 @@ type SemanticError =
       Source: ParsedFile
       Message: SemanticErrorMessage }
 
-[<Sealed>]
-type CheckedModule =
+[<NoComparison; NoEquality>]
+type CheckedModule
+
+type CheckedModule with
     member Name : UByte.Format.Model.Name
     member Version : UByte.Format.Model.VersionNumbers
     member Identifier : UByte.Format.Model.ModuleIdentifier
     member DefinedTypes : ImmutableArray<CheckedTypeDefinition>
+    member DefinedMethods : ImmutableArray<CheckedMethod>
     member EntryPoint : CheckedMethod voption
     member Errors : ImmutableArray<SemanticError>
     member ImportedModules : ImmutableArray<UByte.Resolver.ResolvedModule>
+    /// Contains the types imported by this module, in the order that they were resolved.
+    member ImportedTypes : ImmutableArray<UByte.Resolver.ResolvedTypeDefinition>
+    member ImportedMethods : ImmutableArray<UByte.Resolver.ResolvedMethod>
 
 [<RequireQualifiedAccess>]
 module CheckedType =

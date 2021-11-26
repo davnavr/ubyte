@@ -30,6 +30,23 @@ let private writeModuleImports (modules: ImmutableArray<UByte.Resolver.ResolvedM
         lookup.Add(modules.[i], ModuleIndex.Index(1u + uint32 i))
     struct(Unsafe.As<ModuleIdentifier[], ImmutableArray<ModuleIdentifier>> &imports, lookup)
 
+let private writeTypeImports
+    identifierIndexLookup
+    (moduleImportLookup: Dictionary<_, _>)
+    (types: ImmutableArray<UByte.Resolver.ResolvedTypeDefinition>)
+    =
+    let mutable imports = Array.zeroCreate types.Length
+    let lookup = Dictionary<_, TypeDefinitionIndex>(capacity = types.Length, comparer = ReferenceEqualityComparer.Instance)
+    for i = 0 to types.Length - 1 do
+        let ty = types.[i]
+        lookup.Add(ty, TypeDefinitionIndex.Index(uint32 i))
+        imports.[i] <-
+            { TypeDefinitionImport.Module = moduleImportLookup.[ty.DeclaringModule]
+              TypeName = identifierIndexLookup ty.Name
+              TypeNamespace = failwith "TODO: Get namespace from UByte.Resolver"
+              TypeParameters = 0u }
+    struct(Unsafe.As<TypeDefinitionImport[], ImmutableArray<TypeDefinitionImport>> &imports, lookup)
+
 let private writeTypeDefinitions
     identifierIndexLookup
     namespaceIndexLookup
@@ -89,6 +106,8 @@ let rec private writeExpressionCode
     nextTemporaryIndex
     dataIndexLookup
     typeSignatureLookup
+    (importedMethodDefinitions: ImmutableArray<_>.Builder)
+    (definedMethodIndices: Dictionary<_, uint32>)
     (instructions: ImmutableArray<_>.Builder)
     (expression: TypedExpression)
     : ImmutableArray<RegisterIndex> =
@@ -103,6 +122,10 @@ let rec private writeExpressionCode
             writeOneRegister()
         | _ ->
             raise(NotImplementedException(sprintf "Cannot generate integer literal of type %O" expression.Type))
+    | CheckedExpression.MethodCall(Choice1Of2 dmethod, arguments) ->
+        let mindex = definedMethodIndices.[dmethod] + failwith "WONT WORK, IMPORTED METHODS ADDED LATER WILL MESS UP EVERYTHING"
+        // Need to have all blocks be mutable to allow "fix-ups" for method indices.
+        failwith "A"
     | CheckedExpression.NewArray(etype, elements) ->
         match etype with
         | CheckedElementType.ValueType(CheckedValueType.Primitive(PrimitiveType.Char32 | PrimitiveType.U32) as vtype) ->
@@ -130,6 +153,8 @@ let rec private writeExpressionCode
 let private writeMethodBodies
     dataIndexLookup
     typeSignatureLookup
+    importedMethodDefinitions
+    definedMethodIndices
     (methodBodyLookup: Dictionary<CheckedMethod, struct(CodeIndex * ImmutableArray<_>)>) =
     let mutable bodies = Array.zeroCreate methodBodyLookup.Count
 
@@ -163,9 +188,9 @@ let private writeMethodBodies
         for statement in statements do
             match statement with
             | CheckedStatement.Expression value ->
-                writeExpressionCode createTemporaryRegister dataIndexLookup typeSignatureLookup instructions value |> ignore
+                writeExpressionCode createTemporaryRegister dataIndexLookup typeSignatureLookup importedMethodDefinitions definedMethodIndices instructions value |> ignore
             | CheckedStatement.LocalDeclaration(_, name, _, value) ->
-                let values = writeExpressionCode createTemporaryRegister dataIndexLookup typeSignatureLookup instructions value
+                let values = writeExpressionCode createTemporaryRegister dataIndexLookup typeSignatureLookup importedMethodDefinitions definedMethodIndices instructions value
                 if values.Length <> 1 then
                     raise(NotImplementedException(sprintf "Code generation for local variable containing %i values is not yet implemented" values.Length))
 
@@ -182,7 +207,7 @@ let private writeMethodBodies
                 elif values.Length = 1 then
                     let mutable returns = Array.zeroCreate values.Length
                     for i = 0 to returns.Length - 1 do
-                        let expressions = writeExpressionCode createTemporaryRegister dataIndexLookup typeSignatureLookup instructions values.[i]
+                        let expressions = writeExpressionCode createTemporaryRegister dataIndexLookup typeSignatureLookup importedMethodDefinitions definedMethodIndices instructions values.[i]
                         if expressions.Length <> 1 then
                             raise(NotImplementedException "TODO: Handle weird number of return values")
                         returns.[i] <- expressions.[0]
@@ -251,14 +276,8 @@ let write (mdl: CheckedModule) =
                 { MethodSignature.ReturnTypes = getSignatureArray signature.ReturnTypes
                   MethodSignature.ParameterTypes = getSignatureArray signature.ParameterTypes })
 
-    let struct(importedTypeDefinitions, typeImportLookup: _ -> TypeDefinitionIndex) =
-        createIndexedLookup
-            EqualityComparer.Default
-            (fun (ty: UByte.Resolver.ResolvedTypeDefinition) ->
-                { TypeDefinitionImport.Module = moduleImportLookup.[ty.DeclaringModule] // TODO: Fix, can fail if module was not directly imported.
-                  TypeName = identifierIndexLookup ty.Name
-                  TypeNamespace = failwith "TODO: Get namespace from UByte.Resolver"
-                  TypeParameters = 0u })
+    let struct(importedTypeDefinitions, typeImportLookup) =
+        writeTypeImports identifierIndexLookup moduleImportLookup mdl.ImportedTypes
 
     let translateExternalType (rm: UByte.Resolver.ResolvedModule) =
         function
@@ -293,12 +312,14 @@ let write (mdl: CheckedModule) =
                         translated
                     |> methodSignatureLookup })
 
+    // TODO: Add method definitions before writing type definitions.
+
     let struct(definedTypeIndices, definedTypeList, definedMethodIndices, methodBodyLookup) =
         writeTypeDefinitions identifierIndexLookup namespaceIndexLookup typeImportLookup mdl.DefinedTypes
 
     // Type definitions, method definitions, and field definitions can only be refered to by index after method bodies have been
-    // generated.
-    let code = writeMethodBodies dataIndexLookup typeSignatureLookup methodBodyLookup
+    // generated. REMOVE THIS COMMENT Note that all imports have been kept track of in the semantic analysis stage, so all indices are final.
+    let code = writeMethodBodies dataIndexLookup typeSignatureLookup importedMethodDefinitions definedMethodIndices methodBodyLookup
 
     let fieldImportCount = uint32
     let methodImportCount = uint32 importedMethodDefinitions.Count
@@ -350,7 +371,7 @@ let write (mdl: CheckedModule) =
       Module.MethodSignatures = msignatures.ToImmutable()
       Module.Imports =
         { ModuleImports.ImportedModules = moduleImportArray
-          ModuleImports.ImportedTypes = importedTypeDefinitions.ToImmutable()
+          ModuleImports.ImportedTypes = importedTypeDefinitions
           ModuleImports.ImportedFields = ImmutableArray.Empty
           ModuleImports.ImportedMethods = importedMethodDefinitions.ToImmutable() }
       Module.Definitions =

@@ -99,7 +99,12 @@ and [<RequireQualifiedAccess>] CheckedExpression =
         | LiteralUnsignedInteger i -> string i
         | Local name -> name.ToString()
         | MethodCall(method, arguments) ->
-            System.Text.StringBuilder(method.ToString()).Append('(').AppendJoin(", ", arguments).Append(')').ToString()
+            let methodName =
+                match method with
+                | Choice1Of2 defined -> defined.ToString()
+                | Choice2Of2 imported -> imported.ToString()
+
+            System.Text.StringBuilder(methodName).Append('(').AppendJoin(", ", arguments).Append(')').ToString()
         | NewArray(etype, elements) ->
             System.Text.StringBuilder("new ").Append(etype.ToString()).Append("[] { ").AppendJoin(", ", elements).Append(" }")
                 .ToString()
@@ -146,6 +151,8 @@ and [<RequireQualifiedAccess>] CheckedParameter =
     { Name: IdentifierNode
       Type: CheckedType }
 
+    override this.ToString() = this.Name.Content.ToString() + " " + this.Type.ToString()
+
 and [<RequireQualifiedAccess>] CheckedMethodBody =
     | Defined of ImmutableArray<CheckedStatement>
     | External of string * library: string
@@ -189,6 +196,13 @@ and [<Sealed>] CheckedMethod
     member _.ReturnTypes with get() = returns and set value = returns <- value
     member _.Signature = { CheckedMethodSignature.ReturnTypes = returns; CheckedMethodSignature.ParameterTypes = parameterTypes }
     member _.Body with get() = body and set value = body <- value // TODO: Make available dictionary of all locals.
+
+    override this.ToString() =
+        System.Text.StringBuilder(this.DeclaringType.Identifier.ToString()).Append('.').Append(this.Name.Content.ToString())
+            .Append('(')
+            .AppendJoin(", ", this.Parameters)
+            .Append(')')
+            .ToString()
 
 and NamedMethod = Choice<CheckedMethod, UByte.Resolver.ResolvedMethod>
 
@@ -276,18 +290,24 @@ type CheckedModule
     (
         name: Model.Name,
         version: Model.VersionNumbers,
-        imports: ImmutableArray<UByte.Resolver.ResolvedModule>,
-        types: ImmutableArray<CheckedTypeDefinition>,
-        main: CheckedMethod voption,
+        importedModules: ImmutableArray<UByte.Resolver.ResolvedModule>,
+        definedTypes: ImmutableArray<CheckedTypeDefinition>,
+        importedTypes: ImmutableArray<UByte.Resolver.ResolvedTypeDefinition>,
+        definedMethods: ImmutableArray<CheckedMethod>,
+        importedMethods: ImmutableArray<UByte.Resolver.ResolvedMethod>,
+        entryPointMethod: CheckedMethod voption,
         errors: ImmutableArray<SemanticError>
     )
     =
     member val Identifier = { Model.ModuleIdentifier.ModuleName = name; Model.ModuleIdentifier.Version = version }
-    member _.Name = name
-    member _.Version = version
-    member _.ImportedModules = imports
-    member _.DefinedTypes = types
-    member _.EntryPoint = main
+    member this.Name = this.Identifier.ModuleName
+    member this.Version = this.Identifier.Version
+    member _.ImportedModules = importedModules
+    member _.ImportedTypes = importedTypes
+    member _.DefinedTypes = definedTypes
+    member _.ImportedMethods = importedMethods
+    member _.DefinedMethods = definedMethods
+    member _.EntryPoint = entryPointMethod
     member _.Errors = errors
 
 [<RequireQualifiedAccess>]
@@ -407,18 +427,25 @@ module TypeChecker =
 
     let private importedTypeLookup (imports: ImmutableArray<UByte.Resolver.ResolvedModule>) =
         let lookup = Dictionary<FullTypeIdentifier, UByte.Resolver.ResolvedTypeDefinition voption>()
-        fun id ->
+        let resolved = ImmutableArray.CreateBuilder()
+        let search id =
             match lookup.TryGetValue id with
             | true, existing -> existing
             | false, _ ->
                 let ns = namespaceSearchString id.Namespace
                 let mutable i, ty = 0, ValueNone
+
                 while i < imports.Length && ty.IsNone do
                     let md = imports.[i]
                     ty <- md.TryFindType(ns, id.Name.Content.ToString())
                     i <- i + 1
+
+                if ty.IsSome then
+                    resolved.Add ty.Value
+
                 lookup.Add(id, ty)
                 ty
+        struct(resolved, search)
 
     let private matchingNamedTypes namedTypeLookup (namespaces: ImmutableArray<FullNamespaceName>) (id: TypeIdentifier) =
         let matches = List<FullTypeIdentifier * NamedType>()
@@ -509,6 +536,8 @@ module TypeChecker =
 
     let private findTypeMembers errors (declarations: Dictionary<FullTypeIdentifier, _>) =
         let methodNameLookup = Dictionary<CheckedTypeDefinition, _>()
+        let allDefinedMethods = ImmutableArray.CreateBuilder()
+        /// Reused instance used to build an array containing all of a type definition's methods.
         let definedMethodList = ImmutableArray.CreateBuilder()
 
         for ty in declarations.Values do
@@ -531,11 +560,12 @@ module TypeChecker =
 
                     methods.Add(name.Content, method)
                     definedMethodList.Add method
+                    allDefinedMethods.Add method
                 //| TypeMemberNode.FieldDeclaration _
 
             ty.Methods <- definedMethodList.ToImmutable()
 
-        struct((), methodNameLookup)
+        struct(allDefinedMethods, methodNameLookup)
 
     let private checkDefinedMethods
         (errors: ImmutableArray<_>.Builder)
@@ -763,11 +793,16 @@ module TypeChecker =
                 | MethodBodyNode.External(name, library) ->
                     method.Body <- CheckedMethodBody.External(name.Content, library.Content)
 
-    let check name version files imports =
+    let check name version files (imports: ImmutableArray<_>) =
         let errors = ImmutableArray.CreateBuilder()
+
+        let moduleImportList = ImmutableArray.CreateBuilder<UByte.Resolver.ResolvedModule>()
+        moduleImportList.AddRange imports
+
         let declaredTypesLookup = findTypeDeclarations errors files
 
-        let typeImportLookup = importedTypeLookup imports
+        // TOOD: Add to module import list if any other resolved types are used.
+        let struct(typeImportList, typeImportLookup) = importedTypeLookup imports
 
         let namedTypeLookup: _ -> NamedType voption =
             fun id ->
@@ -782,7 +817,7 @@ module TypeChecker =
 
         let anyTypeChecker = checkAnyType namedTypeLookup
 
-        let struct((), methodNameLookup) = findTypeMembers errors declaredTypesLookup
+        let struct(allDefinedMethods, methodNameLookup) = findTypeMembers errors declaredTypesLookup
 
         let namedMethodLookup: NamedType -> ParsedIdentifier -> NamedMethod voption =
             fun declaringType methodName ->
@@ -804,9 +839,12 @@ module TypeChecker =
         CheckedModule (
             name = Model.Name.ofStr name,
             version = Model.VersionNumbers(ImmutableArray.CreateRange version),
-            imports = imports,
-            types = declaredTypesLookup.Values.ToImmutableArray(),
-            main = entryPointMethod,
+            importedModules = moduleImportList.ToImmutable(),
+            definedTypes = declaredTypesLookup.Values.ToImmutableArray(),
+            definedMethods = allDefinedMethods.ToImmutable(),
+            importedTypes = typeImportList.ToImmutable(),
+            importedMethods = ImmutableArray.Empty,
+            entryPointMethod = entryPointMethod,
             errors =
                 if errors.Count <> errors.Capacity
                 then errors.ToImmutable()
