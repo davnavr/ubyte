@@ -382,8 +382,10 @@ module Parse =
                     (equals >>. whitespace >>. expression)
                 |>> StatementNode.LocalDeclaration
 
-                expression |>> StatementNode.Expression
                 skipString "return" >>. whitespace >>. expression |>> StatementNode.Return
+
+                // All parsers that take a keyword must be above this to ensure keywords aren't interpreted as names.
+                expression |>> StatementNode.Expression
                 followedBy semicolon >>% StatementNode.Empty
             |]
         .>> whitespace
