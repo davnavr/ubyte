@@ -347,13 +347,20 @@ let write (mdl: CheckedModule) =
     let struct (data, dataIndexLookup: ImmutableArray<byte> -> DataIndex) =
         createIndexedLookup EqualityComparer.Default id
 
-    let retrieveElementType =
+    let mutable mapElementType = Unchecked.defaultof<_>
+
+    let mapReferenceType rtype =
+        match rtype with
+        | CheckedReferenceType.Any -> ReferenceType.Any
+        | CheckedReferenceType.Array etype -> ReferenceType.Vector(mapElementType etype)
+
+    mapElementType <-
         // TODO: Cache element types.
         function
         | CheckedElementType.ValueType(CheckedValueType.Primitive prim) ->
             ReferenceOrValueType.Value(ValueType.Primitive prim)
-        | bad ->
-            raise(NotImplementedException(sprintf "Translate element type %O" bad))
+        | CheckedElementType.ReferenceType rtype ->
+            ReferenceOrValueType.Reference(mapReferenceType rtype)
 
     let struct(tsignatures, typeSignatureLookup: CheckedType -> TypeSignatureIndex) =
         createIndexedLookup
@@ -362,10 +369,7 @@ let write (mdl: CheckedModule) =
             | CheckedType.ValueType(CheckedValueType.Primitive prim) ->
                 AnyType.primitive prim
             | CheckedType.ReferenceType rtype ->
-                match rtype with
-                | CheckedReferenceType.Any -> ReferenceType.Any
-                | CheckedReferenceType.Array etype -> ReferenceType.Vector(retrieveElementType etype)
-                |> AnyType.ReferenceType
+                AnyType.ReferenceType(mapReferenceType rtype)
             | CheckedType.Void ->
                 invalidOp "Cannot create a type signature for void")
 
