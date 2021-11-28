@@ -49,6 +49,30 @@ type AnyTypeNode =
     | Array of ParsedNode<AnyTypeNode>
     //| ObjectReference of Choice<TypeNode, ParsedTypeIdentifier>
 
+[<RequireQualifiedAccess; Struct; DebuggerDisplay("{ToString()}")>]
+type BinaryOperation =
+    | Multiplication
+    | Division
+    | Modulo
+    | Addition
+    | Subtraction
+    //| BitwiseShiftLeft
+    //| BitwiseShiftRight
+    | LessThan
+    | LessThanOrEqual
+    | GreaterThan
+    | GreaterThanOrEqual
+    | IsEqual
+    | IsNotEqual
+    | BitwiseAnd
+    | BitwiseXor
+    | BitwiseOr
+    | BooleanAnd
+    | BooleanOr
+    | Assignment
+
+    override ToString : unit -> string
+
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
 type ExpressionNode =
     | LiteralBool of bool
@@ -59,7 +83,7 @@ type ExpressionNode =
     | Symbol of ParsedNamespaceName * ParsedNodeArray<ParsedIdentifier> * arguments: ParsedNodeArray<ExpressionNode> voption
     | NewObject of ParsedNode<AnyTypeNode> * ParsedNode<ConstructionExpression>
     //| UnaryOperation
-    //| BinaryOperation
+    | BinaryOperation of BinaryOperation * x: ParsedExpression * y: ParsedExpression
 
 and [<RequireQualifiedAccess; NoComparison; NoEquality>] ConstructionExpression =
     | String of string

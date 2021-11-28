@@ -63,6 +63,48 @@ type AnyTypeNode =
     | Primitive of UByte.Format.Model.PrimitiveType
     | Array of ParsedNode<AnyTypeNode>
 
+[<RequireQualifiedAccess; Struct>]
+type BinaryOperation =
+    | Multiplication
+    | Division
+    | Modulo
+    | Addition
+    | Subtraction
+    //| BitwiseShiftLeft
+    //| BitwiseShiftRight
+    | LessThan
+    | LessThanOrEqual
+    | GreaterThan
+    | GreaterThanOrEqual
+    | IsEqual
+    | IsNotEqual
+    | BitwiseAnd
+    | BitwiseXor
+    | BitwiseOr
+    | BooleanAnd
+    | BooleanOr
+    | Assignment
+
+    override this.ToString() =
+        match this with
+        | Multiplication -> "*"
+        | Division -> "/"
+        | Modulo -> "%"
+        | Addition -> "+"
+        | Subtraction -> "-"
+        | LessThan -> "<"
+        | LessThanOrEqual -> "<="
+        | GreaterThan -> ">"
+        | GreaterThanOrEqual -> ">="
+        | IsEqual -> "=="
+        | IsNotEqual -> "!=" // or maybe "<>"
+        | BitwiseAnd -> "&"
+        | BitwiseXor -> "^"
+        | BitwiseOr -> "|"
+        | BooleanAnd -> "&&"
+        | BooleanOr -> "||"
+        | Assignment -> "<-"
+
 [<RequireQualifiedAccess>]
 type ExpressionNode =
     | LiteralBool of bool
@@ -71,6 +113,7 @@ type ExpressionNode =
     | LiteralS32 of int32
     | Symbol of ParsedNamespaceName * ParsedNodeArray<ParsedIdentifier> * arguments: ParsedNodeArray<ExpressionNode> voption
     | NewObject of ParsedNode<AnyTypeNode> * ParsedNode<ConstructionExpression>
+    | BinaryOperation of BinaryOperation * x: ParsedExpression * y: ParsedExpression
 
 and [<RequireQualifiedAccess>] ConstructionExpression =
     | String of string
@@ -310,51 +353,82 @@ module Parse =
             (skipChar '\\' >>. escape)
         |> between dquote dquote
 
-    let private expression, private expressionRef: Parser<ParsedExpression, _> * _ = createParserForwardedToRef()
-
-    expressionRef.Value <-
-        // TODO: If integer literal is out of range, generate an error node.
+    let private expression =
         let unsignedIntegerLiteralOptions = NumberLiteralOptions.AllowBinary ||| NumberLiteralOptions.AllowHexadecimal
         let signedIntegerLiteralOptions = unsignedIntegerLiteralOptions ||| NumberLiteralOptions.AllowMinusSign
         let numberlit options parser node =
             numberLiteral options String.Empty |>> fun literal -> node(parser literal.String)
 
-        whitespace
-        >>. choice
-            [|
-                stringReturn "true" (ExpressionNode.LiteralBool true)
-                stringReturn "false" (ExpressionNode.LiteralBool false)
-                numberlit signedIntegerLiteralOptions Int32.Parse ExpressionNode.LiteralS32
-                numberlit unsignedIntegerLiteralOptions UInt32.Parse ExpressionNode.LiteralU32
+        let parser = OperatorPrecedenceParser<ParsedExpression, unit, _>()
 
-                let arguments =
-                    betweenParenthesis(CollectionParsers.ImmutableArray.sepBy (whitespace >>. expression .>> whitespace) comma)
+        parser.TermParser <-
+            whitespace
+            >>. choice
+                [|
+                    stringReturn "true" (ExpressionNode.LiteralBool true)
+                    stringReturn "false" (ExpressionNode.LiteralBool false)
+                    numberlit signedIntegerLiteralOptions Int32.Parse ExpressionNode.LiteralS32
+                    numberlit unsignedIntegerLiteralOptions UInt32.Parse ExpressionNode.LiteralU32
 
-                skipString "new"
-                >>. whitespace
-                >>. anyTypeNode
-                .>> whitespace
-                .>>. (choice
-                    [
-                        stringlit |>> ConstructionExpression.String
-                        arguments |>> ConstructionExpression.ConstructorCall
+                    let arguments =
+                        CollectionParsers.ImmutableArray.sepBy (whitespace >>. parser.ExpressionParser .>> whitespace) comma
+                        |> betweenParenthesis
 
-                        CollectionParsers.ImmutableArray.sepBy1 (whitespace >>. expression .>> whitespace) comma
-                        |> betweenCurlyBrackets
-                        |>> ConstructionExpression.ArrayElements
-                    ]
-                    |> withNodeContent)
-                |>> ExpressionNode.NewObject
+                    skipString "new"
+                    >>. whitespace
+                    >>. anyTypeNode
+                    .>> whitespace
+                    .>>. (choice
+                        [
+                            stringlit |>> ConstructionExpression.String
+                            arguments |>> ConstructionExpression.ConstructorCall
 
-                tuple3
-                    (CollectionParsers.ImmutableArray.many(attempt (validIdentifierNode .>> namespaceNameSeparator)))
-                    (CollectionParsers.ImmutableArray.sepBy1 validIdentifierNode period .>> whitespace)
-                    (vopt arguments)
-                |>> ExpressionNode.Symbol
-            |]
-        //|> errorNodeHandler TopLevelNode.Error
-        |> withNodeContent
-        .>> whitespace
+                            CollectionParsers.ImmutableArray.sepBy1 (whitespace >>. parser.ExpressionParser .>> whitespace) comma
+                            |> betweenCurlyBrackets
+                            |>> ConstructionExpression.ArrayElements
+                        ]
+                        |> withNodeContent)
+                    |>> ExpressionNode.NewObject
+
+                    tuple3
+                        (CollectionParsers.ImmutableArray.many(attempt (validIdentifierNode .>> namespaceNameSeparator)))
+                        (CollectionParsers.ImmutableArray.sepBy1 validIdentifierNode period .>> whitespace)
+                        (vopt arguments)
+                    |>> ExpressionNode.Symbol
+                |]
+            //|> errorNodeHandler TopLevelNode.Error
+            |> withNodeContent
+            .>> whitespace
+
+        let addBinaryOperator (operator: BinaryOperation) precedence associativity =
+            InfixOperator<ParsedExpression, unit, unit> (
+                operator.ToString(),
+                whitespace,
+                precedence,
+                associativity,
+                fun x y -> { x with Content = ExpressionNode.BinaryOperation(operator, x, y) }
+            )
+            |> parser.AddOperator
+
+        addBinaryOperator BinaryOperation.Assignment -60 Associativity.None
+        addBinaryOperator BinaryOperation.BooleanOr -50 Associativity.None
+        addBinaryOperator BinaryOperation.BooleanAnd -40 Associativity.None
+        addBinaryOperator BinaryOperation.BitwiseOr -30 Associativity.None
+        addBinaryOperator BinaryOperation.BitwiseXor -20 Associativity.None
+        addBinaryOperator BinaryOperation.BitwiseAnd -10 Associativity.None
+        addBinaryOperator BinaryOperation.IsEqual -7 Associativity.None
+        addBinaryOperator BinaryOperation.IsNotEqual -7 Associativity.None
+        addBinaryOperator BinaryOperation.LessThan -5 Associativity.None
+        addBinaryOperator BinaryOperation.GreaterThan -5 Associativity.None
+        addBinaryOperator BinaryOperation.LessThanOrEqual -5 Associativity.None
+        addBinaryOperator BinaryOperation.GreaterThanOrEqual -5 Associativity.None
+        addBinaryOperator BinaryOperation.Addition 0 Associativity.None
+        addBinaryOperator BinaryOperation.Subtraction 0 Associativity.None
+        addBinaryOperator BinaryOperation.Multiplication 10 Associativity.None
+        addBinaryOperator BinaryOperation.Division 10 Associativity.None
+        addBinaryOperator BinaryOperation.Modulo 10 Associativity.None
+
+        parser.ExpressionParser
 
     let private block, private blockRef : Parser<ParsedNodeArray<StatementNode>, unit> * _ = createParserForwardedToRef()
 
@@ -372,8 +446,6 @@ module Parse =
                         preturn ImmutableArray.Empty
                     |])
                 |>> StatementNode.If
-
-                // TODO: How to parse else if?
 
                 tuple4
                     (choice [ stringReturn "let" true; stringReturn "var" false ])
