@@ -80,7 +80,7 @@ type ExpressionNode =
     | LiteralU32 of uint32
     | LiteralS32 of int32
     /// Represents a local, parameter, field, or method call.
-    | Symbol of ParsedNamespaceName * ParsedNodeArray<ParsedIdentifier> * arguments: ParsedNodeArray<ExpressionNode> voption
+    | Symbol of ParsedNamespaceName * ParsedNodeArray<ParsedIdentifier> * arguments: ParsedNodeArray<ExpressionNode> voption // TODO: Consider using :: for accessing nested types (Type::Nested) or even members of types (Type::MyMethod())
     | NewObject of ParsedNode<AnyTypeNode> * ParsedNode<ConstructionExpression>
     //| UnaryOperation
     | BinaryOperation of BinaryOperation * x: ParsedExpression * y: ParsedExpression

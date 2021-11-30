@@ -432,7 +432,7 @@ module Parse =
         addBinaryOperator BinaryOperation.Division 10 Associativity.None
         addBinaryOperator BinaryOperation.Modulo 10 Associativity.None
 
-        // Allows method chaining (`A.B().C()`) and accessing array length (`myArray.length`)
+        // Allows method chaining (<c>A.B().C()</c>) and accessing array length (<c>myArray.length</c>)
         let memberAccessAfterString =
             pipe2 (validIdentifierNode .>> whitespace) (vopt arguments) <| fun name args x ->
                 { x with Content = ExpressionNode.MemberAccess(x, name, args) }

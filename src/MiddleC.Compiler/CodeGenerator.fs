@@ -179,6 +179,17 @@ let rec private writeExpressionCode
     =
     let inline writeOneRegister() = ImmutableArray.Create(item = nextTemporaryIndex())
 
+    let inline writeNestedExpression nested =
+        writeExpressionCode
+            nextTemporaryIndex
+            dataIndexLookup
+            typeSignatureLookup
+            importedMethodIndices
+            definedMethodIndices
+            localRegisterLookup
+            instructions
+            nested
+
     match expression.Expression with
     | CheckedExpression.LiteralSignedInteger value ->
         match expression.Type with
@@ -192,16 +203,7 @@ let rec private writeExpressionCode
         let mutable callArgumentRegisters = Array.zeroCreate arguments.Length
 
         for i = 0 to callArgumentRegisters.Length - 1 do
-            let results =
-                writeExpressionCode
-                    nextTemporaryIndex
-                    dataIndexLookup
-                    typeSignatureLookup
-                    importedMethodIndices
-                    definedMethodIndices
-                    localRegisterLookup
-                    instructions
-                    arguments.[i]
+            let results = writeNestedExpression arguments.[i]
 
             if results.Length <> 1 then
                 invalidOp(sprintf "Invalid number of return values (%i) for method argument" results.Length)
@@ -243,6 +245,14 @@ let rec private writeExpressionCode
         | _ ->
             raise(NotImplementedException(sprintf "Code generation for new array containing %O is not yet implemented" etype))
     | CheckedExpression.Local name -> ImmutableArray.Create(item = localRegisterLookup.[name] ())
+    | CheckedExpression.ArrayLengthAccess expression ->
+        let array = writeNestedExpression expression
+        if array.Length <> 1 then invalidOp "Attempt to access array length for multiple values"
+        match expression.Type with
+        | CheckedType.ValueType(CheckedValueType.Primitive ptype) ->
+            instructions.Add(InstructionSet.Obj_arr_len(InstructionSet.ArithmeticFlags.None, ptype, array.[0]))
+            writeOneRegister()
+        | bad -> invalidOp(sprintf "Attempt to convert array length integer to a %O" bad)
     | _ ->
         raise(NotImplementedException(sprintf "Code generation is not yet implemented for %O" expression))
 

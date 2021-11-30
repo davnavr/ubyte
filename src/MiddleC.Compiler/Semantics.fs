@@ -83,6 +83,7 @@ and [<RequireQualifiedAccess; NoComparison; StructuralEquality>] CheckedType =
         | Void -> "()"
 
 and [<RequireQualifiedAccess>] CheckedExpression =
+    | ArrayLengthAccess of TypedExpression
     | LiteralBoolean of bool
     | LiteralSignedInteger of int64
     | LiteralUnsignedInteger of uint64
@@ -93,6 +94,7 @@ and [<RequireQualifiedAccess>] CheckedExpression =
 
     override this.ToString() =
         match this with
+        | ArrayLengthAccess array -> array.ToString() + ".length"
         | LiteralBoolean true -> "true"
         | LiteralBoolean false -> "false"
         | LiteralSignedInteger i -> string i
@@ -117,9 +119,9 @@ and TypedExpression =
 
     override this.ToString() =
         match this with
-        | { Expression = (CheckedExpression.LiteralBoolean _ | CheckedExpression.NewArray _ | CheckedExpression.MethodCall _ | CheckedExpression.Local _) as expr } ->
+        | { Expression = CheckedExpression.LiteralBoolean _ | CheckedExpression.NewArray _ | CheckedExpression.MethodCall _ | CheckedExpression.Local _ | CheckedExpression.ArrayLengthAccess _ as expr } ->
             expr.ToString() // add casting syntax?
-        | { Expression = (CheckedExpression.LiteralSignedInteger _ | CheckedExpression.LiteralUnsignedInteger _) as expr } ->
+        | { Expression = CheckedExpression.LiteralSignedInteger _ | CheckedExpression.LiteralUnsignedInteger _ as expr } ->
             match this.Type with
             | CheckedType.ValueType(CheckedValueType.Primitive prim) ->
                 expr.ToString() // + prefix
@@ -251,9 +253,10 @@ type SemanticErrorMessage =
     | InvalidCharacterType of ParsedNode<AnyTypeNode>
     | InvalidElementType of CheckedType
     | MultipleEntryPoints
-    | UndefinedTypeIdentifier of TypeIdentifier
+    | UndefinedArrayField of ParsedIdentifier
     | UndefinedLocal of ParsedIdentifier
     | UndefinedMethod of FullTypeIdentifier * methodName: IdentifierNode
+    | UndefinedTypeIdentifier of TypeIdentifier
     | UnknownError of message: string
 
     override this.ToString() =
@@ -273,10 +276,12 @@ type SemanticErrorMessage =
         | InvalidElementType ty ->
             ty.ToString() + " is not a valid element type, only value types and reference types are allowed"
         | MultipleEntryPoints -> "Only one entry point method in a module is allowed"
-        | UndefinedTypeIdentifier id -> "The type definition " + id.ToString() + " does not exist"
+        | UndefinedArrayField id ->
+            "Array types do not define a field with the name " + id.ToString() + ", only `.length` is valid"
         | UndefinedLocal id -> "A local or parameter with the name " + id.ToString() + " does not exist"
         | UndefinedMethod(declaringTypeName, methodName) ->
             "A method named " + methodName.Content.ToString() + " could not be found in the type " + declaringTypeName.ToString()
+        | UndefinedTypeIdentifier id -> "The type definition " + id.ToString() + " does not exist"
         | UnknownError message -> message
 
 type SemanticError =
@@ -727,6 +732,20 @@ module TypeChecker =
                         error localVariableName (SemanticErrorMessage.UndefinedLocal localVariableName.Content)
                 else
                     raise(NotImplementedException(sprintf "TODO: GLOBAL FIELD ACCESS %A::%A" snamespace snames))
+            | ExpressionNode.MemberAccess(source, name, ValueNone) ->
+                validated {
+                    match! checkParsedExpression method source with
+                    | { Type = CheckedType.ReferenceType(CheckedReferenceType.Array _) } as array->
+                        match name.Content with
+                        | ParsedIdentifier.Identifier "length" ->
+                            return! ok
+                                (CheckedExpression.ArrayLengthAccess array)
+                                (CheckedType.primitive Model.PrimitiveType.UNative)
+                        | _ ->
+                            return! error name (SemanticErrorMessage.UndefinedArrayField name.Content)
+                    | _ ->
+                        return(raise(NotImplementedException "Field access of objects is not yet supported"))
+                }
             | bad -> raise(NotImplementedException(sprintf "TODO: Add support for expression %A" bad))
 
         and checkArgumentExpressions method (arguments: ImmutableArray<_>) =

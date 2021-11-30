@@ -91,6 +91,8 @@ type CheckedParameter =
 
 [<RequireQualifiedAccess; NoComparison; NoEquality; DebuggerDisplay("{ToString()}")>]
 type CheckedExpression =
+    /// <summary>Represents access of the <c>length</c> field of an array.</summary>
+    | ArrayLengthAccess of TypedExpression
     | LiteralBoolean of bool
     | LiteralSignedInteger of int64
     | LiteralUnsignedInteger of uint64
@@ -163,9 +165,10 @@ type SemanticErrorMessage =
     | InvalidCharacterType of ParsedNode<AnyTypeNode>
     | InvalidElementType of CheckedType
     | MultipleEntryPoints
-    | UndefinedTypeIdentifier of TypeIdentifier
+    | UndefinedArrayField of ParsedIdentifier
     | UndefinedLocal of ParsedIdentifier
     | UndefinedMethod of FullTypeIdentifier * methodName: IdentifierNode
+    | UndefinedTypeIdentifier of TypeIdentifier
     | UnknownError of message: string
 
     override ToString : unit -> string
