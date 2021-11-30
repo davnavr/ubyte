@@ -284,11 +284,11 @@ module Parse =
         |>> ParsedIdentifier.Identifier
         |> withNodeContent
 
-    let private namespaceNameSegment = attempt (validIdentifierNode .>> namespaceNameSeparator)
+    let private namespaceNameSegment = validIdentifierNode .>> namespaceNameSeparator
 
     let private typeIdentifierNode : Parser<ParsedTypeIdentifier, unit> =
         choice [
-            pipe2 (CollectionParsers.ImmutableArray.many namespaceNameSegment) validIdentifierNode <| fun ns name ->
+            pipe2 (CollectionParsers.ImmutableArray.many (attempt namespaceNameSegment)) validIdentifierNode <| fun ns name ->
                 { TypeIdentifier.Name = name; TypeIdentifier.Namespace = ns }
             |> attempt
 
@@ -399,6 +399,7 @@ module Parse =
                         (validIdentifierNode .>> whitespace)
                         (vopt arguments)
                     |>> ExpressionNode.MemberAccess
+                    |> attempt
 
                     validIdentifierNode |>> ExpressionNode.Local
                 |]
