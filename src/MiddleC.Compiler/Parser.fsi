@@ -79,13 +79,13 @@ type ExpressionNode =
     | LiteralChar32 of uint32
     | LiteralU32 of uint32
     | LiteralS32 of int32
-    /// Represents a local, parameter, field, or method call.
-    | Symbol of ParsedNamespaceName * ParsedNodeArray<ParsedIdentifier> * arguments: ParsedNodeArray<ExpressionNode> voption // TODO: Consider using :: for accessing nested types (Type::Nested) or even members of types (Type::MyMethod())
+    | Local of name: IdentifierNode
     | NewObject of ParsedNode<AnyTypeNode> * ParsedNode<ConstructionExpression>
     //| UnaryOperation
     | BinaryOperation of BinaryOperation * x: ParsedExpression * y: ParsedExpression
-    // TODO: How to avoid conflict with Symbol case?
-    | MemberAccess of ParsedExpression * name: IdentifierNode * arguments: ParsedNodeArray<ExpressionNode> voption
+    /// Represents a field access or method call.
+    | MemberAccess of Choice<ParsedNamespaceName, ParsedExpression> * name: IdentifierNode *
+        arguments: ParsedNodeArray<ExpressionNode> voption
 
 and [<RequireQualifiedAccess; NoComparison; NoEquality>] ConstructionExpression =
     | String of string

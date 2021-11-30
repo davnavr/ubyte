@@ -161,11 +161,10 @@ type SemanticErrorMessage =
     | DuplicateLocalDeclaration of ParsedIdentifier
     | DuplicateParameter of ParsedIdentifier
     | DuplicateTypeDefinition of FullTypeIdentifier
-    | FirstClassFunctionsNotSupported
     | InvalidCharacterType of ParsedNode<AnyTypeNode>
     | InvalidElementType of CheckedType
     | MultipleEntryPoints
-    | UndefinedArrayField of ParsedIdentifier
+    | TypeHasNoMethods of CheckedType
     | UndefinedLocal of ParsedIdentifier
     | UndefinedMethod of FullTypeIdentifier * methodName: IdentifierNode
     | UndefinedTypeIdentifier of TypeIdentifier

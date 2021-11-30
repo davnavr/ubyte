@@ -111,10 +111,11 @@ type ExpressionNode =
     | LiteralChar32 of uint32
     | LiteralU32 of uint32
     | LiteralS32 of int32
-    | Symbol of ParsedNamespaceName * ParsedNodeArray<ParsedIdentifier> * arguments: ParsedNodeArray<ExpressionNode> voption
+    | Local of name: IdentifierNode
     | NewObject of ParsedNode<AnyTypeNode> * ParsedNode<ConstructionExpression>
     | BinaryOperation of BinaryOperation * x: ParsedExpression * y: ParsedExpression
-    | MemberAccess of ParsedExpression * name: IdentifierNode * arguments: ParsedNodeArray<ExpressionNode> voption
+    | MemberAccess of Choice<ParsedNamespaceName, ParsedExpression> * name: IdentifierNode *
+        arguments: ParsedNodeArray<ExpressionNode> voption
 
 and [<RequireQualifiedAccess>] ConstructionExpression =
     | String of string
@@ -191,14 +192,18 @@ module private CollectionParsers =
 
         let inline private resultForEmptySequence () = ImmutableArray.Empty
 
-        let many p =
+        let private manyCommon p hasFirstElement =
             Inline.Many (
                 stateFromFirstElement,
                 foldState,
                 resultFromState,
                 p,
+                ?firstElementParser = (if hasFirstElement then Some p else None),
                 resultForEmptySequence = resultForEmptySequence
             )
+
+        let many p = manyCommon p false
+        let many1 p = manyCommon p true
 
         let private sepByCommon p sep hasFirstElement =
             Inline.SepBy (
@@ -247,7 +252,6 @@ module Parse =
     let private comma = skipChar ','
     let private equals = skipChar '='
     let private dquote = skipChar '\"'
-    let private period = skipChar '.'
     let private namespaceNameSeparator = skipString "::"
 
     let private vopt p = choice [ p |>> ValueSome; preturn ValueNone ]
@@ -280,15 +284,12 @@ module Parse =
         |>> ParsedIdentifier.Identifier
         |> withNodeContent
 
-    let private namespaceNameNode : Parser<ParsedNamespaceName, unit> =
-        CollectionParsers.ImmutableArray.sepBy1 validIdentifierNode namespaceNameSeparator
+    let private namespaceNameSegment = attempt (validIdentifierNode .>> namespaceNameSeparator)
 
     let private typeIdentifierNode : Parser<ParsedTypeIdentifier, unit> =
         choice [
-            pipe2
-                (namespaceNameNode .>> namespaceNameSeparator)
-                validIdentifierNode
-                (fun ns name -> { TypeIdentifier.Name = name; TypeIdentifier.Namespace = ns })
+            pipe2 (CollectionParsers.ImmutableArray.many namespaceNameSegment) validIdentifierNode <| fun ns name ->
+                { TypeIdentifier.Name = name; TypeIdentifier.Namespace = ns }
             |> attempt
 
             validIdentifierNode |>> fun name -> { TypeIdentifier.Name = name; TypeIdentifier.Namespace = ImmutableArray.Empty }
@@ -393,10 +394,13 @@ module Parse =
                     |>> ExpressionNode.NewObject
 
                     tuple3
-                        (CollectionParsers.ImmutableArray.many(attempt (validIdentifierNode .>> namespaceNameSeparator)))
-                        (CollectionParsers.ImmutableArray.sepBy1 validIdentifierNode period .>> whitespace)
+                        // At least one namespace name piece required to differentiate this from local variable.
+                        (CollectionParsers.ImmutableArray.many1 namespaceNameSegment |>> Choice1Of2)
+                        (validIdentifierNode .>> whitespace)
                         (vopt arguments)
-                    |>> ExpressionNode.Symbol
+                    |>> ExpressionNode.MemberAccess
+
+                    validIdentifierNode |>> ExpressionNode.Local
                 |]
             //|> errorNodeHandler TopLevelNode.Error
             |> withNodeContent
@@ -432,10 +436,11 @@ module Parse =
         addBinaryOperator BinaryOperation.Division 180 Associativity.None
         addBinaryOperator BinaryOperation.Modulo 180 Associativity.None
 
-        // Allows method chaining (<c>A.B().C()</c>) and accessing array length (<c>myArray.length</c>)
+        /// <summary>Parses the member that was accessed.</summary>
+        /// <remarks>Allows method chaining (<c>A.B().C()</c>) and accessing array length (<c>myArray.length</c>).</remarks>
         let memberAccessAfterString =
             pipe2 (validIdentifierNode .>> whitespace) (vopt arguments) <| fun name args x ->
-                { x with Content = ExpressionNode.MemberAccess(x, name, args) }
+                { x with Content = ExpressionNode.MemberAccess(Choice2Of2 x, name, args) }
 
         parser.AddOperator <| PostfixOperator<ParsedExpression, _, unit> (
             ".",
@@ -540,16 +545,18 @@ module Parse =
     topLevelNodeRef.Value <-
         whitespace
         >>. choice [|
+            let fullNamespaceName = CollectionParsers.ImmutableArray.sepBy1 validIdentifierNode namespaceNameSeparator
+
             skipString "namespace"
             >>. whitespace
-            >>. namespaceNameNode
+            >>. fullNamespaceName
             .>> whitespace
             .>>. betweenCurlyBrackets (CollectionParsers.ImmutableArray.many topLevelNode)
             |>> TopLevelNode.NamespaceDeclaration
 
             skipString "using"
             >>. whitespace
-            >>. namespaceNameNode
+            >>. fullNamespaceName
             .>> whitespace
             .>> semicolon
             |>> TopLevelNode.UsingNamespace

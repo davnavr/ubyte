@@ -249,11 +249,10 @@ type SemanticErrorMessage =
     | DuplicateLocalDeclaration of ParsedIdentifier
     | DuplicateParameter of ParsedIdentifier
     | DuplicateTypeDefinition of FullTypeIdentifier
-    | FirstClassFunctionsNotSupported
     | InvalidCharacterType of ParsedNode<AnyTypeNode>
     | InvalidElementType of CheckedType
     | MultipleEntryPoints
-    | UndefinedArrayField of ParsedIdentifier
+    | TypeHasNoMethods of CheckedType
     | UndefinedLocal of ParsedIdentifier
     | UndefinedMethod of FullTypeIdentifier * methodName: IdentifierNode
     | UndefinedTypeIdentifier of TypeIdentifier
@@ -270,14 +269,12 @@ type SemanticErrorMessage =
         | DuplicateLocalDeclaration id -> "Duplicate local declaration " + id.ToString()
         | DuplicateParameter id -> "A parameter with the name " + id.ToString() + " was already defined"
         | DuplicateTypeDefinition id -> "Duplicate definition of type " + id.ToString()
-        | FirstClassFunctionsNotSupported -> "First-class functions are not supported"
         | InvalidCharacterType ty ->
             ty.Content.ToString() + " is not a valid character type"
         | InvalidElementType ty ->
             ty.ToString() + " is not a valid element type, only value types and reference types are allowed"
         | MultipleEntryPoints -> "Only one entry point method in a module is allowed"
-        | UndefinedArrayField id ->
-            "Array types do not define a field with the name " + id.ToString() + ", only `.length` is valid"
+        | TypeHasNoMethods ty -> ty.ToString() + " is a type that does not define any methods"
         | UndefinedLocal id -> "A local or parameter with the name " + id.ToString() + " does not exist"
         | UndefinedMethod(declaringTypeName, methodName) ->
             "A method named " + methodName.Content.ToString() + " could not be found in the type " + declaringTypeName.ToString()
@@ -683,70 +680,71 @@ module TypeChecker =
                     // TODO: Add case for UTF-16 strings
                     | _ -> error ty (SemanticErrorMessage.InvalidCharacterType etype)
                 | bad -> raise(NotImplementedException "TODO: Add support for array literals")
-            | ExpressionNode.Symbol(snamespace, snames, ValueSome arguments) ->
-                if snames.IsDefaultOrEmpty then
-                    raise(NotImplementedException "Return an error if a namespace is used instead of a method name")
-                elif not snamespace.IsDefaultOrEmpty || snames.Length = 2 then
-                    validated {
-                        let methodName = snames.[1]
-                        let! (declaringTypeName, declaringType) =
-                            findNamedType
-                                namedTypeLookup
-                                method.DeclaringType.UsedNamespaces
-                                { TypeIdentifier.Name = snames.[0]; Namespace = snamespace }
-                            |> Result.mapError (SemanticError.ofNode expr method.DeclaringType.Source)
+            // TODO: When nested types are supported, use :: to refer to nested types.
+            | ExpressionNode.MemberAccess(source, name, ValueSome arguments) ->
+                validated {
+                    let! src = checkSourceExpression method source
+                    let! declaringTypeName, declaringTypeDefinition = determineSourceType method expr src
 
-                        match namedMethodLookup declaringType methodName.Content with
-                        | ValueSome callee ->
-                            let! methodArgumentExpressions = checkArgumentExpressions method arguments
-                            let methodReturnTypes =
-                                match callee with
-                                | Choice1Of2 defined ->
-                                    match defined.ReturnTypes.Length with
-                                    | 0 -> voidReturnValues
-                                    | 1 -> defined.ReturnTypes
-                                    | _ ->
-                                        raise(NotImplementedException "Methods with multiple return types are not yet supported")
-                                | Choice2Of2 _ ->
-                                    raise(NotImplementedException "Retrieval of return types from imported methods is not yet supported")
+                    match namedMethodLookup declaringTypeDefinition name.Content with
+                    | ValueSome callee ->
+                        let! methodArgumentExpressions = checkArgumentExpressions method arguments
+                        let methodReturnTypes =
+                            match callee with
+                            | Choice1Of2 defined ->
+                                match defined.ReturnTypes.Length with
+                                | 0 -> voidReturnValues
+                                | 1 -> defined.ReturnTypes
+                                | _ ->
+                                    raise(NotImplementedException "Methods with multiple return types are not yet supported")
+                            | Choice2Of2 _ ->
+                                raise(NotImplementedException "Retrieval of return types from imported methods is not yet supported")
 
-                            return! ok
-                                (CheckedExpression.MethodCall(callee, methodArgumentExpressions))
-                                methodReturnTypes.[0]
-                        | ValueNone ->
-                            return! error methodName (SemanticErrorMessage.UndefinedMethod(declaringTypeName, methodName))
-                    }
-                elif snames.Length = 1 then
-                    raise(NotImplementedException "Return an error if a type name was used instead of a method name")
-                else
-                    error expr SemanticErrorMessage.FirstClassFunctionsNotSupported
-            | ExpressionNode.Symbol(snamespace, snames, ValueNone) ->
-                if snamespace.IsDefaultOrEmpty then
-                    if snames.Length > 1 then raise(NotImplementedException "TODO: Handle access of fields in a local")
-                    // TODO: Allow lookup of arguments.
-                    let localVariableName = snames.[0]
-                    match localVariableLookup.TryGetValue localVariableName.Content with
-                    | true, ltype ->
-                        ok (CheckedExpression.Local localVariableName.Content) ltype
-                    | false, _ ->
-                        error localVariableName (SemanticErrorMessage.UndefinedLocal localVariableName.Content)
-                else
-                    raise(NotImplementedException(sprintf "TODO: GLOBAL FIELD ACCESS %A::%A" snamespace snames))
+                        match source with
+                        | Choice1Of2 _ ->
+                            return! ok (CheckedExpression.MethodCall(callee, methodArgumentExpressions)) methodReturnTypes.[0]
+                        | Choice2Of2 _ ->
+                            return! raise(NotImplementedException "Add support for instance methods e.g. myLocal.MyMethod()")
+                    | ValueNone ->
+                        return! error name (SemanticErrorMessage.UndefinedMethod(declaringTypeName, name))
+                }
             | ExpressionNode.MemberAccess(source, name, ValueNone) ->
                 validated {
-                    match! checkParsedExpression method source with
-                    | { Type = CheckedType.ReferenceType(CheckedReferenceType.Array _) } as array->
-                        match name.Content with
-                        | ParsedIdentifier.Identifier "length" ->
-                            return! ok
-                                (CheckedExpression.ArrayLengthAccess array)
-                                (CheckedType.primitive Model.PrimitiveType.UNative)
-                        | _ ->
-                            return! error name (SemanticErrorMessage.UndefinedArrayField name.Content)
-                    | _ ->
-                        return(raise(NotImplementedException "Field access of objects is not yet supported"))
+                    let! src = checkSourceExpression method source
+                    match src, name.Content.ToString() with
+                    | Choice2Of2({ Type = CheckedType.ReferenceType(CheckedReferenceType.Array _) } as array), "length" ->
+                        return! ok (CheckedExpression.ArrayLengthAccess array) (CheckedType.primitive Model.PrimitiveType.UNative)
+                    | _, _ ->
+                        let! declaringTypeName, declaringTypeDefinition = determineSourceType method expr src
+                        return raise(NotImplementedException "TODO: Field access")
                 }
+            | ExpressionNode.Local name ->
+                match localVariableLookup.TryGetValue name.Content with
+                | true, ltype -> ok (CheckedExpression.Local name.Content) ltype
+                | false, _ -> error name (SemanticErrorMessage.UndefinedLocal name.Content)
             | bad -> raise(NotImplementedException(sprintf "TODO: Add support for expression %A" bad))
+
+        and checkSourceExpression method (source: Choice<ParsedNamespaceName, _>) =
+            match source with
+            | Choice1Of2 named -> Ok(Choice1Of2 named)
+            | Choice2Of2 expression -> Result.map Choice2Of2 (checkParsedExpression method expression)
+
+        and determineSourceType (method: CheckedMethod) errorNode (source: Choice<ParsedNamespaceName, TypedExpression>) =
+            match source with
+            | Choice1Of2 named ->
+                if named.IsDefaultOrEmpty then invalidOp "Attempt to use symbol as a global"
+
+                findNamedType
+                    namedTypeLookup
+                    method.DeclaringType.UsedNamespaces
+                    { TypeIdentifier.Name = named.[0]
+                      TypeIdentifier.Namespace = named.RemoveAt(named.Length - 1) }
+                |> Result.mapError (SemanticError.ofNode errorNode method.DeclaringType.Source)
+            | Choice2Of2 inner ->
+                match inner.Type with
+                //| CheckedType.ReferenceType(CheckedReferenceType.Defined)
+                | bad ->
+                    Error(SemanticError.ofNode inner.Node method.DeclaringType.Source (SemanticErrorMessage.TypeHasNoMethods bad))
 
         and checkArgumentExpressions method (arguments: ImmutableArray<_>) =
             if arguments.IsDefaultOrEmpty then
@@ -770,6 +768,8 @@ module TypeChecker =
             for method in methods.Values do
                 statements.Clear()
                 localVariableLookup.Clear()
+
+                if not method.Parameters.IsDefaultOrEmpty then raise(NotImplementedException "TODO: Add parameters to local variable lookup")
 
                 match method.BodyNode with
                 | MethodBodyNode.Defined nodes ->
