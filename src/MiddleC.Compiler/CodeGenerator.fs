@@ -5,6 +5,7 @@ open System.Collections.Generic
 open System.Collections.Immutable
 open System.Runtime.CompilerServices
 
+open MiddleC.Compiler.Parser
 open MiddleC.Compiler.Semantics
 
 open UByte.Format.Model
@@ -199,6 +200,25 @@ let rec private writeExpressionCode
             writeOneRegister()
         | _ ->
             raise(NotImplementedException(sprintf "Cannot generate integer literal of type %O" expression.Type))
+    | CheckedExpression.BinaryOperation(op, x, y) ->
+        let xvalues = writeNestedExpression x
+        let yvalues = writeNestedExpression y
+        let count = xvalues.Length + yvalues.Length
+
+        if xvalues.Length + yvalues.Length <> 2 then
+            invalidOp(sprintf "Invalid number of values (%i) for binary operation" count)
+
+        let xv, yv = xvalues.[0], yvalues.[0]
+
+        match op with
+        | BinaryOperation.Addition -> InstructionSet.Add(InstructionSet.ArithmeticFlags.None, typeSignatureLookup x.Type, xv, yv)
+        | BinaryOperation.Subtraction -> InstructionSet.Sub(InstructionSet.ArithmeticFlags.None, typeSignatureLookup x.Type, xv, yv)
+        | BinaryOperation.Multiplication -> InstructionSet.Mul(InstructionSet.ArithmeticFlags.None, typeSignatureLookup x.Type, xv, yv)
+        | BinaryOperation.Division -> InstructionSet.Div(InstructionSet.ArithmeticFlags.None, typeSignatureLookup x.Type, xv, yv)
+        | _ -> raise(NotImplementedException("The operation is not supported " + op.ToString()))
+        |> instructions.Add
+
+        writeOneRegister()
     | CheckedExpression.MethodCall(callee, arguments) -> // TODO: Add support for instance methods and virtual methods.
         let mutable callArgumentRegisters = Array.zeroCreate arguments.Length
 

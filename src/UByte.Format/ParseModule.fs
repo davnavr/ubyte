@@ -352,6 +352,8 @@ let fromBytes (source: #IByteSequence) =
                 | Tag.Type.Bool -> primitive PrimitiveType.Bool
                 | Tag.Type.Char16 -> primitive PrimitiveType.Char16
                 | Tag.Type.Char32 -> primitive PrimitiveType.Char32
+                | Tag.Type.UNative -> primitive PrimitiveType.UNative
+                | Tag.Type.SNative -> primitive PrimitiveType.SNative
                 | Tag.Type.UnsafePointer -> parsedValueType (bits1 tsig) (ValueType.UnsafePointer >> success) continuation
                 | bad -> continuation bad
 

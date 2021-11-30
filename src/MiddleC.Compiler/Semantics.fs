@@ -84,6 +84,7 @@ and [<RequireQualifiedAccess; NoComparison; StructuralEquality>] CheckedType =
 
 and [<RequireQualifiedAccess>] CheckedExpression =
     | ArrayLengthAccess of TypedExpression
+    | BinaryOperation of BinaryOperation * x: TypedExpression * y: TypedExpression
     | LiteralBoolean of bool
     | LiteralSignedInteger of int64
     | LiteralUnsignedInteger of uint64
@@ -95,6 +96,7 @@ and [<RequireQualifiedAccess>] CheckedExpression =
     override this.ToString() =
         match this with
         | ArrayLengthAccess array -> array.ToString() + ".length"
+        | BinaryOperation(op, x, y) -> "(" + x.ToString() + " " + op.ToString() + " " + y.ToString() + ")"
         | LiteralBoolean true -> "true"
         | LiteralBoolean false -> "false"
         | LiteralSignedInteger i -> string i
@@ -119,7 +121,7 @@ and TypedExpression =
 
     override this.ToString() =
         match this with
-        | { Expression = CheckedExpression.LiteralBoolean _ | CheckedExpression.NewArray _ | CheckedExpression.MethodCall _ | CheckedExpression.Local _ | CheckedExpression.ArrayLengthAccess _ as expr } ->
+        | { Expression = CheckedExpression.LiteralBoolean _ | CheckedExpression.NewArray _ | CheckedExpression.MethodCall _ | CheckedExpression.Local _ | CheckedExpression.ArrayLengthAccess _ | CheckedExpression.BinaryOperation _ as expr } ->
             expr.ToString() // add casting syntax?
         | { Expression = CheckedExpression.LiteralSignedInteger _ | CheckedExpression.LiteralUnsignedInteger _ as expr } ->
             match this.Type with
@@ -722,7 +724,16 @@ module TypeChecker =
                 match localVariableLookup.TryGetValue name.Content with
                 | true, ltype -> ok (CheckedExpression.Local name.Content) ltype
                 | false, _ -> error name (SemanticErrorMessage.UndefinedLocal name.Content)
-            | bad -> raise(NotImplementedException(sprintf "TODO: Add support for expression %A" bad))
+            | ExpressionNode.BinaryOperation(op, x, y) ->
+                validated {
+                    let! xexpr = checkParsedExpression method x
+                    let! yexpr = checkParsedExpression method y
+                    // TODO: Have support for implicit casting, this means that a helper function needs to decide whether y is a subtype of/compatible with x.
+                    // TODO: Prohibit implicit narrowing (long to int is bad)
+                    // TODO: Check that the type of arguments are correct, some shift operators may expect a certain integer type for an argument.
+                    return! ok (CheckedExpression.BinaryOperation(op, xexpr, yexpr)) xexpr.Type
+                }
+            | bad -> raise(NotImplementedException(sprintf "TODO: Add support for expression %O" bad))
 
         and checkSourceExpression method (source: Choice<ParsedNamespaceName, _>) =
             match source with

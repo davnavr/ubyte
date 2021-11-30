@@ -2,7 +2,7 @@ namespace ForLoop {
 
 type Program {
     method Main entrypoint (argv char32[][]) -> (s32) {
-        return argv.length;
+        return argv.length + 5;
     }
 }
 

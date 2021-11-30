@@ -93,6 +93,7 @@ type CheckedParameter =
 type CheckedExpression =
     /// <summary>Represents access of the <c>length</c> field of an array.</summary>
     | ArrayLengthAccess of TypedExpression
+    | BinaryOperation of BinaryOperation * x: TypedExpression * y: TypedExpression
     | LiteralBoolean of bool
     | LiteralSignedInteger of int64
     | LiteralUnsignedInteger of uint64
