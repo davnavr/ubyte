@@ -248,11 +248,8 @@ let rec private writeExpressionCode
     | CheckedExpression.ArrayLengthAccess expression ->
         let array = writeNestedExpression expression
         if array.Length <> 1 then invalidOp "Attempt to access array length for multiple values"
-        match expression.Type with
-        | CheckedType.ValueType(CheckedValueType.Primitive ptype) ->
-            instructions.Add(InstructionSet.Obj_arr_len(InstructionSet.ArithmeticFlags.None, ptype, array.[0]))
-            writeOneRegister()
-        | bad -> invalidOp(sprintf "Attempt to convert array length integer to a %O" bad)
+        instructions.Add(InstructionSet.Obj_arr_len(InstructionSet.ArithmeticFlags.None, PrimitiveType.UNative, array.[0]))
+        writeOneRegister()
     | _ ->
         raise(NotImplementedException(sprintf "Code generation is not yet implemented for %O" expression))
 

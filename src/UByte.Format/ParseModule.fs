@@ -222,6 +222,8 @@ let rec parsedPrimitiveType tag success continuation =
     | Tag.Type.Bool -> success PrimitiveType.Bool
     | Tag.Type.Char16 -> success PrimitiveType.Char16
     | Tag.Type.Char32 -> success PrimitiveType.Char32
+    | Tag.Type.UNative -> success PrimitiveType.UNative
+    | Tag.Type.SNative -> success PrimitiveType.SNative
     | bad -> continuation bad
 
 let instructionPrimitiveType source = parsedPrimitiveType (bits1 source) id (failwithf "%A is not a valid primitive type")
