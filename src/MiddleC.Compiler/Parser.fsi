@@ -43,11 +43,13 @@ type TypeIdentifier =
 
 type ParsedTypeIdentifier = ParsedNode<TypeIdentifier>
 
-[<RequireQualifiedAccess; NoComparison; NoEquality>]
+[<RequireQualifiedAccess; NoComparison; NoEquality; DebuggerDisplay("{ToString()}")>]
 type AnyTypeNode =
     | Primitive of UByte.Format.Model.PrimitiveType
     | Array of ParsedNode<AnyTypeNode>
     //| ObjectReference of Choice<TypeNode, ParsedTypeIdentifier>
+
+    override ToString : unit -> string
 
 [<RequireQualifiedAccess; Struct; DebuggerDisplay("{ToString()}")>]
 type BinaryOperation =
@@ -73,7 +75,7 @@ type BinaryOperation =
 
     override ToString : unit -> string
 
-[<RequireQualifiedAccess; NoComparison; NoEquality>]
+[<RequireQualifiedAccess; NoComparison; NoEquality; DebuggerDisplay("{ToString()}")>]
 type ExpressionNode =
     | LiteralBool of bool
     | LiteralChar32 of uint32
@@ -87,10 +89,14 @@ type ExpressionNode =
     | MemberAccess of Choice<ParsedNamespaceName, ParsedExpression> * name: IdentifierNode *
         arguments: ParsedNodeArray<ExpressionNode> voption
 
-and [<RequireQualifiedAccess; NoComparison; NoEquality>] ConstructionExpression =
+    override ToString : unit -> string
+
+and [<RequireQualifiedAccess; NoComparison; NoEquality; DebuggerDisplay("{ToString()}")>] ConstructionExpression =
     | String of string
     | ArrayElements of elements: ParsedNodeArray<ExpressionNode>
     | ConstructorCall of arguments: ParsedNodeArray<ExpressionNode>
+
+    override ToString : unit -> string
 
 and ParsedExpression = ParsedNode<ExpressionNode>
 

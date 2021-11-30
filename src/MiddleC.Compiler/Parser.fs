@@ -63,6 +63,11 @@ type AnyTypeNode =
     | Primitive of UByte.Format.Model.PrimitiveType
     | Array of ParsedNode<AnyTypeNode>
 
+    override this.ToString() =
+        match this with
+        | Primitive prim -> prim.ToString().ToLowerInvariant()
+        | Array etype -> etype.ToString() + "[]"
+
 [<RequireQualifiedAccess; Struct>]
 type BinaryOperation =
     | Multiplication
@@ -117,10 +122,57 @@ type ExpressionNode =
     | MemberAccess of Choice<ParsedNamespaceName, ParsedExpression> * name: IdentifierNode *
         arguments: ParsedNodeArray<ExpressionNode> voption
 
+    override this.ToString() =
+        match this with
+        | LiteralBool true -> "true"
+        | LiteralBool false -> "false"
+        | LiteralChar32 value ->
+            match value with
+            | 9u -> "\\t"
+            | 0xAu -> "\\n"
+            | 0xDu -> "\\r"
+            | 0x5Cu -> "\\\\"
+            | _ -> System.Text.Rune(int32 value).ToString()
+            |> sprintf "\'\%s\'32"
+        | LiteralU32 value -> string value + "u"
+        | LiteralS32 value -> string value
+        | Local name -> name.Content.ToString()
+        | NewObject(otype, ctor) -> "new " + otype.Content.ToString() + " " + ctor.Content.ToString()
+        | BinaryOperation(op, x, y) -> "(" + x.Content.ToString() + " " + op.ToString() + " " + y.Content.ToString() + ")"
+        | MemberAccess(source, name, arguments) ->
+            let sb = System.Text.StringBuilder()
+
+            match source with
+            | Choice1Of2 ns -> for name in ns do sb.Append(name.Content.ToString()).Append("::") |> ignore
+            | Choice2Of2 src -> sb.Append(src.Content.ToString()).Append(".") |> ignore
+
+            sb.Append(name.Content.ToString()) |> ignore
+
+            match arguments with
+            | ValueSome args ->
+                sb.Append("(") |> ignore
+
+                for i = 0 to args.Length - 1 do
+                    sb.Append(args.[i].ToString()) |> ignore
+
+                    if i = args.Length - 1
+                    then sb.Append ")"
+                    else sb.Append ", "
+                    |> ignore
+            | ValueNone -> ()
+
+            sb.ToString()
+
 and [<RequireQualifiedAccess>] ConstructionExpression =
     | String of string
     | ArrayElements of elements: ParsedNodeArray<ExpressionNode>
     | ConstructorCall of arguments: ParsedNodeArray<ExpressionNode>
+
+    override this.ToString() =
+        match this with
+        | String str -> sprintf "\"%s\"" str // TODO: Replace escape characters
+        | ArrayElements elements -> System.Text.StringBuilder("{ ").AppendJoin(", ", elements).Append(" }").ToString()
+        | ConstructorCall arguments -> System.Text.StringBuilder("(").AppendJoin(", ", arguments).Append(')').ToString()
 
 and ParsedExpression = ParsedNode<ExpressionNode>
 
@@ -348,6 +400,7 @@ module Parse =
             | 'n' -> "\n"
             | 'r' -> "\r"
             | 't' -> "\t"
+            | '\\' -> "\\"
             | c -> string c
 
         stringsSepBy
