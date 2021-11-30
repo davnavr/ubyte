@@ -414,23 +414,23 @@ module Parse =
             )
 
         // NOTE: None associativity means 3 * 4 / 5 does not parse as a parser conflict occurs.
-        addBinaryOperator BinaryOperation.Assignment -60 Associativity.None
-        addBinaryOperator BinaryOperation.BooleanOr -50 Associativity.None
-        addBinaryOperator BinaryOperation.BooleanAnd -40 Associativity.None
-        addBinaryOperator BinaryOperation.BitwiseOr -30 Associativity.None
-        addBinaryOperator BinaryOperation.BitwiseXor -20 Associativity.None
-        addBinaryOperator BinaryOperation.BitwiseAnd -10 Associativity.None
-        addBinaryOperator BinaryOperation.IsEqual -7 Associativity.None
-        addBinaryOperator BinaryOperation.IsNotEqual -7 Associativity.None
-        addBinaryOperator BinaryOperation.LessThan -5 Associativity.None
-        addBinaryOperator BinaryOperation.GreaterThan -5 Associativity.None
-        addBinaryOperator BinaryOperation.LessThanOrEqual -5 Associativity.None
-        addBinaryOperator BinaryOperation.GreaterThanOrEqual -5 Associativity.None
-        addBinaryOperator BinaryOperation.Addition 0 Associativity.None
-        addBinaryOperator BinaryOperation.Subtraction 0 Associativity.None
-        addBinaryOperator BinaryOperation.Multiplication 10 Associativity.None
-        addBinaryOperator BinaryOperation.Division 10 Associativity.None
-        addBinaryOperator BinaryOperation.Modulo 10 Associativity.None
+        addBinaryOperator BinaryOperation.Assignment 100 Associativity.Left
+        addBinaryOperator BinaryOperation.BooleanOr 110 Associativity.None
+        addBinaryOperator BinaryOperation.BooleanAnd 120 Associativity.None
+        addBinaryOperator BinaryOperation.BitwiseOr 130 Associativity.None
+        addBinaryOperator BinaryOperation.BitwiseXor 140 Associativity.None
+        addBinaryOperator BinaryOperation.BitwiseAnd 140 Associativity.None
+        addBinaryOperator BinaryOperation.IsEqual 150 Associativity.None
+        addBinaryOperator BinaryOperation.IsNotEqual 150 Associativity.None
+        addBinaryOperator BinaryOperation.LessThan 160 Associativity.None
+        addBinaryOperator BinaryOperation.GreaterThan 160 Associativity.None
+        addBinaryOperator BinaryOperation.LessThanOrEqual 160 Associativity.None
+        addBinaryOperator BinaryOperation.GreaterThanOrEqual 160 Associativity.None
+        addBinaryOperator BinaryOperation.Addition 170 Associativity.None
+        addBinaryOperator BinaryOperation.Subtraction 170 Associativity.None
+        addBinaryOperator BinaryOperation.Multiplication 180 Associativity.None
+        addBinaryOperator BinaryOperation.Division 180 Associativity.None
+        addBinaryOperator BinaryOperation.Modulo 180 Associativity.None
 
         // Allows method chaining (<c>A.B().C()</c>) and accessing array length (<c>myArray.length</c>)
         let memberAccessAfterString =
@@ -440,7 +440,7 @@ module Parse =
         parser.AddOperator <| PostfixOperator<ParsedExpression, _, unit> (
             ".",
             memberAccessAfterString,
-            100,
+            200,
             false,
             (),
             (fun access x -> access x)
