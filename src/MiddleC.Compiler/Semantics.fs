@@ -769,7 +769,14 @@ module TypeChecker =
                 statements.Clear()
                 localVariableLookup.Clear()
 
-                if not method.Parameters.IsDefaultOrEmpty then raise(NotImplementedException "TODO: Add parameters to local variable lookup")
+                for parameter in method.Parameters do
+                    let name = parameter.Name.Content
+                    if not(localVariableLookup.TryAdd(name, parameter.Type)) then
+                        SemanticError.ofNode
+                            parameter.Name
+                            method.DeclaringType.Source
+                            (DuplicateLocalDeclaration name)
+                        |> errors.Add
 
                 match method.BodyNode with
                 | MethodBodyNode.Defined nodes ->
