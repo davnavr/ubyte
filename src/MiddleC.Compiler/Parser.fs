@@ -114,6 +114,7 @@ type ExpressionNode =
     | Symbol of ParsedNamespaceName * ParsedNodeArray<ParsedIdentifier> * arguments: ParsedNodeArray<ExpressionNode> voption
     | NewObject of ParsedNode<AnyTypeNode> * ParsedNode<ConstructionExpression>
     | BinaryOperation of BinaryOperation * x: ParsedExpression * y: ParsedExpression
+    | MemberAccess of ParsedExpression * name: IdentifierNode * arguments: ParsedNodeArray<ExpressionNode> voption
 
 and [<RequireQualifiedAccess>] ConstructionExpression =
     | String of string
@@ -356,10 +357,15 @@ module Parse =
     let private expression =
         let unsignedIntegerLiteralOptions = NumberLiteralOptions.AllowBinary ||| NumberLiteralOptions.AllowHexadecimal
         let signedIntegerLiteralOptions = unsignedIntegerLiteralOptions ||| NumberLiteralOptions.AllowMinusSign
+
         let numberlit options parser node =
             numberLiteral options String.Empty |>> fun literal -> node(parser literal.String)
 
-        let parser = OperatorPrecedenceParser<ParsedExpression, unit, _>()
+        let parser = OperatorPrecedenceParser<ParsedExpression, _, unit>()
+
+        let arguments =
+            CollectionParsers.ImmutableArray.sepBy (whitespace >>. parser.ExpressionParser .>> whitespace) comma
+            |> betweenParenthesis
 
         parser.TermParser <-
             whitespace
@@ -369,10 +375,6 @@ module Parse =
                     stringReturn "false" (ExpressionNode.LiteralBool false)
                     numberlit signedIntegerLiteralOptions Int32.Parse ExpressionNode.LiteralS32
                     numberlit unsignedIntegerLiteralOptions UInt32.Parse ExpressionNode.LiteralU32
-
-                    let arguments =
-                        CollectionParsers.ImmutableArray.sepBy (whitespace >>. parser.ExpressionParser .>> whitespace) comma
-                        |> betweenParenthesis
 
                     skipString "new"
                     >>. whitespace
@@ -400,16 +402,18 @@ module Parse =
             |> withNodeContent
             .>> whitespace
 
+        let emptyAfterString = whitespace >>% id
+
         let addBinaryOperator (operator: BinaryOperation) precedence associativity =
-            InfixOperator<ParsedExpression, unit, unit> (
+            parser.AddOperator <| InfixOperator<ParsedExpression, _, unit> (
                 operator.ToString(),
-                whitespace,
+                emptyAfterString,
                 precedence,
                 associativity,
                 fun x y -> { x with Content = ExpressionNode.BinaryOperation(operator, x, y) }
             )
-            |> parser.AddOperator
 
+        // NOTE: None associativity means 3 * 4 / 5 does not parse as a parser conflict occurs.
         addBinaryOperator BinaryOperation.Assignment -60 Associativity.None
         addBinaryOperator BinaryOperation.BooleanOr -50 Associativity.None
         addBinaryOperator BinaryOperation.BooleanAnd -40 Associativity.None
@@ -427,6 +431,20 @@ module Parse =
         addBinaryOperator BinaryOperation.Multiplication 10 Associativity.None
         addBinaryOperator BinaryOperation.Division 10 Associativity.None
         addBinaryOperator BinaryOperation.Modulo 10 Associativity.None
+
+        // Allows method chaining (`A.B().C()`) and accessing array length (`myArray.length`)
+        let memberAccessAfterString =
+            pipe2 (validIdentifierNode .>> whitespace) (vopt arguments) <| fun name args x ->
+                { x with Content = ExpressionNode.MemberAccess(x, name, args) }
+
+        parser.AddOperator <| PostfixOperator<ParsedExpression, _, unit> (
+            ".",
+            memberAccessAfterString,
+            100,
+            false,
+            (),
+            (fun access x -> access x)
+        )
 
         parser.ExpressionParser
 

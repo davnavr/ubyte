@@ -84,6 +84,8 @@ type ExpressionNode =
     | NewObject of ParsedNode<AnyTypeNode> * ParsedNode<ConstructionExpression>
     //| UnaryOperation
     | BinaryOperation of BinaryOperation * x: ParsedExpression * y: ParsedExpression
+    // TODO: How to avoid conflict with Symbol case?
+    | MemberAccess of ParsedExpression * name: IdentifierNode * arguments: ParsedNodeArray<ExpressionNode> voption
 
 and [<RequireQualifiedAccess; NoComparison; NoEquality>] ConstructionExpression =
     | String of string
