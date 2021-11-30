@@ -295,6 +295,9 @@ let private writeMethodBodies
         localRegisterLookup.Clear()
         blocks.Clear()
 
+        for i = 0 to method.Parameters.Length - 1 do
+            localRegisterLookup.Add(method.Parameters.[i].Name.Content, fun() -> RegisterIndex.Index(nextTemporaryIndex + uint32 i))
+
         for statement in statements do
             match statement with
             | CheckedStatement.Expression value ->
