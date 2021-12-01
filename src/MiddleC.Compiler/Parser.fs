@@ -179,6 +179,7 @@ and ParsedExpression = ParsedNode<ExpressionNode>
 [<RequireQualifiedAccess>]
 type StatementNode =
     | If of condition: ParsedExpression * trueStatementNodes: ParsedNodeArray<StatementNode> *
+        additionalStatementNodes: ImmutableArray<ParsedExpression * ParsedNodeArray<StatementNode>> *
         falseStatementNodes: ParsedNodeArray<StatementNode>
     | Expression of ParsedExpression
     | While of condition: ParsedExpression * body: ParsedNodeArray<StatementNode>
@@ -513,32 +514,46 @@ module Parse =
         whitespace
         >>. choice
             [|
+                let elseIfBlock =
+                    skipString "elif"
+                    >>. whitespace
+                    >>. betweenParenthesis expression
+                    .>> whitespace
+                    .>>. block
+                    .>> whitespace
+                    |> CollectionParsers.ImmutableArray.many
+
+                let elseBlock = choice [|
+                    skipString "else" >>. whitespace >>. block
+                    preturn ImmutableArray.Empty
+                |]
+
                 skipString "if"
                 >>. whitespace
-                >>. tuple3
+                >>. tuple4
                     (betweenParenthesis expression .>> whitespace)
                     (block .>> whitespace)
-                    (choice [|
-                        skipString "else" >>. whitespace >>. block
-                        preturn ImmutableArray.Empty
-                    |])
+                    elseIfBlock
+                    elseBlock
                 |>> StatementNode.If
 
-                tuple4
-                    (choice [ stringReturn "let" true; stringReturn "var" false ])
-                    (whitespace >>. validIdentifierNode)
-                    (whitespace >>. anyTypeNode .>> whitespace)
-                    (equals >>. whitespace >>. expression)
-                |>> StatementNode.LocalDeclaration
+                choice [|
+                    tuple4
+                        (choice [ stringReturn "let" true; stringReturn "var" false ])
+                        (whitespace >>. validIdentifierNode)
+                        (whitespace >>. anyTypeNode .>> whitespace)
+                        (equals >>. whitespace >>. expression)
+                    |>> StatementNode.LocalDeclaration
 
-                skipString "return" >>. whitespace >>. expression |>> StatementNode.Return
+                    skipString "return" >>. whitespace >>. expression |>> StatementNode.Return
 
-                // All parsers that take a keyword must be above this to ensure keywords aren't interpreted as names.
-                expression |>> StatementNode.Expression
-                followedBy semicolon >>% StatementNode.Empty
+                    // All parsers that take a keyword must be above this to ensure keywords aren't interpreted as names.
+                    expression |>> StatementNode.Expression
+                    followedBy semicolon >>% StatementNode.Empty
+                |]
+                .>> whitespace
+                .>> semicolon
             |]
-        .>> whitespace
-        .>> semicolon
         .>> whitespace
         |> withNodeContent
 

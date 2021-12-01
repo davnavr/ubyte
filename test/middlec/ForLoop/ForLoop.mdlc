@@ -2,7 +2,11 @@ namespace ForLoop {
 
 type Program {
     method Main entrypoint (argv char32[][]) -> (s32) {
-        return argv.length + 5;
+        if (argv.length == 1) {
+            return 0;
+        }
+
+        return 1;
     }
 }
 

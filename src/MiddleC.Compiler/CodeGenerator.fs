@@ -215,7 +215,7 @@ let rec private writeExpressionCode
         | BinaryOperation.Subtraction -> InstructionSet.Sub(InstructionSet.ArithmeticFlags.None, typeSignatureLookup x.Type, xv, yv)
         | BinaryOperation.Multiplication -> InstructionSet.Mul(InstructionSet.ArithmeticFlags.None, typeSignatureLookup x.Type, xv, yv)
         | BinaryOperation.Division -> InstructionSet.Div(InstructionSet.ArithmeticFlags.None, typeSignatureLookup x.Type, xv, yv)
-        | _ -> raise(NotImplementedException("The operation is not supported " + op.ToString()))
+        | _ -> raise(NotImplementedException("Code generation for the operation is not supported " + op.ToString()))
         |> instructions.Add
 
         writeOneRegister()
@@ -273,6 +273,15 @@ let rec private writeExpressionCode
     | _ ->
         raise(NotImplementedException(sprintf "Code generation is not yet implemented for %O" expression))
 
+[<IsByRefLike; IsReadOnly; Struct; NoComparison; NoEquality; RequireQualifiedAccess>]
+type private InstructionFixup private (index: int32, instructions: ImmutableArray<InstructionSet.Instruction>.Builder) =
+    member _.Fixup instruction = instructions.[index] <- instruction
+
+    static member Insert(instructions: ImmutableArray<_>.Builder) =
+        let i = instructions.Count
+        instructions.Add InstructionSet.Nop
+        InstructionFixup(i, instructions)
+
 let private writeMethodBodies
     dataIndexLookup
     typeSignatureLookup
@@ -308,19 +317,35 @@ let private writeMethodBodies
         instructions.Clear()
         nextTemporaryIndex <- 0u
 
-    for KeyValue(method, struct(Index index, statements)) in methodBodyLookup do
-        localRegisterLookup.Clear()
-        blocks.Clear()
+    let inline writeTypedExpression expression =
+        writeExpressionCode
+            createTemporaryRegister
+            dataIndexLookup
+            typeSignatureLookup
+            importedMethodIndices
+            definedMethodIndices
+            localRegisterLookup
+            instructions
+            expression
 
-        for i = 0 to method.Parameters.Length - 1 do
-            localRegisterLookup.Add(method.Parameters.[i].Name.Content, fun() -> RegisterIndex.Index(nextTemporaryIndex + uint32 i))
-
+    let rec writeBlockCode (method: CheckedMethod) (statements: ImmutableArray<_>) =
         for statement in statements do
             match statement with
             | CheckedStatement.Expression value ->
-                writeExpressionCode createTemporaryRegister dataIndexLookup typeSignatureLookup importedMethodIndices definedMethodIndices localRegisterLookup instructions value |> ignore
+                writeTypedExpression value |> ignore
+            | CheckedStatement.If(condition, thenBlockStatements, elseBlockStatements) ->
+                let values = writeTypedExpression condition
+                if values.Length <> 1 then
+                    invalidOp "Expected only one condition expression for conditional statement"
+
+                // TODO: Order of blocks doesn't really matter, could just say then is 1 and else is 2
+                // Will get replaced with branch later, as block offsets are not yet known.
+                let br = InstructionFixup.Insert instructions
+
+                br.Fixup(InstructionSet.Br_true(values.[0], failwith "A", failwith "A"))
+                failwith "TODO: Add blocks"
             | CheckedStatement.LocalDeclaration(_, name, _, value) ->
-                let values = writeExpressionCode createTemporaryRegister dataIndexLookup typeSignatureLookup importedMethodIndices definedMethodIndices localRegisterLookup instructions value
+                let values = writeTypedExpression value
                 if values.Length <> 1 then
                     raise(NotImplementedException(sprintf "Code generation for local variable containing %i values is not yet implemented" values.Length))
 
@@ -339,7 +364,7 @@ let private writeMethodBodies
                 elif values.Length = 1 then
                     let mutable returns = Array.zeroCreate values.Length
                     for i = 0 to returns.Length - 1 do
-                        let expressions = writeExpressionCode createTemporaryRegister dataIndexLookup typeSignatureLookup importedMethodIndices definedMethodIndices localRegisterLookup instructions values.[i]
+                        let expressions = writeTypedExpression values.[i]
                         if expressions.Length <> 1 then
                             raise(NotImplementedException "TODO: Handle weird number of return values")
                         returns.[i] <- expressions.[0]
@@ -350,9 +375,20 @@ let private writeMethodBodies
 
         writeCurrentBlock() // Writes the last block, if any
 
-        bodies.[int32 index] <-
-            { Code.LocalCount = uint32 localRegisterLookup.Count
-              Code.Blocks = blocks.ToImmutable() }
+        assert(blocks.Count = 0)
+        assert(instructions.Count = 0)
+
+        { Code.LocalCount = uint32 localRegisterLookup.Count
+          Code.Blocks = blocks.ToImmutable() }
+
+    for KeyValue(method, struct(Index index, statements)) in methodBodyLookup do
+        localRegisterLookup.Clear()
+        blocks.Clear()
+
+        for i = 0 to method.Parameters.Length - 1 do
+            localRegisterLookup.Add(method.Parameters.[i].Name.Content, fun() -> RegisterIndex.Index(nextTemporaryIndex + uint32 i))
+
+        bodies.[int32 index] <- writeBlockCode method statements
 
     Unsafe.As<Code[], ImmutableArray<Code>> &bodies
 

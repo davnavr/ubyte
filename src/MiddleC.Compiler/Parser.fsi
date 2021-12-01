@@ -103,6 +103,7 @@ and ParsedExpression = ParsedNode<ExpressionNode>
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
 type StatementNode =
     | If of condition: ParsedExpression * trueStatementNodes: ParsedNodeArray<StatementNode> *
+        additionalStatementNodes: ImmutableArray<ParsedExpression * ParsedNodeArray<StatementNode>> *
         falseStatementNodes: ParsedNodeArray<StatementNode>
     // An expression that is simply evaluated for side effects.
     | Expression of ParsedExpression

@@ -129,6 +129,8 @@ and NamedMethod = Choice<CheckedMethod, UByte.Resolver.ResolvedMethod>
 [<RequireQualifiedAccess; NoComparison; NoEquality; DebuggerDisplay("{ToString()}")>]
 type CheckedStatement =
     | Expression of TypedExpression
+    | If of condition: TypedExpression * thenBlockStatements: ImmutableArray<CheckedStatement> *
+        elseBlockStatements: ImmutableArray<CheckedStatement>
     | LocalDeclaration of constant: bool * name: IdentifierNode * CheckedType * value: TypedExpression
     | Return of ImmutableArray<TypedExpression>
     | Empty
@@ -162,6 +164,7 @@ type SemanticErrorMessage =
     | DuplicateLocalDeclaration of ParsedIdentifier
     | DuplicateParameter of ParsedIdentifier
     | DuplicateTypeDefinition of FullTypeIdentifier
+    | ExpectedExpressionType of expected: CheckedType * actual: CheckedType
     | InvalidCharacterType of ParsedNode<AnyTypeNode>
     | InvalidElementType of CheckedType
     | MultipleEntryPoints

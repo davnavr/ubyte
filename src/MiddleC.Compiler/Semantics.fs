@@ -132,6 +132,8 @@ and TypedExpression =
 
 and [<RequireQualifiedAccess>] CheckedStatement =
     | Expression of TypedExpression
+    | If of condition: TypedExpression * thenBlockStatements: ImmutableArray<CheckedStatement> *
+        elseBlockStatements: ImmutableArray<CheckedStatement>
     | LocalDeclaration of constant: bool * name: IdentifierNode * CheckedType(* CheckedLocal *) * value: TypedExpression
     | Return of ImmutableArray<TypedExpression>
     | Empty
@@ -139,6 +141,20 @@ and [<RequireQualifiedAccess>] CheckedStatement =
     override this.ToString() =
         match this with
         | Expression expression -> expression.ToString() + ";"
+        | If(condition, thenBlockStatements, elseBlockStatements) ->
+            let sb = System.Text.StringBuilder("if (").Append(condition.ToString()).AppendLine(") {")
+
+            for statement in thenBlockStatements do
+                sb.Append('\t').Append(statement.ToString()).AppendLine(";") |> ignore
+            sb.Append '}' |> ignore
+
+            if not elseBlockStatements.IsDefaultOrEmpty then
+                sb.AppendLine(" else {") |> ignore
+                for statement in elseBlockStatements do
+                    sb.Append('\t').Append(statement.ToString()).AppendLine(";") |> ignore
+                sb.Append '}' |> ignore
+
+            sb.ToString()
         | LocalDeclaration(constant, name, ty, value) ->
             System.Text.StringBuilder(if constant then "let" else "var").Append(' ') .Append(name.ToString()).Append(' ')
                 .Append(ty.ToString()).Append(" = ").Append(value.ToString()).Append(';').ToString()
@@ -251,6 +267,7 @@ type SemanticErrorMessage =
     | DuplicateLocalDeclaration of ParsedIdentifier
     | DuplicateParameter of ParsedIdentifier
     | DuplicateTypeDefinition of FullTypeIdentifier
+    | ExpectedExpressionType of expected: CheckedType * actual: CheckedType
     | InvalidCharacterType of ParsedNode<AnyTypeNode>
     | InvalidElementType of CheckedType
     | MultipleEntryPoints
@@ -271,6 +288,8 @@ type SemanticErrorMessage =
         | DuplicateLocalDeclaration id -> "Duplicate local declaration " + id.ToString()
         | DuplicateParameter id -> "A parameter with the name " + id.ToString() + " was already defined"
         | DuplicateTypeDefinition id -> "Duplicate definition of type " + id.ToString()
+        | ExpectedExpressionType(expected, actual) ->
+            "Expected an expression of type " + expected.ToString() + " but got " + actual.ToString()
         | InvalidCharacterType ty ->
             ty.Content.ToString() + " is not a valid character type"
         | InvalidElementType ty ->
@@ -773,6 +792,92 @@ module TypeChecker =
                 | ValueNone -> Ok(Unsafe.As<TypedExpression[], ImmutableArray<TypedExpression>> &expressions)
                 | ValueSome err -> Error err
 
+        let checkConditionExpression method expression = validated {
+            let tbool = CheckedType.primitive Model.PrimitiveType.Bool
+            let! condition = checkParsedExpression method expression
+            if condition.Type.Equals tbool then
+                return condition
+            else
+                return!
+                    SemanticErrorMessage.ExpectedExpressionType(tbool, condition.Type)
+                    |> SemanticError.ofNode expression method.DeclaringType.Source
+                    |> Error
+        }
+
+        /// Helper function to check a nested block, keeps a cache of ImmutableArray.Builder instances to build the statements.
+        let mutable checkNestedStatements = Unchecked.defaultof<_>
+
+        let checkBlockNodes method (statements: ImmutableArray<_>.Builder) (*localVariableLookup*) (nodes: ImmutableArray<_>) =
+            let mutable success = true
+
+            for bodyStatementNode in nodes do
+                let result =
+                    match bodyStatementNode.Content with
+                    | StatementNode.Expression expression ->
+                        Result.map
+                            CheckedStatement.Expression
+                            (checkParsedExpression method expression)
+                    | StatementNode.If(condition, trueStatementNodes, additionalStatementNodes, falseStatementNodes) ->
+                        if not additionalStatementNodes.IsDefaultOrEmpty then
+                            raise(NotImplementedException "TODO: elif is not yet supported by type checker")
+
+                        validated {
+                            let! cond = checkConditionExpression method condition
+                            let thenBlockStatements = checkNestedStatements method trueStatementNodes
+                            let elseBlockStatements = checkNestedStatements method falseStatementNodes
+                            return CheckedStatement.If(cond, thenBlockStatements, elseBlockStatements)
+                        }
+                    | StatementNode.LocalDeclaration(constant, name, ty, value) ->
+                        validated {
+                            // TODO: Check that type of local and type of value is compatible.
+                            let! ltype = checkAnyType namedTypeLookup ty
+                            let! lvalue = checkParsedExpression method value
+                            if localVariableLookup.TryAdd(name.Content, ltype) then
+                                return CheckedStatement.LocalDeclaration(constant, name, ltype, lvalue)
+                            else
+                                return!
+                                    SemanticError.ofNode
+                                        name
+                                        method.DeclaringType.Source
+                                        (DuplicateLocalDeclaration name.Content)
+                                    |> Error
+                        }
+                    | StatementNode.Return value(*s*) ->
+                        // TODO: Check that types of return values match method return types
+                        validated {
+                            let! expr = checkParsedExpression method value
+                            return CheckedStatement.Return(ImmutableArray.Create expr)
+                        }
+                    | StatementNode.Empty -> Ok CheckedStatement.Empty
+                    | bad -> raise(NotImplementedException(sprintf "TODO: Add support for statement %O" bad))
+
+                match result with
+                | Ok statement ->
+                    statements.Add statement
+                | Error error ->
+                    success <- false
+                    errors.Add error
+
+            // TODO: Detect if code already defines a return, and omit the following insertion/error handler.
+            if method.ReturnTypes.IsDefaultOrEmpty then
+                statements.Add(CheckedStatement.Return ImmutableArray.Empty)
+            //else
+            //    failwith "TODO: Error for missing return"
+
+            statements.ToImmutable()
+
+        checkNestedStatements <-
+            let nestedBlockStatements = Stack<ImmutableArray<CheckedStatement>.Builder>()
+            fun method nodes ->
+                let builder =
+                    match nestedBlockStatements.TryPop() with
+                    | true, statements -> statements
+                    | false, _ -> ImmutableArray.CreateBuilder()
+
+                let result = checkBlockNodes method builder nodes
+                nestedBlockStatements.Push builder
+                result
+
         let statements = ImmutableArray.CreateBuilder<CheckedStatement>()
 
         for methods in declarations.Values do
@@ -789,52 +894,16 @@ module TypeChecker =
                             (DuplicateLocalDeclaration name)
                         |> errors.Add
 
-                match method.BodyNode with
-                | MethodBodyNode.Defined nodes ->
-                    for bodyStatementNode in nodes do
-                        let result =
-                            match bodyStatementNode.Content with
-                            | StatementNode.Expression expression ->
-                                Result.map
-                                    CheckedStatement.Expression
-                                    (checkParsedExpression method expression)
-                            | StatementNode.LocalDeclaration(constant, name, ty, value) ->
-                                validated {
-                                    // TODO: Check that type of local and type of value is compatible.
-                                    let! ltype = checkAnyType namedTypeLookup ty
-                                    let! lvalue = checkParsedExpression method value
-                                    if localVariableLookup.TryAdd(name.Content, ltype) then
-                                        return CheckedStatement.LocalDeclaration(constant, name, ltype, lvalue)
-                                    else
-                                        return!
-                                            SemanticError.ofNode
-                                                name
-                                                method.DeclaringType.Source
-                                                (DuplicateLocalDeclaration name.Content)
-                                            |> Error
-                                }
-                            | StatementNode.Return value(*s*) ->
-                                // TODO: Check that types of return values match method return types
-                                validated {
-                                    let! expr = checkParsedExpression method value
-                                    return CheckedStatement.Return(ImmutableArray.Create expr)
-                                }
-                            | StatementNode.Empty -> Ok CheckedStatement.Empty
-                            | bad -> raise(NotImplementedException(sprintf "TODO: Add support for statement %O" bad))
-
-                        match result with
-                        | Ok statement -> statements.Add statement
-                        | Error error -> errors.Add error
-
-                    // TODO: Detect if code already defines a return, and omit the following insertion/error handler.
-                    if method.ReturnTypes.IsDefaultOrEmpty then
-                        statements.Add(CheckedStatement.Return ImmutableArray.Empty)
-                    //else
-                    //    failwith "TODO: Error for missing return"
-
-                    method.Body <- CheckedMethodBody.Defined(statements.ToImmutable())
-                | MethodBodyNode.External(name, library) ->
-                    method.Body <- CheckedMethodBody.External(name.Content, library.Content)
+                method.Body <-
+                    match method.BodyNode with
+                    | MethodBodyNode.Defined nodes ->
+                        //match checkBlockNodes method statements nodes with
+                        //| ValueSome body ->
+                            CheckedMethodBody.Defined(checkBlockNodes method statements nodes)
+                        //| ValueNone ->
+                        //    CheckedMethodBody.Error
+                    | MethodBodyNode.External(name, library) ->
+                        CheckedMethodBody.External(name.Content, library.Content)
 
     let check name version files (imports: ImmutableArray<_>) =
         let errors = ImmutableArray.CreateBuilder()
