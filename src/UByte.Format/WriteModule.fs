@@ -210,12 +210,12 @@ let instruction instr dest =
         index cond dest
         boffset btrue
         boffset bfalse
-    | Cmp_eq(x, y) -> numericComparisonInstruction Opcode.``br.eq`` x y
-    | Cmp_ne(x, y) -> numericComparisonInstruction Opcode.``br.ne`` x y
-    | Cmp_lt(x, y) -> numericComparisonInstruction Opcode.``br.lt`` x y
-    | Cmp_gt(x, y) -> numericComparisonInstruction Opcode.``br.gt`` x y
-    | Cmp_le(x, y) -> numericComparisonInstruction Opcode.``br.le`` x y
-    | Cmp_ge(x, y) -> numericComparisonInstruction Opcode.``br.ge`` x y
+    | Cmp_eq(x, y) -> numericComparisonInstruction Opcode.``cmp.eq`` x y
+    | Cmp_ne(x, y) -> numericComparisonInstruction Opcode.``cmp.ne`` x y
+    | Cmp_lt(x, y) -> numericComparisonInstruction Opcode.``cmp.lt`` x y
+    | Cmp_gt(x, y) -> numericComparisonInstruction Opcode.``cmp.gt`` x y
+    | Cmp_le(x, y) -> numericComparisonInstruction Opcode.``cmp.le`` x y
+    | Cmp_ge(x, y) -> numericComparisonInstruction Opcode.``cmp.ge`` x y
     | Mem_init(flags, count, ty, addr, value) ->
         opcode Opcode.``mem.init`` dest
         bits1 flags dest
