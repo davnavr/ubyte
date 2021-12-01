@@ -123,6 +123,8 @@ module Register =
         Unsafe.As<RegisterValue, 'Value> &register.Value <- value
         register
 
+    let inline ofBoolValue value = ofValue<bool> (RegisterType.primitive PrimitiveType.Bool) value
+
     let ofValueAddress<'Value when 'Value : unmanaged> rtype address =
         NativePtr.ofVoidPtr address
         |> NativePtr.read<'Value>
@@ -1427,6 +1429,18 @@ let interpret
                 branchToTarget (if RegisterComparison.isGreaterOrEqual &x &y then ttrue else tfalse)
             | Br_true(Register condition, ttrue, tfalse) ->
                 branchToTarget (if RegisterComparison.isTrueValue &condition then ttrue else tfalse)
+            | Cmp_eq(Register x, Register y) ->
+                control.TemporaryRegisters.Add(Register.ofBoolValue(RegisterComparison.isEqual &x &y))
+            | Cmp_ne(Register x, Register y) ->
+                control.TemporaryRegisters.Add(Register.ofBoolValue(not(RegisterComparison.isEqual &x &y)))
+            | Cmp_lt(Register x, Register y) ->
+                control.TemporaryRegisters.Add(Register.ofBoolValue(RegisterComparison.isLessThan &x &y))
+            | Cmp_gt(Register x, Register y) ->
+                control.TemporaryRegisters.Add(Register.ofBoolValue(RegisterComparison.isGreaterThan &x &y))
+            | Cmp_le(Register x, Register y) ->
+                control.TemporaryRegisters.Add(Register.ofBoolValue(RegisterComparison.isLessOrEqual &x &y))
+            | Cmp_ge(Register x, Register y) ->
+                control.TemporaryRegisters.Add(Register.ofBoolValue(RegisterComparison.isGreaterOrEqual &x &y))
             | Obj_new(Method constructor, LookupRegisterArray arguments) ->
                 let o =
                     // TODO: Cache these AnyType instances used by obj.new
