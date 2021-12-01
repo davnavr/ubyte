@@ -206,7 +206,7 @@ let instruction instr dest =
     | Br_le(x, y, btrue, bfalse) -> branchComparisonInstruction Opcode.``br.le`` x y btrue bfalse
     | Br_ge(x, y, btrue, bfalse) -> branchComparisonInstruction Opcode.``br.ge`` x y btrue bfalse
     | Br_true(cond, btrue, bfalse) ->
-        opcode Opcode.br dest
+        opcode Opcode.``br.true`` dest
         index cond dest
         boffset btrue
         boffset bfalse
