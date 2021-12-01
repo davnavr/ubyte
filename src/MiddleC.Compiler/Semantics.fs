@@ -750,7 +750,14 @@ module TypeChecker =
                     // TODO: Have support for implicit casting, this means that a helper function needs to decide whether y is a subtype of/compatible with x.
                     // TODO: Prohibit implicit narrowing (long to int is bad)
                     // TODO: Check that the type of arguments are correct, some shift operators may expect a certain integer type for an argument.
-                    return! ok (CheckedExpression.BinaryOperation(op, xexpr, yexpr)) xexpr.Type
+                    return!
+                        match op with
+                        | BinaryOperation.LessThan | BinaryOperation.LessThanOrEqual
+                        | BinaryOperation.GreaterThan | BinaryOperation.GreaterThanOrEqual
+                        | BinaryOperation.IsEqual | BinaryOperation.IsNotEqual ->
+                            CheckedType.primitive Model.PrimitiveType.Bool
+                        | _ -> xexpr.Type
+                        |> ok (CheckedExpression.BinaryOperation(op, xexpr, yexpr))
                 }
             | bad -> raise(NotImplementedException(sprintf "TODO: Add support for expression %O" bad))
 
