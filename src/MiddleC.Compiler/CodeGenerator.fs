@@ -215,6 +215,7 @@ let rec private writeExpressionCode
         | BinaryOperation.Subtraction -> InstructionSet.Sub(InstructionSet.ArithmeticFlags.None, typeSignatureLookup x.Type, xv, yv)
         | BinaryOperation.Multiplication -> InstructionSet.Mul(InstructionSet.ArithmeticFlags.None, typeSignatureLookup x.Type, xv, yv)
         | BinaryOperation.Division -> InstructionSet.Div(InstructionSet.ArithmeticFlags.None, typeSignatureLookup x.Type, xv, yv)
+        | BinaryOperation.IsEqual -> InstructionSet.Const_true PrimitiveType.Bool // TODO: Use InstructionSet.Cmp_true
         | _ -> raise(NotImplementedException("Code generation for the operation is not supported " + op.ToString()))
         |> instructions.Add
 
@@ -273,15 +274,6 @@ let rec private writeExpressionCode
     | _ ->
         raise(NotImplementedException(sprintf "Code generation is not yet implemented for %O" expression))
 
-[<IsByRefLike; IsReadOnly; Struct; NoComparison; NoEquality; RequireQualifiedAccess>]
-type private InstructionFixup private (index: int32, instructions: ImmutableArray<InstructionSet.Instruction>.Builder) =
-    member _.Fixup instruction = instructions.[index] <- instruction
-
-    static member Insert(instructions: ImmutableArray<_>.Builder) =
-        let i = instructions.Count
-        instructions.Add InstructionSet.Nop
-        InstructionFixup(i, instructions)
-
 let private writeMethodBodies
     dataIndexLookup
     typeSignatureLookup
@@ -338,12 +330,19 @@ let private writeMethodBodies
                 if values.Length <> 1 then
                     invalidOp "Expected only one condition expression for conditional statement"
 
-                // TODO: Order of blocks doesn't really matter, could just say then is 1 and else is 2
-                // Will get replaced with branch later, as block offsets are not yet known.
-                let br = InstructionFixup.Insert instructions
+                if not thenBlockStatements.IsDefaultOrEmpty then
+                    instructions.Add(InstructionSet.Br_true(values.[0], 1, 2))
+                    writeCurrentBlock() // End of if
 
-                br.Fixup(InstructionSet.Br_true(values.[0], failwith "A", failwith "A"))
-                failwith "TODO: Add blocks"
+                    writeBlockCode method thenBlockStatements // Start of then
+                    if not((*previous instruction is a branch or ret*) false) then instructions.Add(InstructionSet.Br 1)
+                    writeCurrentBlock() // End of then
+
+                    writeBlockCode method elseBlockStatements // Start of else
+                    if not((*previous instruction is a branch or ret*) false) then instructions.Add(InstructionSet.Br 1)
+                    writeCurrentBlock() // End of else
+                else
+                    writeBlockCode method elseBlockStatements
             | CheckedStatement.LocalDeclaration(_, name, _, value) ->
                 let values = writeTypedExpression value
                 if values.Length <> 1 then
@@ -373,14 +372,6 @@ let private writeMethodBodies
                     raise(NotImplementedException "Code generation for multiple return values is not yet implemented")
             | CheckedStatement.Empty -> instructions.Add InstructionSet.Nop
 
-        writeCurrentBlock() // Writes the last block, if any
-
-        assert(blocks.Count = 0)
-        assert(instructions.Count = 0)
-
-        { Code.LocalCount = uint32 localRegisterLookup.Count
-          Code.Blocks = blocks.ToImmutable() }
-
     for KeyValue(method, struct(Index index, statements)) in methodBodyLookup do
         localRegisterLookup.Clear()
         blocks.Clear()
@@ -388,7 +379,13 @@ let private writeMethodBodies
         for i = 0 to method.Parameters.Length - 1 do
             localRegisterLookup.Add(method.Parameters.[i].Name.Content, fun() -> RegisterIndex.Index(nextTemporaryIndex + uint32 i))
 
-        bodies.[int32 index] <- writeBlockCode method statements
+        writeBlockCode method statements
+
+        writeCurrentBlock() // Writes the last block, if any
+
+        bodies.[int32 index] <-
+            { Code.LocalCount = uint32 localRegisterLookup.Count
+              Code.Blocks = blocks.ToImmutable() }
 
     Unsafe.As<Code[], ImmutableArray<Code>> &bodies
 
