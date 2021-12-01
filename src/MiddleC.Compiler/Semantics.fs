@@ -878,8 +878,11 @@ module TypeChecker =
             fun method nodes ->
                 let builder =
                     match nestedBlockStatements.TryPop() with
-                    | true, statements -> statements
-                    | false, _ -> ImmutableArray.CreateBuilder()
+                    | true, statements ->
+                        statements.Clear()
+                        statements
+                    | false, _ ->
+                        ImmutableArray.CreateBuilder()
 
                 let result = checkBlockNodes method builder nodes
                 nestedBlockStatements.Push builder
