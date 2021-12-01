@@ -134,6 +134,11 @@ let instruction instr dest =
 
     let inline boffset (offset: BlockOffset) = VarInt.signed offset dest
 
+    let inline numericComparisonInstruction i x y =
+        opcode i dest
+        index x dest
+        index y dest
+
     let inline branchComparisonInstruction i x y btrue bfalse =
         opcode i dest
         index x dest
@@ -205,6 +210,12 @@ let instruction instr dest =
         index cond dest
         boffset btrue
         boffset bfalse
+    | Cmp_eq(x, y) -> numericComparisonInstruction Opcode.``br.eq`` x y
+    | Cmp_ne(x, y) -> numericComparisonInstruction Opcode.``br.ne`` x y
+    | Cmp_lt(x, y) -> numericComparisonInstruction Opcode.``br.lt`` x y
+    | Cmp_gt(x, y) -> numericComparisonInstruction Opcode.``br.gt`` x y
+    | Cmp_le(x, y) -> numericComparisonInstruction Opcode.``br.le`` x y
+    | Cmp_ge(x, y) -> numericComparisonInstruction Opcode.``br.ge`` x y
     | Mem_init(flags, count, ty, addr, value) ->
         opcode Opcode.``mem.init`` dest
         bits1 flags dest

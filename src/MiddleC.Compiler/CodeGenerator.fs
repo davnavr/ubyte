@@ -203,6 +203,7 @@ let rec private writeExpressionCode
     | CheckedExpression.BinaryOperation(op, x, y) ->
         let xvalues = writeNestedExpression x
         let yvalues = writeNestedExpression y
+        let etype = typeSignatureLookup expression.Type
         let count = xvalues.Length + yvalues.Length
 
         if xvalues.Length + yvalues.Length <> 2 then
@@ -211,11 +212,17 @@ let rec private writeExpressionCode
         let xv, yv = xvalues.[0], yvalues.[0]
 
         match op with
-        | BinaryOperation.Addition -> InstructionSet.Add(InstructionSet.ArithmeticFlags.None, typeSignatureLookup x.Type, xv, yv)
-        | BinaryOperation.Subtraction -> InstructionSet.Sub(InstructionSet.ArithmeticFlags.None, typeSignatureLookup x.Type, xv, yv)
-        | BinaryOperation.Multiplication -> InstructionSet.Mul(InstructionSet.ArithmeticFlags.None, typeSignatureLookup x.Type, xv, yv)
-        | BinaryOperation.Division -> InstructionSet.Div(InstructionSet.ArithmeticFlags.None, typeSignatureLookup x.Type, xv, yv)
-        | BinaryOperation.IsEqual -> InstructionSet.Const_true PrimitiveType.Bool // TODO: Use InstructionSet.Cmp_true
+        | BinaryOperation.Multiplication -> InstructionSet.Mul(InstructionSet.ArithmeticFlags.None, etype, xv, yv)
+        | BinaryOperation.Division -> InstructionSet.Div(InstructionSet.ArithmeticFlags.None, etype, xv, yv)
+        | BinaryOperation.Modulo -> InstructionSet.Rem(InstructionSet.ArithmeticFlags.None, etype, xv, yv)
+        | BinaryOperation.Addition -> InstructionSet.Add(InstructionSet.ArithmeticFlags.None, etype, xv, yv)
+        | BinaryOperation.Subtraction -> InstructionSet.Sub(InstructionSet.ArithmeticFlags.None, etype, xv, yv)
+        | BinaryOperation.LessThan -> InstructionSet.Cmp_lt(xv, yv)
+        | BinaryOperation.LessThanOrEqual -> InstructionSet.Cmp_le(xv, yv)
+        | BinaryOperation.GreaterThan -> InstructionSet.Cmp_gt(xv, yv)
+        | BinaryOperation.GreaterThanOrEqual -> InstructionSet.Cmp_ge(xv, yv)
+        | BinaryOperation.IsEqual -> InstructionSet.Cmp_eq(xv, yv)
+        | BinaryOperation.IsNotEqual -> InstructionSet.Cmp_ne(xv, yv)
         | _ -> raise(NotImplementedException("Code generation for the operation is not supported " + op.ToString()))
         |> instructions.Add
 

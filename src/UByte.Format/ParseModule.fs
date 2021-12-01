@@ -282,6 +282,12 @@ let instruction source =
     | Opcode.``br.le`` -> branchComparisonInstruction Br_le
     | Opcode.``br.ge`` -> branchComparisonInstruction Br_ge
     | Opcode.``br.true`` -> Br_true(index source, boffset(), boffset())
+    | Opcode.``cmp.eq`` -> instr2 Cmp_eq
+    | Opcode.``cmp.ne`` -> instr2 Cmp_ne
+    | Opcode.``cmp.lt`` -> instr2 Cmp_lt
+    | Opcode.``cmp.gt`` -> instr2 Cmp_gt
+    | Opcode.``cmp.le`` -> instr2 Cmp_le
+    | Opcode.``cmp.ge`` -> instr2 Cmp_ge
     | Opcode.``mem.init`` -> Mem_init(bits1 source, index source, index source, index source, index source)
     | Opcode.``mem.st`` -> Mem_st(bits1 source, index source, index source, index source)
     | Opcode.``mem.cpy`` -> Mem_cpy(bits1 source, index source, index source, index source, index source)

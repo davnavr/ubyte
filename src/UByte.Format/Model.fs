@@ -174,6 +174,12 @@ module InstructionSet =
         | ``br.le`` = 0x55u
         | ``br.ge`` = 0x56u
         | ``br.true`` = 0x57u
+        | ``cmp.eq`` = 0x5Au
+        | ``cmp.ne`` = 0x5Bu
+        | ``cmp.lt`` = 0x5Cu
+        | ``cmp.gt`` = 0x5Du
+        | ``cmp.le`` = 0x5Eu
+        | ``cmp.ge`` = 0x5Fu
         | ``mem.init`` = 0x6Au
         | ``mem.st`` = 0x6Bu
         | ``mem.ld`` = 0x6Cu
@@ -252,6 +258,12 @@ module InstructionSet =
         | Br_le of x: RegisterIndex * y: RegisterIndex * btrue: BlockOffset * bfalse: BlockOffset
         | Br_ge of x: RegisterIndex * y: RegisterIndex * btrue: BlockOffset * bfalse: BlockOffset
         | Br_true of condition: RegisterIndex * btrue: BlockOffset * bfalse: BlockOffset
+        | Cmp_eq of x: RegisterIndex * y: RegisterIndex
+        | Cmp_ne of x: RegisterIndex * y: RegisterIndex
+        | Cmp_lt of x: RegisterIndex * y: RegisterIndex
+        | Cmp_gt of x: RegisterIndex * y: RegisterIndex
+        | Cmp_le of x: RegisterIndex * y: RegisterIndex
+        | Cmp_ge of x: RegisterIndex * y: RegisterIndex
         | Mem_init of MemoryAccessFlags * count: RegisterIndex * TypeSignatureIndex * address: RegisterIndex * value: RegisterIndex
         | Mem_st of MemoryAccessFlags * value: RegisterIndex * TypeSignatureIndex * address: RegisterIndex
         | Mem_cpy of MemoryAccessFlags * count: RegisterIndex * TypeSignatureIndex * source: RegisterIndex * destination: RegisterIndex

@@ -185,6 +185,27 @@ module InstructionSet =
         | call = 4u
         | ``call.virt`` = 5u
         | ``call.indr`` = 6u
+        //| = 0x7u
+        //| = 0x9u
+        //| = 0xAu
+        //| = 0xBu
+        //| = 0xCu
+        //| = 0xDu
+        //| = 0xEu
+        //| = 0xFu
+        //| = 0x10u
+        //| = 0x11u
+        //| = 0x12u
+        //| = 0x13u
+        //| = 0x14u
+        //| = 0x15u
+        //| = 0x16u
+        //| = 0x17u
+        //| = 0x18u
+        //| = 0x19u
+        //| = 0x1Au
+        //| = 0x1Bu
+        //| = 0x1Cu
         | ``global.ld`` = 0x1Du
         | ``global.st`` = 0x1Eu
         | ``global.addr`` = 0x1Fu
@@ -231,20 +252,40 @@ module InstructionSet =
         | ``br.le`` = 0x55u
         | ``br.ge`` = 0x56u
         | ``br.true`` = 0x57u
-
+        //| = 0x58u
+        //| cmp = 0x59u
+        | ``cmp.eq`` = 0x5Au
+        | ``cmp.ne`` = 0x5Bu
+        | ``cmp.lt`` = 0x5Cu
+        | ``cmp.gt`` = 0x5Du
+        | ``cmp.le`` = 0x5Eu
+        | ``cmp.ge`` = 0x5Fu
+        //| = 0x60u
+        //| = 0x61u
+        //| = 0x62u
+        //| = 0x63u
+        //| = 0x64u
+        //| = 0x65u
+        //| = 0x66u
+        //| = 0x67u
+        //| = 0x68u
+        //| = 0x69u
         | ``mem.init`` = 0x6Au
         | ``mem.st`` = 0x6Bu
         | ``mem.ld`` = 0x6Cu
         | ``mem.cpy`` = 0x6Du
         | ``mem.init.const`` = 0x6Eu
-
+        //| = 0x6Fu
         | ``obj.new`` = 0x70u
         | ``obj.null`` = 0x71u
         | ``obj.fd.ld`` = 0x72u
         | ``obj.fd.st`` = 0x73u
         | ``obj.fd.addr`` = 0x74u
         | ``obj.throw`` = 0x75u
-
+        //| = 0x76u
+        //| = 0x77u
+        //| = 0x78u
+        //| = 0x79u
         | ``obj.arr.new`` = 0x7Au
         | ``obj.arr.len`` = 0x7Bu
         | ``obj.arr.get`` = 0x7Cu
@@ -622,6 +663,66 @@ module InstructionSet =
         /// </para>
         /// </summary>
         | Br_true of condition: RegisterIndex * btrue: BlockOffset * bfalse: BlockOffset
+        /// <summary>
+        /// <para>
+        /// <c>&lt;result&gt; = cmp.eq &lt;x&gt; &lt;y&gt;</c>
+        /// </para>
+        /// <para>
+        /// If the value in register <paramref name="x"/> is equal to the value in register <paramref name="y"/>, returns
+        /// <see langword="true"/>; otherwise, returns <see langword="false"/>.
+        /// </para>
+        /// </summary>
+        | Cmp_eq of x: RegisterIndex * y: RegisterIndex
+        /// <summary>
+        /// <para>
+        /// <c>&lt;result&gt; = cmp.ne &lt;x&gt; &lt;y&gt;</c>
+        /// </para>
+        /// <para>
+        /// If the value in register <paramref name="x"/> is not equal to the value in register <paramref name="y"/>, returns
+        /// <see langword="true"/>; otherwise, returns <see langword="false"/>.
+        /// </para>
+        /// </summary>
+        | Cmp_ne of x: RegisterIndex * y: RegisterIndex
+        /// <summary>
+        /// <para>
+        /// <c>&lt;result&gt; = cmp.lt &lt;x&gt; &lt;y&gt;</c>
+        /// </para>
+        /// <para>
+        /// If the value in register <paramref name="x"/> is less than the value in register <paramref name="y"/>, returns
+        /// <see langword="true"/>; otherwise, returns <see langword="false"/>.
+        /// </para>
+        /// </summary>
+        | Cmp_lt of x: RegisterIndex * y: RegisterIndex
+        /// <summary>
+        /// <para>
+        /// <c>&lt;result&gt; = cmp.gt &lt;x&gt; &lt;y&gt;</c>
+        /// </para>
+        /// <para>
+        /// If the value in register <paramref name="x"/> is greater than the value in register <paramref name="y"/>, returns
+        /// <see langword="true"/>; otherwise, returns <see langword="false"/>.
+        /// </para>
+        /// </summary>
+        | Cmp_gt of x: RegisterIndex * y: RegisterIndex
+        /// <summary>
+        /// <para>
+        /// <c>&lt;result&gt; = cmp.le &lt;x&gt; &lt;y&gt;</c>
+        /// </para>
+        /// <para>
+        /// If the value in register <paramref name="x"/> is less than or equal to the value in register <paramref name="y"/>, returns
+        /// <see langword="true"/>; otherwise, returns <see langword="false"/>.
+        /// </para>
+        /// </summary>
+        | Cmp_le of x: RegisterIndex * y: RegisterIndex
+        /// <summary>
+        /// <para>
+        /// <c>&lt;result&gt; = cmp.ge &lt;x&gt; &lt;y&gt;</c>
+        /// </para>
+        /// <para>
+        /// If the value in the <paramref name="x"/> register is greater than or equal to the value in the <paramref name="y"/>
+        /// register, returns <see langword="true"/>; otherwise, returns <see langword="false"/>.
+        /// </para>
+        /// </summary>
+        | Cmp_ge of x: RegisterIndex * y: RegisterIndex
         /// <summary>
         /// <para>
         /// <c>mem.init [unaligned] [throw.invalid] &lt;count&gt; &lt;type&gt; at &lt;address&gt; with &lt;value&gt;</c>
