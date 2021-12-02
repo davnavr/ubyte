@@ -390,18 +390,18 @@ let private writeMethodBodies
                             invalidOp "Expected temporary register but expression code returned a local or argument register"
                         i
                     else
+                        let ltype = typeSignatureLookup ty
+
                         instructions.Add(InstructionSet.Const_i(PrimitiveType.U8, 1))
                         let one = createTemporaryRegister()
-                        let ltype = typeSignatureLookup ty
 
                         instructions.Add(InstructionSet.Alloca(one, ltype))
                         let (Index iaddr) as addr = createTemporaryRegister()
 
-                        InstructionSet.Mem_cpy (
+                        InstructionSet.Mem_st (
                             InstructionSet.MemoryAccessFlags.ThrowOnInvalidAccess,
-                            one,
-                            ltype,
                             values.[0],
+                            ltype,
                             addr
                         )
                         |> instructions.Add
