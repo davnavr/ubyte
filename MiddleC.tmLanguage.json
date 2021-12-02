@@ -122,15 +122,18 @@
               ]
             },
             {
-              "begin": "\\s*\\{",
-              "end": "(^|;|\\s+)(?=\\})",
-              "patterns": [
-                {
-                  "include": "#statement"
-                }
-              ]
+              "include": "#block"
             }
           ]
+        }
+      ]
+    },
+    "block": {
+      "begin": "\\s*\\{",
+      "end": "(^|;|\\s+)(?=\\})",
+      "patterns": [
+        {
+          "include": "#statement"
         }
       ]
     },
@@ -197,13 +200,24 @@
           "include": "#literal-integer"
         },
         {
-          "begin": "\\(",
-          "end": "\\)",
-          "patterns": [
-            {
-              "include": "#expression"
+          "include": "#expression-surrounded"
+        },
+        {
+          "match": "(true|false)",
+          "captures": {
+            "1": {
+              "name": "constant.language.middlec"
             }
-          ]
+          }
+        }
+      ]
+    },
+    "expression-surrounded": {
+      "begin": "\\(\\s*",
+      "end": "\\s*\\)",
+      "patterns": [
+        {
+          "include": "#expression"
         }
       ]
     },
@@ -253,6 +267,23 @@
               "name": "punctuation.terminator.middlec"
             }
           }
+        },
+        {
+          "begin": "(if)\\s",
+          "beginCaptures": {
+            "1": {
+              "name": "keyword.control.middlec"
+            }
+          },
+          "end": "\\}",
+          "patterns": [
+            {
+              "include": "#expression-surrounded"
+            },
+            {
+              "include": "#block"
+            }
+          ]
         }
       ]
     }
