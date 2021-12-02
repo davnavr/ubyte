@@ -366,6 +366,7 @@ let private writeMethodBodies
                     invalidOp "Expected only one condition expression for if statement"
 
                 if not thenBlockStatements.IsDefaultOrEmpty then
+
                     instructions.Add(InstructionSet.Br_true(values.[0], 1, 2))
                     writeCurrentBlock() // End of if
 
@@ -429,6 +430,7 @@ let private writeMethodBodies
                 else
                     raise(NotImplementedException "Code generation for multiple return values is not yet implemented")
             | CheckedStatement.While(condition, body) ->
+                instructions.Add(InstructionSet.Br 1)
                 writeCurrentBlock() // Start of condition
 
                 let values = writeTypedExpression condition
