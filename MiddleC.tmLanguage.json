@@ -203,12 +203,8 @@
           "include": "#expression-surrounded"
         },
         {
-          "match": "(true|false)",
-          "captures": {
-            "1": {
-              "name": "constant.language.middlec"
-            }
-          }
+          "match": "true|false",
+          "name": "constant.language.middlec"
         }
       ]
     },
@@ -261,15 +257,28 @@
           ]
         },
         {
-          "match": "(\\;)",
-          "captures": {
-            "1": {
-              "name": "punctuation.terminator.middlec"
-            }
-          }
+          "match": "\\;",
+          "name": "punctuation.terminator.middlec"
         },
         {
           "begin": "(if)\\s",
+          "beginCaptures": {
+            "1": {
+              "name": "keyword.control.middlec"
+            }
+          },
+          "end": "\\}",
+          "patterns": [
+            {
+              "include": "#expression-surrounded"
+            },
+            {
+              "include": "#block"
+            }
+          ]
+        },
+        {
+          "begin": "(while)\\s",
           "beginCaptures": {
             "1": {
               "name": "keyword.control.middlec"
