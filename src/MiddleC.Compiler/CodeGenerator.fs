@@ -192,6 +192,9 @@ let rec private writeExpressionCode
             nested
 
     match expression.Expression with
+    | CheckedExpression.LiteralBoolean value ->
+        instructions.Add((if value then InstructionSet.Const_true else InstructionSet.Const_false) PrimitiveType.Bool)
+        writeOneRegister()
     | CheckedExpression.LiteralSignedInteger value ->
         match expression.Type with
         | CheckedType.ValueType(CheckedValueType.Primitive ptype) ->
@@ -335,7 +338,7 @@ let private writeMethodBodies
             | CheckedStatement.If(condition, thenBlockStatements, elseBlockStatements) ->
                 let values = writeTypedExpression condition
                 if values.Length <> 1 then
-                    invalidOp "Expected only one condition expression for conditional statement"
+                    invalidOp "Expected only one condition expression for if statement"
 
                 if not thenBlockStatements.IsDefaultOrEmpty then
                     instructions.Add(InstructionSet.Br_true(values.[0], 1, 2))
@@ -377,7 +380,21 @@ let private writeMethodBodies
                     instructions.Add(InstructionSet.Ret(Unsafe.As<RegisterIndex[], ImmutableArray<RegisterIndex>> &returns))
                 else
                     raise(NotImplementedException "Code generation for multiple return values is not yet implemented")
-            | CheckedStatement.Empty -> instructions.Add InstructionSet.Nop
+            | CheckedStatement.While(condition, body) ->
+                writeCurrentBlock() // Start of condition
+
+                let values = writeTypedExpression condition
+                if values.Length <> 1 then
+                    invalidOp "Expected only one condition expression for while loop"
+
+                instructions.Add(InstructionSet.Br_true(values.[0], 1, 2))
+                writeCurrentBlock() // End of condition
+
+                writeBlockCode method body // Start of body
+                instructions.Add(InstructionSet.Br -1)
+                writeCurrentBlock() // End of body
+            | CheckedStatement.Empty ->
+                instructions.Add InstructionSet.Nop
 
     for KeyValue(method, struct(Index index, statements)) in methodBodyLookup do
         localRegisterLookup.Clear()

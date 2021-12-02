@@ -133,6 +133,7 @@ type CheckedStatement =
         elseBlockStatements: ImmutableArray<CheckedStatement>
     | LocalDeclaration of constant: bool * name: IdentifierNode * CheckedType * value: TypedExpression
     | Return of ImmutableArray<TypedExpression>
+    | While of condition: TypedExpression * body: ImmutableArray<CheckedStatement>
     | Empty
 
     override ToString : unit -> string

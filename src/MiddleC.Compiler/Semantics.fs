@@ -136,6 +136,7 @@ and [<RequireQualifiedAccess>] CheckedStatement =
         elseBlockStatements: ImmutableArray<CheckedStatement>
     | LocalDeclaration of constant: bool * name: IdentifierNode * CheckedType(* CheckedLocal *) * value: TypedExpression
     | Return of ImmutableArray<TypedExpression>
+    | While of condition: TypedExpression * body: ImmutableArray<CheckedStatement>
     | Empty
 
     override this.ToString() =
@@ -160,6 +161,11 @@ and [<RequireQualifiedAccess>] CheckedStatement =
                 .Append(ty.ToString()).Append(" = ").Append(value.ToString()).Append(';').ToString()
         | Return value when value.IsDefaultOrEmpty -> "return;"
         | Return values -> System.Text.StringBuilder("return ").AppendJoin(", ", values).Append(';').ToString()
+        | While(condition, statements) ->
+            let sb = System.Text.StringBuilder("while (").Append(condition.ToString()).AppendLine(") {")
+            for statement in statements do
+                sb.Append('\t').Append(statement.ToString()).AppendLine(";") |> ignore
+            sb.Append('}').ToString()
         | Empty -> ";"
 
 and [<RequireQualifiedAccess>] CheckedLocal =
@@ -756,7 +762,7 @@ module TypeChecker =
                         | BinaryOperation.GreaterThan | BinaryOperation.GreaterThanOrEqual
                         | BinaryOperation.IsEqual | BinaryOperation.IsNotEqual ->
                             CheckedType.primitive Model.PrimitiveType.Bool
-                        | _ -> xexpr.Type
+                        | _ -> xexpr.Type // TODO: Use largest type of two operands.
                         |> ok (CheckedExpression.BinaryOperation(op, xexpr, yexpr))
                 }
             | bad -> raise(NotImplementedException(sprintf "TODO: Add support for expression %O" bad))
@@ -854,6 +860,12 @@ module TypeChecker =
                         validated {
                             let! expr = checkParsedExpression method value
                             return CheckedStatement.Return(ImmutableArray.Create expr)
+                        }
+                    | StatementNode.While(condition, body) ->
+                        validated {
+                            let! cond = checkConditionExpression method condition
+                            let statements = checkNestedStatements method body
+                            return CheckedStatement.While(cond, statements)
                         }
                     | StatementNode.Empty -> Ok CheckedStatement.Empty
                     | bad -> raise(NotImplementedException(sprintf "TODO: Add support for statement %O" bad))

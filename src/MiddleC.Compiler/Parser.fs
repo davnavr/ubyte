@@ -537,6 +537,11 @@ module Parse =
                     elseBlock
                 |>> StatementNode.If
 
+                skipString "while"
+                .>> whitespace
+                >>. tuple2 (betweenParenthesis expression .>> whitespace) block
+                |>> StatementNode.While
+
                 choice [|
                     tuple4
                         (choice [ stringReturn "let" true; stringReturn "var" false ])
