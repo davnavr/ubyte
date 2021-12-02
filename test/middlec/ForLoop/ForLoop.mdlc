@@ -2,10 +2,11 @@ namespace ForLoop {
 
 type Program {
     method Main entrypoint (argv char32[][]) -> (s32) {
-        while (true) {
-            return 1;
+        var counter s32 = 0;
+        while (counter < argv.length) {
+            counter <- counter + 1;
         }
-        return 0;
+        return counter;
     }
 }
 

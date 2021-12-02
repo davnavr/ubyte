@@ -166,6 +166,11 @@ let private writeTypeDefinitions
 
     Unsafe.As<TypeDefinition[], ImmutableArray<TypeDefinition>> &definitions
 
+[<NoComparison; NoEquality; RequireQualifiedAccess>]
+type private LocalRegister =
+    { Index: unit -> RegisterIndex
+      Type: CheckedType }
+
 /// Generates the corresponding byte code for a given expression.
 let rec private writeExpressionCode
     nextTemporaryIndex
@@ -173,7 +178,7 @@ let rec private writeExpressionCode
     typeSignatureLookup
     (importedMethodIndices: Dictionary<_, MethodIndex>)
     (definedMethodIndices: Dictionary<_, MethodIndex>)
-    (localRegisterLookup: Dictionary<_, _>)
+    (localRegisterLookup: Dictionary<_, LocalRegister>)
     (instructions: ImmutableArray<_>.Builder)
     (expression: TypedExpression)
     : ImmutableArray<RegisterIndex>
@@ -203,6 +208,25 @@ let rec private writeExpressionCode
             writeOneRegister()
         | _ ->
             raise(NotImplementedException(sprintf "Cannot generate integer literal of type %O" expression.Type))
+    | CheckedExpression.BinaryOperation(BinaryOperation.Assignment, destination, source) ->
+        let values = writeNestedExpression source
+        if values.Length <> 1 then invalidOp "Attempt to store multiple values"
+
+        match destination.Expression with
+        | CheckedExpression.Local id ->
+            // Mutable locals are represented as local registers that contain pointers to the stack.
+            let dest = localRegisterLookup.[id]
+            InstructionSet.Mem_st (
+                InstructionSet.MemoryAccessFlags.ThrowOnInvalidAccess,
+                values.[0],
+                typeSignatureLookup dest.Type,
+                dest.Index()
+            )
+        | _ ->
+            invalidOp(sprintf "Invalid assignment destination %O" destination)
+        |> instructions.Add
+
+        ImmutableArray.Empty
     | CheckedExpression.BinaryOperation(op, x, y) ->
         let xvalues = writeNestedExpression x
         let yvalues = writeNestedExpression y
@@ -226,6 +250,7 @@ let rec private writeExpressionCode
         | BinaryOperation.GreaterThanOrEqual -> InstructionSet.Cmp_ge(xv, yv)
         | BinaryOperation.IsEqual -> InstructionSet.Cmp_eq(xv, yv)
         | BinaryOperation.IsNotEqual -> InstructionSet.Cmp_ne(xv, yv)
+        | BinaryOperation.Assignment -> invalidOp "Code generation for assignment operations is handled elsewhere"
         | _ -> raise(NotImplementedException("Code generation for the operation is not supported " + op.ToString()))
         |> instructions.Add
 
@@ -275,7 +300,7 @@ let rec private writeExpressionCode
                 raise(NotImplementedException "NON-DATA arrays not yet implemented")
         | _ ->
             raise(NotImplementedException(sprintf "Code generation for new array containing %O is not yet implemented" etype))
-    | CheckedExpression.Local name -> ImmutableArray.Create(item = localRegisterLookup.[name] ())
+    | CheckedExpression.Local name -> ImmutableArray.Create(item = localRegisterLookup.[name].Index())
     | CheckedExpression.ArrayLengthAccess expression ->
         let array = writeNestedExpression expression
         if array.Length <> 1 then invalidOp "Attempt to access array length for multiple values"
@@ -292,7 +317,7 @@ let private writeMethodBodies
     (methodBodyLookup: Dictionary<CheckedMethod, struct(CodeIndex * ImmutableArray<_>)>) =
     let mutable bodies = Array.zeroCreate methodBodyLookup.Count
 
-    let localRegisterLookup = Dictionary<_, _>()
+    let localRegisterLookup = Dictionary<_, LocalRegister>()
     let blocks = ImmutableArray.CreateBuilder<CodeBlock>()
 
     let blockLocalMap = ImmutableArray.CreateBuilder<struct(_ * _)>()
@@ -353,20 +378,43 @@ let private writeMethodBodies
                     writeCurrentBlock() // End of else
                 else
                     writeBlockCode method elseBlockStatements
-            | CheckedStatement.LocalDeclaration(_, name, _, value) ->
+            | CheckedStatement.LocalDeclaration(immutable, name, ty, value) ->
                 let values = writeTypedExpression value
                 if values.Length <> 1 then
                     raise(NotImplementedException(sprintf "Code generation for local variable containing %i values is not yet implemented" values.Length))
 
-                let (Index i) = values.[0]
-                if i >= nextTemporaryIndex then
-                    invalidOp "Expected temporary register but expression code returned a local or argument register"
+                let vindex =
+                    if immutable then
+                        let (Index i) = values.[0]
+                        if i >= nextTemporaryIndex then
+                            invalidOp "Expected temporary register but expression code returned a local or argument register"
+                        i
+                    else
+                        instructions.Add(InstructionSet.Const_i(PrimitiveType.U8, 1))
+                        let one = createTemporaryRegister()
+                        let ltype = typeSignatureLookup ty
 
-                let tindex = TemporaryIndex.Index i
+                        instructions.Add(InstructionSet.Alloca(one, ltype))
+                        let (Index iaddr) as addr = createTemporaryRegister()
+
+                        InstructionSet.Mem_cpy (
+                            InstructionSet.MemoryAccessFlags.ThrowOnInvalidAccess,
+                            one,
+                            ltype,
+                            values.[0],
+                            addr
+                        )
+                        |> instructions.Add
+
+                        iaddr
+
+                let tindex = TemporaryIndex.Index vindex
                 let lindex = uint32 localRegisterLookup.Count
 
+                let getLocalIndex() = RegisterIndex.Index(nextTemporaryIndex + uint32 method.Parameters.Length + lindex)
+
                 blockLocalMap.Add(struct(tindex, LocalIndex.Index lindex))
-                localRegisterLookup.Add(name.Content, fun() -> RegisterIndex.Index(nextTemporaryIndex + uint32 method.Parameters.Length + lindex))
+                localRegisterLookup.Add(name.Content, { LocalRegister.Index = getLocalIndex; LocalRegister.Type = ty })
             | CheckedStatement.Return values ->
                 if values.IsDefaultOrEmpty then
                     instructions.Add(InstructionSet.Ret ImmutableArray.Empty)
@@ -401,7 +449,12 @@ let private writeMethodBodies
         blocks.Clear()
 
         for i = 0 to method.Parameters.Length - 1 do
-            localRegisterLookup.Add(method.Parameters.[i].Name.Content, fun() -> RegisterIndex.Index(nextTemporaryIndex + uint32 i))
+            let parameter = method.Parameters.[i]
+            localRegisterLookup.Add (
+                parameter.Name.Content,
+                { LocalRegister.Index = (fun() -> RegisterIndex.Index(nextTemporaryIndex + uint32 i))
+                  LocalRegister.Type = parameter.Type }
+            )
 
         writeBlockCode method statements
 
