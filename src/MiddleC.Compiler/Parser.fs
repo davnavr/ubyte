@@ -259,7 +259,7 @@ module private CollectionParsers =
         let many p = manyCommon p false
         let many1 p = manyCommon p true
 
-        let private sepByCommon p sep hasFirstElement =
+        let sepByCommon p sep hasFirstElement sepEndsSequence =
             Inline.SepBy (
                 stateFromFirstElement,
                 (fun builder _ element -> foldState builder element),
@@ -267,11 +267,12 @@ module private CollectionParsers =
                 p,
                 sep,
                 ?firstElementParser = (if hasFirstElement then Some p else None),
-                resultForEmptySequence = resultForEmptySequence
+                resultForEmptySequence = resultForEmptySequence,
+                separatorMayEndSequence = sepEndsSequence
             )
 
-        let sepBy p sep = sepByCommon p sep false
-        let sepBy1 p sep = sepByCommon p sep true
+        let sepBy p sep = sepByCommon p sep false false
+        let sepBy1 p sep = sepByCommon p sep true false
 
     [<RequireQualifiedAccess>]
     module Dictionary =
@@ -314,11 +315,13 @@ module Parse =
 
     let private betweenParenthesis inner = between (skipChar '(') (skipChar ')') inner
 
-    let private whitespace : Parser<unit, _> = choice [
-        spaces
-        skipString "//" .>> skipRestOfLine true <?> "single-line comment"
-        //between (skipString "/*") (skipString "*/")
-    ]
+    let private whitespace : Parser<unit, _> =
+        choice [
+            spaces1
+            skipString "//" .>> skipRestOfLine true <?> "single-line comment"
+            //between (skipString "/*") (skipString "*/")
+        ]
+        |> skipMany
 
     let private withNodeContent (parser: Parser<'Content, _>) : Parser<_, unit> =
         fun stream ->
@@ -368,7 +371,9 @@ module Parse =
             Array.map
                 (fun struct(name, ty) -> stringReturn name (AnyTypeNode.Primitive ty))
                 [|
+                    "bool", UByte.Format.Model.PrimitiveType.Bool
                     "s32", UByte.Format.Model.PrimitiveType.S32
+                    "u32", UByte.Format.Model.PrimitiveType.U32
                     "char32", UByte.Format.Model.PrimitiveType.Char32
                 |]
             |> choice
@@ -647,17 +652,20 @@ module Parse =
                     "inheritable", TypeAttributeNode.Inheritable
                 |])
                 (whitespace >>. choice [|
-                    semicolon >>. whitespace >>. CollectionParsers.ImmutableArray.sepBy1 typeIdentifierNode comma
+                    skipChar ':' >>. whitespace >>. CollectionParsers.ImmutableArray.sepBy1 typeIdentifierNode comma
                     preturn ImmutableArray.Empty
                 |])
-                (whitespace >>. betweenCurlyBrackets (CollectionParsers.ImmutableArray.many typeMemberNode))
+                (whitespace >>. betweenCurlyBrackets (whitespace >>. CollectionParsers.ImmutableArray.many typeMemberNode))
             |>> TopLevelNode.TypeDeclaration
         |]
         .>> whitespace
         //|> errorNodeHandler TopLevelNode.Error
         |> withNodeContent
 
-    let parser = CollectionParsers.ImmutableArray.many topLevelNode .>> eof
+    let parser =
+        whitespace
+        >>. CollectionParsers.ImmutableArray.sepByCommon topLevelNode whitespace false true
+        .>> eof
 
     let private defaultStreamEncoding = System.Text.Encoding.UTF8
 
