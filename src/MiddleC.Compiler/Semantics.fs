@@ -240,13 +240,33 @@ and [<Sealed>] CheckedMethod
     member _.Body with get() = body and set value = body <- value // TODO: Make available dictionary of all locals.
 
     override this.ToString() =
-        System.Text.StringBuilder(this.DeclaringType.Identifier.ToString()).Append('.').Append(this.Name.Content.ToString())
+        System.Text.StringBuilder(this.DeclaringType.Identifier.ToString()).Append("::").Append(this.Name.Content.ToString())
             .Append('(')
             .AppendJoin(", ", this.Parameters)
             .Append(')')
             .ToString()
 
 and NamedMethod = Choice<CheckedMethod, UByte.Resolver.ResolvedMethod>
+
+and [<Sealed>] CheckedField
+    (
+        owner: CheckedTypeDefinition,
+        name: IdentifierNode,
+        attributes: ParsedNodeArray<FieldAttributeNode>
+    )
+    =
+    let mutable flags = Unchecked.defaultof<Model.FieldFlags>
+    let mutable visibility = Model.VisibilityFlags.Unspecified
+    let mutable fieldValueType = CheckedType.Void
+    let mutable initialFieldValue: TypedExpression voption = ValueNone
+
+    member _.DeclaringType = owner
+    member _.Name = name
+    member _.AttributeNodes = attributes
+    member _.Flags with get() = flags and set value = flags <- value
+    member _.Visibility with get() = visibility and set value = visibility <- value
+    member _.FieldType with get() = fieldValueType and set value = fieldValueType <- value
+    member _.InitialValue with get() = initialFieldValue
 
 and [<Sealed>] CheckedTypeDefinition
     (
@@ -261,6 +281,7 @@ and [<Sealed>] CheckedTypeDefinition
     let mutable flags = Unchecked.defaultof<Model.TypeDefinitionFlags>
     let mutable inheritedTypeDefinitions = ImmutableArray.Empty
     let mutable methods = ImmutableArray<CheckedMethod>.Empty
+    let mutable fields = ImmutableArray<CheckedField>.Empty
 
     member _.Identifier = identifier
     member _.Source = source
@@ -273,6 +294,7 @@ and [<Sealed>] CheckedTypeDefinition
     member _.Flags with get() = flags and set value = flags <- value
     member _.InheritedTypes with get() = inheritedTypeDefinitions and set value = inheritedTypeDefinitions <- value
     member _.Methods with get() = methods and set value = methods <- value
+    member _.Fields with get() = fields and set value = fields <- value
 
     override this.Equals o =
         match o with
@@ -338,6 +360,7 @@ type CheckedModule
         importedModules: ImmutableArray<UByte.Resolver.ResolvedModule>,
         definedTypes: ImmutableArray<CheckedTypeDefinition>,
         importedTypes: ImmutableArray<UByte.Resolver.ResolvedTypeDefinition>,
+        definedFields: ImmutableArray<CheckedField>,
         definedMethods: ImmutableArray<CheckedMethod>,
         importedMethods: ImmutableArray<UByte.Resolver.ResolvedMethod>,
         entryPointMethod: CheckedMethod voption,
@@ -350,6 +373,7 @@ type CheckedModule
     member _.ImportedModules = importedModules
     member _.ImportedTypes = importedTypes
     member _.DefinedTypes = definedTypes
+    member _.DefinedFields = definedFields
     member _.ImportedMethods = importedMethods
     member _.DefinedMethods = definedMethods
     member _.EntryPoint = entryPointMethod
@@ -574,11 +598,18 @@ module TypeChecker =
         let methodNameLookup = Dictionary<CheckedTypeDefinition, _>()
         let allDefinedMethods = ImmutableArray.CreateBuilder()
         /// Reused instance used to build an array containing all of a type definition's methods.
-        let definedMethodList = ImmutableArray.CreateBuilder()
+        let definedTypeMethods = ImmutableArray.CreateBuilder()
+
+        let fieldNameLookup = Dictionary<CheckedTypeDefinition, _>()
+        let allDefinedFields = ImmutableArray.CreateBuilder()
+        let definedTypeFields = ImmutableArray.CreateBuilder()
 
         for ty in declarations.Values do
             let methods = Dictionary<ParsedIdentifier, CheckedMethod>() // TODO: Allow overloading by parameter count AND parameter types.
+            let fields = Dictionary<ParsedIdentifier, CheckedField>()
+
             methodNameLookup.Add(ty, methods)
+            fieldNameLookup.Add(ty, fields)
 
             for node in ty.MemberNodes do
                 match node.Content with
@@ -595,13 +626,22 @@ module TypeChecker =
                         )
 
                     methods.Add(name.Content, method)
-                    definedMethodList.Add method
+                    definedTypeMethods.Add method
                     allDefinedMethods.Add method
-                //| TypeMemberNode.FieldDeclaration _
+                | TypeMemberNode.FieldDeclaration(name, attributes, fieldType, initialValue) ->
+                    if initialValue.IsSome then raise(NotImplementedException "Fields with initial values are not yet supported")
+                    let field = CheckedField(ty, name, attributes)
+                    fields.Add(name.Content, field)
+                    definedTypeFields.Add field
+                    allDefinedFields.Add field
 
-            ty.Methods <- definedMethodList.ToImmutable()
+            ty.Methods <- definedTypeMethods.ToImmutable()
+            ty.Fields <- definedTypeFields.ToImmutable()
 
-        struct(allDefinedMethods, methodNameLookup)
+            definedTypeMethods.Clear()
+            definedTypeFields.Clear()
+
+        struct(allDefinedFields, fieldNameLookup, allDefinedMethods, methodNameLookup)
 
     let private checkDefinedMethods
         (errors: ImmutableArray<_>.Builder)
@@ -1019,7 +1059,8 @@ module TypeChecker =
 
         let anyTypeChecker = checkAnyType namedTypeLookup
 
-        let struct(allDefinedMethods, methodNameLookup) = findTypeMembers errors declaredTypesLookup
+        let struct(allDefinedFields, fieldNameLookup, allDefinedMethods, methodNameLookup) =
+            findTypeMembers errors declaredTypesLookup
 
         let namedMethodLookup: NamedType -> ParsedIdentifier -> NamedMethod voption =
             fun declaringType methodName ->
@@ -1046,6 +1087,7 @@ module TypeChecker =
             version = Model.VersionNumbers(ImmutableArray.CreateRange version),
             importedModules = moduleImportList.ToImmutable(),
             definedTypes = declaredTypesLookup.Values.ToImmutableArray(),
+            definedFields = allDefinedFields.ToImmutable(),
             definedMethods = allDefinedMethods.ToImmutable(),
             importedTypes = typeImportList.ToImmutable(),
             importedMethods = methodImportLookup.ToImmutableArray(),

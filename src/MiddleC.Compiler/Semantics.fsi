@@ -127,6 +127,14 @@ and [<Sealed; DebuggerDisplay("{ToString()}")>] CheckedMethod =
 
 and NamedMethod = Choice<CheckedMethod, UByte.Resolver.ResolvedMethod>
 
+and [<Sealed>] CheckedField =
+    member DeclaringType : CheckedTypeDefinition
+    member Name : IdentifierNode
+    member Flags : UByte.Format.Model.FieldFlags
+    member Visibility : UByte.Format.Model.VisibilityFlags
+    member FieldType : CheckedType
+    member InitialValue : TypedExpression voption
+
 /// Simplified representation of a statement that has been type checked, constructs such as if-statements and while loops are
 /// lowered.
 [<RequireQualifiedAccess; NoComparison; NoEquality; DebuggerDisplay("{ToString()}")>]
@@ -160,6 +168,7 @@ type CheckedMethod with
 type CheckedTypeDefinition with
     member InheritedTypes : ImmutableArray<NamedType>
     member Methods : ImmutableArray<CheckedMethod>
+    member Fields : ImmutableArray<CheckedField>
 
 [<NoComparison; NoEquality>]
 type SemanticErrorMessage =
@@ -196,6 +205,7 @@ type CheckedModule with
     member Identifier : UByte.Format.Model.ModuleIdentifier
     member DefinedTypes : ImmutableArray<CheckedTypeDefinition>
     member DefinedMethods : ImmutableArray<CheckedMethod>
+    member DefinedFields : ImmutableArray<CheckedField>
     member EntryPoint : CheckedMethod voption
     member Errors : ImmutableArray<SemanticError>
     member ImportedModules : ImmutableArray<UByte.Resolver.ResolvedModule>
