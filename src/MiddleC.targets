@@ -25,7 +25,7 @@
   <Target Name="Build" AfterTargets="Clean" Inputs="@(Compile)" Outputs="$(OutputPath)">
 
     <PropertyGroup>
-      <CompilerFlags>--module-name &quot;$(ModuleName)&quot; -o &quot;$(OutputPath)&quot; %(Import.Flag) %(Compile.Flag)</CompilerFlags>
+      <CompilerFlags>--module-name &quot;$(ModuleName)&quot; -o &quot;$(OutputPath)&quot; @(Import->'%(Flag)', ' ') @(Compile->'%(Flag)', ' ')</CompilerFlags>
     </PropertyGroup>
 
     <Exec
