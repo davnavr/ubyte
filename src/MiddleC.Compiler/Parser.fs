@@ -211,8 +211,8 @@ type FieldAttributeNode = | Mutable | Private | Static
 
 [<RequireQualifiedAccess>]
 type TypeMemberNode =
-    | FieldDeclaration of name: IdentifierNode * fieldType: ParsedNode<AnyTypeNode> *
-        attributes: ParsedNodeArray<FieldAttributeNode> * initialValue: ParsedExpression voption
+    | FieldDeclaration of name: IdentifierNode * attributes: ParsedNodeArray<FieldAttributeNode> *
+        fieldType: ParsedNode<AnyTypeNode> * initialValue: ParsedExpression voption
     | MethodDeclaration of name: IdentifierNode * attributes: ParsedNodeArray<MethodAttributeNode> *
         parameters: ImmutableArray<IdentifierNode * ParsedNode<AnyTypeNode>> * returnTypes: ParsedNodeArray<AnyTypeNode> *
         body: MethodBodyNode
@@ -629,13 +629,13 @@ module Parse =
                 >>. whitespace
                 >>. tuple4
                     (validIdentifierNode .>> whitespace)
-                    anyTypeNode
                     (attributes [|
                         "mutable", FieldAttributeNode.Mutable
                         "private", FieldAttributeNode.Private
                         "static", FieldAttributeNode.Static
                     |])
-                    (whitespace >>. vopt (equals >>. whitespace >>. expression))
+                    (anyTypeNode .>> whitespace)
+                    (whitespace >>. vopt (equals >>. whitespace >>. expression) .>> semicolon)
                 |>> TypeMemberNode.FieldDeclaration
 
                 //skipString "initializer" >>. whitespace >>. block |>> TypeMemberNode.Initializer

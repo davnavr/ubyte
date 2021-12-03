@@ -149,8 +149,8 @@ type MethodBodyNode =
 
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
 type TypeMemberNode =
-    | FieldDeclaration of name: IdentifierNode * fieldType: ParsedNode<AnyTypeNode> *
-        attributes: ParsedNodeArray<FieldAttributeNode> * initialValue: ParsedExpression voption
+    | FieldDeclaration of name: IdentifierNode * attributes: ParsedNodeArray<FieldAttributeNode> *
+        fieldType: ParsedNode<AnyTypeNode> * initialValue: ParsedExpression voption
     | MethodDeclaration of name: IdentifierNode * attributes: ParsedNodeArray<MethodAttributeNode> *
         parameters: ImmutableArray<IdentifierNode * ParsedNode<AnyTypeNode>> * returnTypes: ParsedNodeArray<AnyTypeNode> *
         body: MethodBodyNode

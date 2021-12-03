@@ -103,6 +103,9 @@
           "include": "#type-declaration"
         },
         {
+          "include": "#comment"
+        },
+        {
           "begin": "\\b(method)\\s+([a-zA-Z0-9]\\w*)(\\s+(entrypoint|instance|abstract|virtual|public|private))*",
           "beginCaptures": {
             "1": {
@@ -111,7 +114,7 @@
             "2": {
               "name": "entity.name.function.middlec"
             },
-            "3": {
+            "4": {
               "name": "storage.modifier.middlec"
             }
           },
@@ -141,6 +144,29 @@
               "include": "#block"
             }
           ]
+        },
+        {
+          "begin": "\\b(field)\\s+([a-zA-Z0-9]\\w*)(\\s+(public|private|mutable|static))*",
+          "beginCaptures": {
+            "1": {
+              "name": "storage.type.var.middlec"
+            },
+            "2": {
+              "name": "entity.name.field.middlec"
+            },
+            "4": {
+              "name": "storage.modifier.middlec"
+            }
+          },
+          "end": "\\;",
+          "patterns": [
+            {
+              "include": "#type"
+            },
+            {
+              "include": "#expression"
+            }
+          ]
         }
       ]
     },
@@ -150,6 +176,9 @@
       "patterns": [
         {
           "include": "#statement"
+        },
+        {
+          "include": "#comment"
         }
       ]
     },
@@ -167,6 +196,9 @@
         },
         {
           "include": "#type"
+        },
+        {
+          "include": "#comment"
         }
       ]
     },
@@ -181,6 +213,9 @@
       "patterns": [
         {
           "include": "#type"
+        },
+        {
+          "include": "#comment"
         }
       ]
     },
@@ -221,6 +256,9 @@
         {
           "match": "true|false",
           "name": "constant.language.middlec"
+        },
+        {
+          "include": "#comment"
         }
       ]
     },
@@ -237,6 +275,9 @@
       "patterns": [
         {
           "include": "#expression"
+        },
+        {
+          "include": "#comment"
         },
         {
           "begin": "(return)(\\s+|(?=\\;))",
