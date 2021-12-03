@@ -418,6 +418,7 @@ module TypeChecker =
             let declaredTypeNodes = List<_ -> CheckedTypeDefinition>()
             let nestedNamespaceDeclarations = List()
 
+            usings.Add currentNamespaceName
             usings.AddRange parentUsingDeclarations
 
             for node in nodes do
@@ -867,20 +868,18 @@ module TypeChecker =
                             return CheckedStatement.If(cond, thenBlockStatements, elseBlockStatements)
                         }
                     | StatementNode.LocalDeclaration(constant, name, ty, value) ->
-                        validated {
-                            // TODO: Check that type of local and type of value is compatible.
-                            let! ltype = checkAnyType namedTypeLookup ty
-                            let! lvalue = checkParsedExpression method value
-                            if localVariableLookup.TryAdd(name.Content, ltype) then
+                        let lname = name.Content
+                        if localVariableLookup.ContainsKey lname then
+                            Error(SemanticError.ofNode name method.DeclaringType.Source (DuplicateLocalDeclaration lname))
+                        else
+                            localVariableLookup.[lname] <- CheckedType.Void
+                            validated {
+                                // TODO: Check that type of local and type of value is compatible.
+                                let! ltype = checkAnyType namedTypeLookup ty
+                                localVariableLookup.[lname] <- ltype
+                                let! lvalue = checkParsedExpression method value
                                 return CheckedStatement.LocalDeclaration(constant, name, ltype, lvalue)
-                            else
-                                return!
-                                    SemanticError.ofNode
-                                        name
-                                        method.DeclaringType.Source
-                                        (DuplicateLocalDeclaration name.Content)
-                                    |> Error
-                        }
+                            }
                     | StatementNode.Return value(*s*) ->
                         // TODO: Check that types of return values match method return types
                         validated {
