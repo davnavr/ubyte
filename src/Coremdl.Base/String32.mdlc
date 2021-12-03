@@ -1,0 +1,12 @@
+namespace Coremdl {
+
+/// A string consisting of UTF-32 code points.
+type String32 {
+    field chars private char32[];
+
+    method Count public () -> (u32) {
+        return 0;
+    }
+}
+
+}

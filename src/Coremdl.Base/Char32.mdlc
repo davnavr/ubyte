@@ -1,0 +1,7 @@
+namespace Coremdl {
+
+/// Represents a UTF-32 code point.
+type Char32 {
+}
+
+}
