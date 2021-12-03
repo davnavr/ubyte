@@ -488,7 +488,7 @@ module TypeChecker =
     let private matchingNamedTypes namedTypeLookup (namespaces: ImmutableArray<FullNamespaceName>) (id: TypeIdentifier) =
         let matches = List<FullTypeIdentifier * NamedType>()
 
-        let inline search ns =
+        let search ns =
             let identifier = FullTypeIdentifier.ofTypeIdentifier ns &id
             match namedTypeLookup identifier with
             | ValueSome ty -> matches.Add((identifier, ty))
@@ -496,7 +496,6 @@ module TypeChecker =
 
         search FullNamespaceName.empty
         for ns in namespaces do search ns
-
         matches
 
     /// <summary>

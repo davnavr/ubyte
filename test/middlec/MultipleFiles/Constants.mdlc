@@ -1,6 +1,6 @@
 namespace MultipleFiles::Helpers {
 
-type Program {
+type Constants {
     method MyExitCode () -> (s32) {
         return 42;
     }
