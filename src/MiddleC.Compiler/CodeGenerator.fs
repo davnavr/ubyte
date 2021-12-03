@@ -171,9 +171,17 @@ type private LocalRegister =
     { Index: unit -> RegisterIndex
       Type: CheckedType }
 
+let private updateRegisterIndices currentTemporaryCount oldTemporaryCount (registers: RegisterIndex[]) =
+    if currentTemporaryCount > oldTemporaryCount then
+        let diff = currentTemporaryCount - oldTemporaryCount
+        for i = 0 to registers.Length - 1 do
+            let (Index value) = registers.[i]
+            if value > oldTemporaryCount then registers.[i] <- RegisterIndex.Index(diff + value)
+
 /// Generates the corresponding byte code for a given expression.
 let rec private writeExpressionCode
     nextTemporaryIndex
+    (currentTemporaryCount: _ ref)
     dataIndexLookup
     typeSignatureLookup
     (importedMethodIndices: Dictionary<_, MethodIndex>)
@@ -181,13 +189,13 @@ let rec private writeExpressionCode
     (localRegisterLookup: Dictionary<_, LocalRegister>)
     (instructions: ImmutableArray<_>.Builder)
     (expression: TypedExpression)
-    : ImmutableArray<RegisterIndex>
     =
-    let inline writeOneRegister() = ImmutableArray.Create(item = nextTemporaryIndex())
+    let inline writeOneRegister() = [| nextTemporaryIndex() |]
 
     let inline writeNestedExpression nested =
         writeExpressionCode
             nextTemporaryIndex
+            currentTemporaryCount
             dataIndexLookup
             typeSignatureLookup
             importedMethodIndices
@@ -226,10 +234,15 @@ let rec private writeExpressionCode
             invalidOp(sprintf "Invalid assignment destination %O" destination)
         |> instructions.Add
 
-        ImmutableArray.Empty
+        Array.Empty()
     | CheckedExpression.BinaryOperation(op, x, y) ->
         let xvalues = writeNestedExpression x
+        let oldTemporaryCount = currentTemporaryCount.Value
         let yvalues = writeNestedExpression y
+
+        // Generation of code for y might have resulted in new temporaries that "shift" the indices of arguments and locals.
+        updateRegisterIndices currentTemporaryCount.Value oldTemporaryCount xvalues
+
         let etype = typeSignatureLookup expression.Type
         let count = xvalues.Length + yvalues.Length
 
@@ -256,29 +269,29 @@ let rec private writeExpressionCode
 
         writeOneRegister()
     | CheckedExpression.MethodCall(callee, arguments) -> // TODO: Add support for instance methods and virtual methods.
-        let mutable callArgumentRegisters = Array.zeroCreate arguments.Length
+        let callArgumentRegisters =
+            let mutable registers = Array.zeroCreate arguments.Length
 
-        for i = 0 to callArgumentRegisters.Length - 1 do
-            let results = writeNestedExpression arguments.[i]
+            for i = 0 to registers.Length - 1 do
+                let results = writeNestedExpression arguments.[i]
 
-            if results.Length <> 1 then
-                invalidOp(sprintf "Invalid number of return values (%i) for method argument" results.Length)
+                if results.Length <> 1 then
+                    invalidOp(sprintf "Invalid number of return values (%i) for method argument" results.Length)
 
-            callArgumentRegisters.[i] <- results.[0]
+                registers.[i] <- results.[0]
+
+            Unsafe.As<RegisterIndex[], ImmutableArray<RegisterIndex>> &registers
 
         let struct(returnValueCount, mindex) =
             match callee with
             | Choice1Of2 dmethod -> dmethod.ReturnTypes.Length, definedMethodIndices.[dmethod]
             | Choice2Of2 imethod -> imethod.Signature.ReturnTypes.Length, importedMethodIndices.[imethod]
 
-        instructions.Add(InstructionSet.Call(InstructionSet.CallFlags.None, mindex, Unsafe.As<RegisterIndex[], ImmutableArray<RegisterIndex>> &callArgumentRegisters))
+        instructions.Add(InstructionSet.Call(InstructionSet.CallFlags.None, mindex, callArgumentRegisters))
 
         match returnValueCount with
-        | 0 -> ImmutableArray.Empty
-        | _ ->
-            let mutable returnValueRegisters = Array.zeroCreate returnValueCount
-            for i = 0 to returnValueCount - 1 do returnValueRegisters.[i] <- nextTemporaryIndex()
-            Unsafe.As<RegisterIndex[], ImmutableArray<RegisterIndex>> &returnValueRegisters
+        | 0 -> Array.Empty()
+        | _ -> Array.init returnValueCount (fun _ -> nextTemporaryIndex())
     | CheckedExpression.NewArray(etype, elements) ->
         match etype with
         | CheckedElementType.ValueType(CheckedValueType.Primitive(PrimitiveType.Char32 | PrimitiveType.U32) as vtype) ->
@@ -300,7 +313,7 @@ let rec private writeExpressionCode
                 raise(NotImplementedException "NON-DATA arrays not yet implemented")
         | _ ->
             raise(NotImplementedException(sprintf "Code generation for new array containing %O is not yet implemented" etype))
-    | CheckedExpression.Local name -> ImmutableArray.Create(item = localRegisterLookup.[name].Index())
+    | CheckedExpression.Local name -> [| localRegisterLookup.[name].Index() |] // TODO: If local is mutable, then read the value, don't use the address.
     | CheckedExpression.ArrayLengthAccess expression ->
         let array = writeNestedExpression expression
         if array.Length <> 1 then invalidOp "Attempt to access array length for multiple values"
@@ -317,16 +330,17 @@ let private writeMethodBodies
     (methodBodyLookup: Dictionary<CheckedMethod, struct(CodeIndex * ImmutableArray<_>)>) =
     let mutable bodies = Array.zeroCreate methodBodyLookup.Count
 
+    /// A lookup table for local and argument registers.
     let localRegisterLookup = Dictionary<_, LocalRegister>()
     let blocks = ImmutableArray.CreateBuilder<CodeBlock>()
 
     let blockLocalMap = ImmutableArray.CreateBuilder<struct(_ * _)>()
     let instructions = ImmutableArray.CreateBuilder<InstructionSet.Instruction>()
-    let mutable nextTemporaryIndex = 0u
+    let nextTemporaryIndex = ref 0u
 
     let createTemporaryRegister() =
-        let index = RegisterIndex.Index nextTemporaryIndex
-        nextTemporaryIndex <- nextTemporaryIndex + 1u
+        let index = RegisterIndex.Index nextTemporaryIndex.Value
+        nextTemporaryIndex.Value <- nextTemporaryIndex.Value + 1u
         index
 
 #if DEBUG
@@ -342,11 +356,12 @@ let private writeMethodBodies
 
         blockLocalMap.Clear()
         instructions.Clear()
-        nextTemporaryIndex <- 0u
+        nextTemporaryIndex.Value <- 0u
 
     let inline writeTypedExpression expression =
         writeExpressionCode
             createTemporaryRegister
+            nextTemporaryIndex
             dataIndexLookup
             typeSignatureLookup
             importedMethodIndices
@@ -366,8 +381,7 @@ let private writeMethodBodies
                     invalidOp "Expected only one condition expression for if statement"
 
                 if not thenBlockStatements.IsDefaultOrEmpty then
-
-                    instructions.Add(InstructionSet.Br_true(values.[0], 1, 2))
+                    instructions.Add(InstructionSet.Br_true(values.[0], 1, 2)) // TODO: Fix, if false is taken, then an offset of 2 might not be correct, since more blocks may have been generated.
                     writeCurrentBlock() // End of if
 
                     writeBlockCode method thenBlockStatements // Start of then
@@ -384,10 +398,10 @@ let private writeMethodBodies
                 if values.Length <> 1 then
                     raise(NotImplementedException(sprintf "Code generation for local variable containing %i values is not yet implemented" values.Length))
 
-                let vindex =
+                let tindex =
                     if immutable then
                         let (Index i) = values.[0]
-                        if i >= nextTemporaryIndex then
+                        if i >= nextTemporaryIndex.Value then
                             invalidOp "Expected temporary register but expression code returned a local or argument register"
                         i
                     else
@@ -408,11 +422,11 @@ let private writeMethodBodies
                         |> instructions.Add
 
                         iaddr
+                    |> TemporaryIndex.Index
 
-                let tindex = TemporaryIndex.Index vindex
-                let lindex = uint32 localRegisterLookup.Count
+                let lindex = uint32 localRegisterLookup.Count - uint32 method.Parameters.Length
 
-                let getLocalIndex() = RegisterIndex.Index(nextTemporaryIndex + uint32 method.Parameters.Length + lindex)
+                let getLocalIndex() = RegisterIndex.Index(nextTemporaryIndex.Value + uint32 method.Parameters.Length + lindex)
 
                 blockLocalMap.Add(struct(tindex, LocalIndex.Index lindex))
                 localRegisterLookup.Add(name.Content, { LocalRegister.Index = getLocalIndex; LocalRegister.Type = ty })
@@ -437,7 +451,7 @@ let private writeMethodBodies
                 if values.Length <> 1 then
                     invalidOp "Expected only one condition expression for while loop"
 
-                instructions.Add(InstructionSet.Br_true(values.[0], 1, 2))
+                instructions.Add(InstructionSet.Br_true(values.[0], 1, 2)) // TODO: Fix, if false is taken, then an offset of 2 might not be correct, since more blocks may have been generated.
                 writeCurrentBlock() // End of condition
 
                 writeBlockCode method body // Start of body
@@ -450,11 +464,12 @@ let private writeMethodBodies
         localRegisterLookup.Clear()
         blocks.Clear()
 
-        for i = 0 to method.Parameters.Length - 1 do
+        let pcount = method.Parameters.Length
+        for i = 0 to pcount - 1 do
             let parameter = method.Parameters.[i]
             localRegisterLookup.Add (
                 parameter.Name.Content,
-                { LocalRegister.Index = (fun() -> RegisterIndex.Index(nextTemporaryIndex + uint32 i))
+                { LocalRegister.Index = (fun() -> RegisterIndex.Index(nextTemporaryIndex.Value + uint32 i))
                   LocalRegister.Type = parameter.Type }
             )
 
@@ -463,7 +478,7 @@ let private writeMethodBodies
         writeCurrentBlock() // Writes the last block, if any
 
         bodies.[int32 index] <-
-            { Code.LocalCount = uint32 localRegisterLookup.Count
+            { Code.LocalCount = uint32 localRegisterLookup.Count - uint32 pcount
               Code.Blocks = blocks.ToImmutable() }
 
     Unsafe.As<Code[], ImmutableArray<Code>> &bodies
