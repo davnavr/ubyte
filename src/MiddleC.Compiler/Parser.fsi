@@ -126,13 +126,21 @@ type TypeAttributeNode =
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
 type MethodAttributeNode =
     | Abstract
-    /// Indicates that the method is the entry point of the module, can only be applied to one method in an entire module.
+    /// The method is the entry point of the module, can only be applied to one method in an entire module.
     | Entrypoint
     | Instance
     | Private
-    /// Indicates that the method can be used by importing modules.
+    /// The method can be used by importing modules.
     | Public
     | Virtual
+
+[<RequireQualifiedAccess; NoComparison; NoEquality>]
+type FieldAttributeNode =
+    /// The field value can be modified outside of a constructor or initializer.
+    | Mutable
+    | Private
+    /// The field does not belong to any instance of the class.
+    | Static
 
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
 type MethodBodyNode =
@@ -141,10 +149,14 @@ type MethodBodyNode =
 
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
 type TypeMemberNode =
-    //| FieldDeclaration of name: IdentifierNode *
-    | MethodDeclaration of name: IdentifierNode * ParsedNodeArray<MethodAttributeNode> *
-        parameters: ImmutableArray<IdentifierNode * ParsedNode<AnyTypeNode>> * ParsedNodeArray<AnyTypeNode> * MethodBodyNode
-    //| ConstructorDeclaration of parameters: ParsedNodeArray<ParameterNode> * ParsedNodeArray<TypeNode>
+    | FieldDeclaration of name: IdentifierNode * fieldType: ParsedNode<AnyTypeNode> *
+        attributes: ParsedNodeArray<FieldAttributeNode> * initialValue: ParsedExpression voption
+    | MethodDeclaration of name: IdentifierNode * attributes: ParsedNodeArray<MethodAttributeNode> *
+        parameters: ImmutableArray<IdentifierNode * ParsedNode<AnyTypeNode>> * returnTypes: ParsedNodeArray<AnyTypeNode> *
+        body: MethodBodyNode
+    //| InitializerDeclaration of body: ParsedNodeArray<StatementNode>
+    //| ConstructorDeclaration of parameters: ParsedNodeArray<ParameterNode> * body: ParsedNodeArray<StatementNode>
+    //| NestedType of 
 
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
 type TopLevelNode =

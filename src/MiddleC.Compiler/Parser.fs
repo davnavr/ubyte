@@ -190,9 +190,7 @@ type StatementNode =
     | Empty
 
 [<RequireQualifiedAccess>]
-type TypeAttributeNode =
-    | Abstract
-    | Inheritable
+type TypeAttributeNode = | Abstract | Inheritable
 
 [<RequireQualifiedAccess>]
 type MethodAttributeNode =
@@ -209,9 +207,15 @@ type MethodBodyNode =
     | External of ParsedNode<string> * library: ParsedNode<string>
 
 [<RequireQualifiedAccess>]
+type FieldAttributeNode = | Mutable | Private | Static
+
+[<RequireQualifiedAccess>]
 type TypeMemberNode =
-    | MethodDeclaration of name: IdentifierNode * ParsedNodeArray<MethodAttributeNode> *
-        parameters: ImmutableArray<IdentifierNode * ParsedNode<AnyTypeNode>> * ParsedNodeArray<AnyTypeNode> * MethodBodyNode
+    | FieldDeclaration of name: IdentifierNode * fieldType: ParsedNode<AnyTypeNode> *
+        attributes: ParsedNodeArray<FieldAttributeNode> * initialValue: ParsedExpression voption
+    | MethodDeclaration of name: IdentifierNode * attributes: ParsedNodeArray<MethodAttributeNode> *
+        parameters: ImmutableArray<IdentifierNode * ParsedNode<AnyTypeNode>> * returnTypes: ParsedNodeArray<AnyTypeNode> *
+        body: MethodBodyNode
 
 [<RequireQualifiedAccess>]
 type TopLevelNode =
@@ -620,6 +624,30 @@ module Parse =
                     (methodReturnTypes .>> whitespace)
                     methodBodyNode
                 |>> TypeMemberNode.MethodDeclaration
+
+                skipString "field"
+                >>. whitespace
+                >>. tuple4
+                    (validIdentifierNode .>> whitespace)
+                    anyTypeNode
+                    (attributes [|
+                        "mutable", FieldAttributeNode.Mutable
+                        "private", FieldAttributeNode.Private
+                        "static", FieldAttributeNode.Static
+                    |])
+                    (whitespace >>. vopt (equals >>. whitespace >>. expression))
+                |>> TypeMemberNode.FieldDeclaration
+
+                //skipString "initializer" >>. whitespace >>. block |>> TypeMemberNode.Initializer
+
+                //skipString "constructor"
+                //>>. whitespace
+                //>>. tuple3
+                //    (attributes [|
+                //    |])
+                //    (whitespace >>. methodParameterNodes .>> whitespace)
+                //    block
+                //|>> TypeMemberNode.Constructor
             |]
         .>> whitespace
         |> withNodeContent
