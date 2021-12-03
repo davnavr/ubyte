@@ -8,6 +8,7 @@ open System.Runtime.CompilerServices
 open MiddleC.Compiler.Parser
 
 open UByte.Format
+open UByte.Format.Model
 
 [<Struct; NoComparison; StructuralEquality>]
 type FullNamespaceName =
@@ -361,7 +362,7 @@ module CheckedType =
 
     let arrays = Dictionary()
 
-    let array etype =
+    let array etype = //  TODO: Don't have a global cache for array types.
         match arrays.TryGetValue etype with
         | true, existing -> existing
         | false, _ ->
@@ -669,6 +670,39 @@ module TypeChecker =
 
     let private voidReturnValues = ImmutableArray.Create<CheckedType> CheckedType.Void
 
+    /// Contains helper functions for translating type signatures from imported modules
+    [<RequireQualifiedAccess>]
+    module private TranslateType =
+        let valueType (im: UByte.Resolver.ResolvedModule) vt =
+            match vt with
+            | ValueType.Primitive pt -> CheckedValueType.Primitive pt
+            | _ -> raise(NotImplementedException(sprintf "Translation of value type %O is not yet supported" vt))
+
+        let rec referenceType (im: UByte.Resolver.ResolvedModule) rt =
+            match rt with
+            | ReferenceType.Vector etype -> CheckedReferenceType.Array(elementType im etype)
+            | _ -> raise(NotImplementedException(sprintf "Translation of reference type %O is not yet supported" rt))
+
+        and elementType im et =
+            match et with
+            | ReferenceOrValueType.Value vt -> CheckedElementType.ValueType(valueType im vt)
+            | ReferenceOrValueType.Reference rt -> CheckedElementType.ReferenceType(referenceType im rt)
+
+        let rec signature im t =
+            match t with
+            | Model.AnyType.ValueType vt -> CheckedType.ValueType(valueType im vt)
+            | Model.AnyType.ReferenceType rt -> CheckedType.ReferenceType(referenceType im rt)
+            | _ -> raise(NotImplementedException(sprintf "Translation of type signature %O is not yet supported" t))
+
+        let methodImportTypes (im: UByte.Resolver.ResolvedModule) (types: ImmutableArray<_>) =
+            if not types.IsDefaultOrEmpty then
+                let mutable translated = Array.zeroCreate types.Length
+                for i = 0 to translated.Length - 1 do
+                    translated.[i] <- signature im (im.TypeSignatureAt types.[i])
+                Unsafe.As<CheckedType[], ImmutableArray<CheckedType>> &translated
+            else
+                voidReturnValues
+
     let private checkMethodBodies
         (errors: ImmutableArray<_>.Builder)
         namedTypeLookup
@@ -729,15 +763,20 @@ module TypeChecker =
                     | ValueSome callee ->
                         let! methodArgumentExpressions = checkArgumentExpressions method arguments
                         let methodReturnTypes =
+                            let inline multipleReturnTypesNotSupported() =
+                                raise(NotImplementedException "Methods with multiple return types are not yet supported")
                             match callee with
                             | Choice1Of2 defined ->
                                 match defined.ReturnTypes.Length with
                                 | 0 -> voidReturnValues
                                 | 1 -> defined.ReturnTypes
-                                | _ ->
-                                    raise(NotImplementedException "Methods with multiple return types are not yet supported")
-                            | Choice2Of2 _ ->
-                                raise(NotImplementedException "Retrieval of return types from imported methods is not yet supported")
+                                | _ -> multipleReturnTypesNotSupported()
+                            | Choice2Of2 imported ->
+                                let rtypes = imported.Signature.ReturnTypes
+                                match rtypes.Length with
+                                | 0 -> voidReturnValues
+                                | 1 -> TranslateType.methodImportTypes imported.DeclaringModule rtypes
+                                | _ -> multipleReturnTypesNotSupported()
 
                         match src with
                         | Choice1Of2 _ ->
