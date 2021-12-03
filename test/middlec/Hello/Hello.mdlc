@@ -3,7 +3,7 @@ namespace HelloWorld {
 type Program {
     method Main entrypoint () -> (s32) {
         let message char32[] = new char32[] "Hello World!";
-        HelloWorld::Program.Print(message);
+        HelloWorld::Program::Print(message);
         return 0;
     }
 

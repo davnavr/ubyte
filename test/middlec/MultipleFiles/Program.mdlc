@@ -1,0 +1,11 @@
+namespace MultipleFiles::Program {
+
+using MultipleFiles::Helpers;
+
+type Program {
+    method Main entrypoint () -> (s32) {
+        return Constants::MyExitCode();
+    }
+}
+
+}

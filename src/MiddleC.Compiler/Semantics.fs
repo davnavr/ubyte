@@ -727,7 +727,7 @@ module TypeChecker =
                             | Choice2Of2 _ ->
                                 raise(NotImplementedException "Retrieval of return types from imported methods is not yet supported")
 
-                        match source with
+                        match src with
                         | Choice1Of2 _ ->
                             return! ok (CheckedExpression.MethodCall(callee, methodArgumentExpressions)) methodReturnTypes.[0]
                         | Choice2Of2 _ ->
@@ -769,18 +769,36 @@ module TypeChecker =
 
         and checkSourceExpression method (source: Choice<ParsedNamespaceName, _>) =
             match source with
-            | Choice1Of2 named -> Ok(Choice1Of2 named)
-            | Choice2Of2 expression -> Result.map Choice2Of2 (checkParsedExpression method expression)
+            | Choice1Of2 named ->
+                if named.Length = 0 then
+                    invalidOp "Cannot determine if source is a namespace or local variable since node was unexpectedly empty, parser possibly interpreted local variable usage as a namespace or type name"
+
+                let mutable localVariableType = Unchecked.defaultof<_>
+
+                if named.Length = 1 && localVariableLookup.TryGetValue(named.[0].Content, &localVariableType) then
+                    let localVariableName = named.[0]
+                    Choice2Of2
+                        { TypedExpression.Expression = CheckedExpression.Local localVariableName.Content
+                          TypedExpression.Type = localVariableType
+                          TypedExpression.Node =
+                            { ParsedNode.Content = ExpressionNode.Local localVariableName
+                              Line = localVariableName.Line
+                              Column = localVariableName.Column } }
+                else
+                    Choice1Of2 named
+                |> Ok
+            | Choice2Of2 expression ->
+                Result.map Choice2Of2 (checkParsedExpression method expression)
 
         and determineSourceType (method: CheckedMethod) errorNode (source: Choice<ParsedNamespaceName, TypedExpression>) =
             match source with
             | Choice1Of2 named ->
-                if named.IsDefaultOrEmpty then invalidOp "Attempt to use symbol as a global"
+                let typeNameIndex = named.Length - 1
 
                 findNamedType
                     namedTypeLookup
                     method.DeclaringType.UsedNamespaces
-                    { TypeIdentifier.Name = named.[0]
+                    { TypeIdentifier.Name = named.[typeNameIndex]
                       TypeIdentifier.Namespace = named.RemoveAt(named.Length - 1) }
                 |> Result.mapError (SemanticError.ofNode errorNode method.DeclaringType.Source)
             | Choice2Of2 inner ->

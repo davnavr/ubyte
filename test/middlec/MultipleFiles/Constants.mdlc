@@ -1,0 +1,9 @@
+namespace MultipleFiles::Helpers {
+
+type Program {
+    method MyExitCode () -> (s32) {
+        return 42;
+    }
+}
+
+}

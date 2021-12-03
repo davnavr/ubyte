@@ -337,12 +337,12 @@ module Parse =
         |>> ParsedIdentifier.Identifier
         |> withNodeContent
 
-    let private namespaceNameSegment = validIdentifierNode .>> namespaceNameSeparator
-
     let private typeIdentifierNode : Parser<ParsedTypeIdentifier, unit> =
         choice [
-            pipe2 (CollectionParsers.ImmutableArray.many (attempt namespaceNameSegment)) validIdentifierNode <| fun ns name ->
-                { TypeIdentifier.Name = name; TypeIdentifier.Namespace = ns }
+            pipe2
+                (CollectionParsers.ImmutableArray.many (attempt validIdentifierNode .>> namespaceNameSeparator))
+                validIdentifierNode
+                (fun ns name -> { TypeIdentifier.Name = name; TypeIdentifier.Namespace = ns })
             |> attempt
 
             validIdentifierNode |>> fun name -> { TypeIdentifier.Name = name; TypeIdentifier.Namespace = ImmutableArray.Empty }
@@ -447,13 +447,14 @@ module Parse =
                         |> withNodeContent)
                     |>> ExpressionNode.NewObject
 
-                    tuple3
-                        // At least one namespace name piece required to differentiate this from local variable.
-                        (CollectionParsers.ImmutableArray.many1 namespaceNameSegment |>> Choice1Of2)
-                        (validIdentifierNode .>> whitespace)
+                    pipe3
+                        // Parsing of namespace separator ensures local variables aren't mistaken for member access.
+                        (attempt (validIdentifierNode .>> attempt namespaceNameSeparator))
+                        (CollectionParsers.ImmutableArray.sepBy1 validIdentifierNode namespaceNameSeparator .>> whitespace)
                         (vopt arguments)
-                    |>> ExpressionNode.MemberAccess
-                    |> attempt
+                        (fun first remaining args ->
+                            let memberNamespaceName = remaining.Insert(0, first).RemoveAt(remaining.Length)
+                            ExpressionNode.MemberAccess(Choice1Of2 memberNamespaceName, remaining.[remaining.Length - 1], args))
 
                     validIdentifierNode |>> ExpressionNode.Local
                 |]
