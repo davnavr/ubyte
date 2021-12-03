@@ -200,6 +200,7 @@ type MethodAttributeNode =
     | Entrypoint
     | Instance
     | Private
+    | Public
     | Virtual
 
 [<RequireQualifiedAccess>]
@@ -607,6 +608,7 @@ module Parse =
                         "entrypoint", MethodAttributeNode.Entrypoint
                         "instance", MethodAttributeNode.Instance
                         "private", MethodAttributeNode.Private
+                        "public", MethodAttributeNode.Public
                         "virtual", MethodAttributeNode.Virtual
                     |])
                     (whitespace >>. methodParameterNodes .>> whitespace .>> skipString "->" .>> whitespace)

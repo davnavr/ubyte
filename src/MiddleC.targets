@@ -22,7 +22,13 @@
     <Delete Files="$(OutputPath)" />
   </Target>
 
-  <Target Name="Build" AfterTargets="Clean" Inputs="@(Compile)" Outputs="$(OutputPath)">
+  <Target Name="BuildProjectReferences">
+    <MSBuild Projects="@(ProjectReference)" Properties="OutputDirectory=$(OutputDirectory)">
+      <Output TaskParameter="TargetOutputs" ItemName="Import" />
+    </MSBuild>
+  </Target>
+
+  <Target Name="Build" DependsOnTargets="BuildProjectReferences" AfterTargets="Clean" Inputs="@(Compile)" Outputs="$(OutputPath)">
 
     <PropertyGroup>
       <CompilerFlags>--module-name &quot;$(ModuleName)&quot; -o &quot;$(OutputPath)&quot; @(Import->'%(Flag)', ' ') @(Compile->'%(Flag)', ' ')</CompilerFlags>

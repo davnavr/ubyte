@@ -4,6 +4,8 @@
 
   <ItemGroup>
     <Compile Include="Application.mdlc" />
+
+    <ProjectReference Include="..\Library\Library.proj" />
   </ItemGroup>
 
 </Project>

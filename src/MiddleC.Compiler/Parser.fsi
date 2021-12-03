@@ -130,6 +130,8 @@ type MethodAttributeNode =
     | Entrypoint
     | Instance
     | Private
+    /// Indicates that the method can be used by importing modules.
+    | Public
     | Virtual
 
 [<RequireQualifiedAccess; NoComparison; NoEquality>]

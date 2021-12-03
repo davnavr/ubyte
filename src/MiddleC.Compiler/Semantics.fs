@@ -206,7 +206,7 @@ and [<Sealed>] CheckedMethod
     )
     =
     let mutable flags = Unchecked.defaultof<Model.MethodFlags>
-    let mutable visibility = Unchecked.defaultof<Model.VisibilityFlags>
+    let mutable visibility = Model.VisibilityFlags.Unspecified
     let mutable parameters = ImmutableArray<CheckedParameter>.Empty
     let mutable parameterTypes = ImmutableArray<CheckedType>.Empty
     let mutable returns = ImmutableArray<CheckedType>.Empty
@@ -626,6 +626,9 @@ module TypeChecker =
                     | MethodAttributeNode.Private ->
                         // TODO: Check for duplicate visibility flags
                         method.Visibility <- Model.VisibilityFlags.Private
+                    | MethodAttributeNode.Public ->
+                        // TODO: Check for duplicate visibility flags
+                        method.Visibility <- Model.VisibilityFlags.Public
                     | _ ->
                         failwith "TODO: Set other method flags"
 
