@@ -265,7 +265,8 @@ type ResolvedField with
     member this.IsStatic = isFlagSet FieldFlags.Static this.Flags
 
 type ResolvedTypeDefinition with
-    member this.FindMethod name = // TODO: Figure out if methods defined in inherited class(es), note that this is used to resolve method references.
+    // TODO: Figure out if methods defined in inherited class(es) should be included in search, note that this is used to resolve method references.
+    member this.TryFindMethod name =
         let methodis = this.source.Methods
         let mutable result, i = ValueNone, 0
 
@@ -275,8 +276,11 @@ type ResolvedTypeDefinition with
                 result <- ValueSome m
             i <- Checked.(+) i 1
 
-        match result with
-        | ValueSome m -> m
+        result
+
+    member this.FindMethod name =
+        match this.TryFindMethod name with
+        | ValueSome method -> method
         | ValueNone -> failwithf "TODO: Method not found %s" name
 
 type ResolvedModule with

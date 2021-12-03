@@ -989,7 +989,8 @@ module TypeChecker =
                     | true, method -> ValueSome(Choice1Of2 method)
                     | false, _ -> ValueNone
                 | Choice2Of2 imported ->
-                    failwithf "TODO: Handle lookup of imported method for %O.%O" declaringType methodName
+                    // TODO: Figure out how to allow overloads of imported methods in middlec.
+                    ValueOption.map Choice2Of2 (imported.TryFindMethod(methodName.ToString()))
 
         let mutable entryPointMethod = ValueNone
         checkDefinedMethods errors anyTypeChecker methodNameLookup &entryPointMethod

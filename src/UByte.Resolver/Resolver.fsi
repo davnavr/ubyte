@@ -48,6 +48,7 @@ type ResolvedTypeDefinition =
     member DefinedFields : ImmutableArray<ResolvedField>
 
     member FindMethod : name: string -> ResolvedMethod
+    member TryFindMethod : name: string -> ResolvedMethod voption
 
     override ToString: unit -> string
 
