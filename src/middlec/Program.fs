@@ -19,7 +19,7 @@ type Argument =
     interface IArgParserTemplate with
         member this.Usage =
             match this with
-            | Import _ -> "makes the code "
+            | Import _ -> "makes the types and methods in the specified module available for use during compilation"
             | Input _ -> "specifies a source code file to include as part of the compilation"
             | Module_Name _ -> "specify the name of the compiled module"
             | Module_Version _ -> "specify the version of the compiled module"
@@ -29,34 +29,55 @@ type Argument =
 
 let parser = ArgumentParser.Create<Argument>(programName = "middlec")
 
-let parseInputFiles (args: ParseResults<Argument>) =
-    let results = ImmutableArray.CreateBuilder()
-    let rec inner paths =
-        match paths with
-        | [] -> results.ToImmutable()
-        | path :: remaining ->
-            let fullFilePath = System.IO.Path.GetFullPath path
-            results.Add(MiddleC.Compiler.Parser.Parse.fromPath fullFilePath)
-            inner remaining
-    inner (args.GetResults <@ Input @>)
-
 [<EntryPoint>]
 let main argv =
     let args = parser.ParseCommandLine argv
 
     if args.Contains <@ Launch_Debugger @> then System.Diagnostics.Debugger.Launch() |> ignore
 
-    if args.Contains <@ Import @> then raise(System.NotImplementedException "Module imports are not yet supported")
-
     let outputFilePath = args.TryGetResult <@ Output @> |> Option.defaultWith (fun() -> ".\out.binmdl")
 
     let result =
+        let inputs = ImmutableArray.CreateBuilder()
+        let parsedModuleImports = ImmutableArray.CreateBuilder<UByte.Format.Model.Module>()
+
+        List.iter
+            (function
+            | Argument.Input path ->
+                inputs.Add(MiddleC.Compiler.Parser.Parse.fromPath(System.IO.Path.GetFullPath path))
+            | Argument.Import path ->
+                parsedModuleImports.Add(UByte.Format.ParseModule.fromPath(System.IO.Path.GetFullPath path))
+            | _ -> ())
+            (args.GetAllResults())
+
+        let resolvedModuleImports = System.Collections.Generic.Dictionary<_, UByte.Resolver.ResolvedModule>()
+
+        let moduleImportResolver id =
+            let mutable i, result = 0, ValueNone
+
+            while i < parsedModuleImports.Count && result.IsNone do
+                let import = parsedModuleImports.[i]
+                if id = import.Header.Module then
+                    result <- ValueSome import
+
+            match result with
+            | ValueSome import ->
+                let iname = import.Header.Module
+                let resolved = resolvedModuleImports.[iname]
+                resolvedModuleImports.[iname] <- resolved
+                resolved
+            | ValueNone -> invalidOp(sprintf "Add a reference to the module %O" id)
+
+        for import in parsedModuleImports do
+            resolvedModuleImports.Add(import.Header.Module, UByte.Resolver.ResolvedModule(import, moduleImportResolver))
+
         let defaultModuleName() = System.IO.Path.GetFileNameWithoutExtension outputFilePath
+
         MiddleC.Compiler.Semantics.TypeChecker.check
             (Option.defaultWith defaultModuleName (args.TryGetResult <@ Module_Name @>))
             (Option.defaultValue List.empty (args.TryGetResult <@ Module_Version @>))
-            (parseInputFiles args)
-            ImmutableArray.Empty
+            (inputs.ToImmutable())
+            (resolvedModuleImports.Values.ToImmutableArray())
 
     if result.Errors.IsDefaultOrEmpty then
         UByte.Format.WriteModule.toPath outputFilePath (MiddleC.Compiler.CodeGenerator.write result)

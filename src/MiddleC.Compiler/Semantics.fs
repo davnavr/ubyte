@@ -458,13 +458,13 @@ module TypeChecker =
         if not ns.IsDefaultOrEmpty then
             let sb = System.Text.StringBuilder()
             for i = 0 to ns.Length - 1 do
-                sb.Append ns.[i] |> ignore
+                sb.Append ns.[i].Content |> ignore
                 if i > 0 then sb.Append '.' |> ignore
             sb.ToString()
         else
             String.Empty
 
-    let private importedTypeLookup (imports: ImmutableArray<UByte.Resolver.ResolvedModule>) =
+    let private importedTypeLookup (imports: ImmutableArray<UByte.Resolver.ResolvedModule>.Builder) =
         let lookup = Dictionary<FullTypeIdentifier, UByte.Resolver.ResolvedTypeDefinition voption>()
         let resolved = ImmutableArray.CreateBuilder()
         let search id =
@@ -474,7 +474,7 @@ module TypeChecker =
                 let ns = namespaceSearchString id.Namespace
                 let mutable i, ty = 0, ValueNone
 
-                while i < imports.Length && ty.IsNone do
+                while i < imports.Count && ty.IsNone do
                     let md = imports.[i]
                     ty <- md.TryFindType(ns, id.Name.Content.ToString())
                     i <- i + 1
@@ -964,7 +964,7 @@ module TypeChecker =
         let declaredTypesLookup = findTypeDeclarations errors files
 
         // TOOD: Add to module import list if any other resolved types are used.
-        let struct(typeImportList, typeImportLookup) = importedTypeLookup imports
+        let struct(typeImportList, typeImportLookup) = importedTypeLookup moduleImportList
 
         let namedTypeLookup: _ -> NamedType voption =
             fun id ->
