@@ -20,6 +20,7 @@ module FullNamespaceName =
     val empty : FullNamespaceName
     val append : nested: ParsedNamespaceName -> parent: FullNamespaceName -> FullNamespaceName
     val toParsedName : FullNamespaceName -> ParsedNamespaceName
+    val toStrings : FullNamespaceName -> ImmutableArray<string>
 
 [<IsReadOnly; Struct; NoComparison; StructuralEquality; DebuggerDisplay("{ToString()}")>]
 type FullTypeIdentifier =
@@ -214,3 +215,7 @@ module TypeChecker =
         files: ImmutableArray<ParsedFile> ->
         imports: ImmutableArray<UByte.Resolver.ResolvedModule> ->
         CheckedModule
+
+    [<RequireQualifiedAccess>]
+    module internal TranslateType =
+        val signature : UByte.Resolver.ResolvedModule -> UByte.Format.Model.AnyType -> CheckedType

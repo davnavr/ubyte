@@ -8,7 +8,6 @@ open System.Runtime.CompilerServices
 open MiddleC.Compiler.Parser
 
 open UByte.Format
-open UByte.Format.Model
 
 [<Struct; NoComparison; StructuralEquality>]
 type FullNamespaceName =
@@ -31,6 +30,14 @@ module FullNamespaceName =
         FullNamespaceName(parent.AddRange nested)
 
     let toParsedName (FullNamespaceName ns) = ns
+
+    let toStrings (FullNamespaceName ns) =
+        if not ns.IsDefaultOrEmpty then
+            let mutable names = Array.zeroCreate ns.Length
+            for i = 0 to names.Length - 1 do names.[i] <- ns.[i].Content.ToString()
+            Unsafe.As<string[], ImmutableArray<string>> &names
+        else
+            ImmutableArray.Empty
 
 [<Struct; NoComparison; StructuralEquality>]
 type FullTypeIdentifier =
@@ -455,14 +462,6 @@ module TypeChecker =
         for file in files do inner errors file lookup FullNamespaceName.empty ImmutableArray.Empty file.Nodes
         lookup
 
-    let private namespaceSearchString (FullNamespaceName ns) =
-        if not ns.IsDefaultOrEmpty then
-            let mutable names = Array.zeroCreate ns.Length
-            for i = 0 to names.Length - 1 do names.[i] <- ns.[i].Content.ToString()
-            Unsafe.As<string[], ImmutableArray<string>> &names
-        else
-            ImmutableArray.Empty
-
     let private importedTypeLookup (imports: ImmutableArray<UByte.Resolver.ResolvedModule>.Builder) =
         let lookup = Dictionary<FullTypeIdentifier, UByte.Resolver.ResolvedTypeDefinition voption>()
         let resolved = ImmutableArray.CreateBuilder()
@@ -470,7 +469,7 @@ module TypeChecker =
             match lookup.TryGetValue id with
             | true, existing -> existing
             | false, _ ->
-                let ns = namespaceSearchString id.Namespace
+                let ns = FullNamespaceName.toStrings id.Namespace
                 let mutable i, ty = 0, ValueNone
 
                 while i < imports.Count && ty.IsNone do
@@ -670,7 +669,9 @@ module TypeChecker =
 
     /// Contains helper functions for translating type signatures from imported modules
     [<RequireQualifiedAccess>]
-    module private TranslateType =
+    module TranslateType =
+        open UByte.Format.Model
+
         let valueType (im: UByte.Resolver.ResolvedModule) vt =
             match vt with
             | ValueType.Primitive pt -> CheckedValueType.Primitive pt
@@ -688,8 +689,8 @@ module TypeChecker =
 
         let rec signature im t =
             match t with
-            | Model.AnyType.ValueType vt -> CheckedType.ValueType(valueType im vt)
-            | Model.AnyType.ReferenceType rt -> CheckedType.ReferenceType(referenceType im rt)
+            | AnyType.ValueType vt -> CheckedType.ValueType(valueType im vt)
+            | AnyType.ReferenceType rt -> CheckedType.ReferenceType(referenceType im rt)
             | _ -> raise(NotImplementedException(sprintf "Translation of type signature %O is not yet supported" t))
 
         let methodImportTypes (im: UByte.Resolver.ResolvedModule) (types: ImmutableArray<_>) =
@@ -705,6 +706,7 @@ module TypeChecker =
         (errors: ImmutableArray<_>.Builder)
         namedTypeLookup
         (namedMethodLookup: _ -> _ -> NamedMethod voption)
+        (methodImportLookup: HashSet<_>)
         (declarations: Dictionary<CheckedTypeDefinition, Dictionary<ParsedIdentifier, CheckedMethod>>)
         =
         let localVariableLookup = Dictionary<ParsedIdentifier, CheckedType>() // HashSet<CheckedLocal> localVariableComparer
@@ -770,6 +772,7 @@ module TypeChecker =
                                 | 1 -> defined.ReturnTypes
                                 | _ -> multipleReturnTypesNotSupported()
                             | Choice2Of2 imported ->
+                                methodImportLookup.Add imported |> ignore
                                 let rtypes = imported.Signature.ReturnTypes
                                 match rtypes.Length with
                                 | 0 -> voidReturnValues
@@ -1032,9 +1035,11 @@ module TypeChecker =
         let mutable entryPointMethod = ValueNone
         checkDefinedMethods errors anyTypeChecker methodNameLookup &entryPointMethod
 
+        let methodImportLookup = HashSet()
+
         // The types defined in this module, types of fields, and types of methods have been determined, so analysis of method
         // bodies can begin.
-        checkMethodBodies errors namedTypeLookup namedMethodLookup methodNameLookup
+        checkMethodBodies errors namedTypeLookup namedMethodLookup methodImportLookup methodNameLookup
 
         CheckedModule (
             name = Model.Name.ofStr name,
@@ -1043,7 +1048,7 @@ module TypeChecker =
             definedTypes = declaredTypesLookup.Values.ToImmutableArray(),
             definedMethods = allDefinedMethods.ToImmutable(),
             importedTypes = typeImportList.ToImmutable(),
-            importedMethods = ImmutableArray.Empty,
+            importedMethods = methodImportLookup.ToImmutableArray(),
             entryPointMethod = entryPointMethod,
             errors =
                 if errors.Count <> errors.Capacity

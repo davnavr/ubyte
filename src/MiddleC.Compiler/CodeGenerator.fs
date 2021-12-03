@@ -35,6 +35,7 @@ let private writeModuleImports (modules: ImmutableArray<UByte.Resolver.ResolvedM
 
 let private writeTypeImports
     identifierIndexLookup
+    namespaceIndexLookup
     (moduleImportLookup: Dictionary<_, _>)
     (types: ImmutableArray<UByte.Resolver.ResolvedTypeDefinition>)
     =
@@ -47,7 +48,7 @@ let private writeTypeImports
         imports.[i] <-
             { TypeDefinitionImport.Module = moduleImportLookup.[ty.DeclaringModule]
               TypeName = identifierIndexLookup ty.Name
-              TypeNamespace = failwith "TODO: Get namespace from UByte.Resolver"
+              TypeNamespace = namespaceIndexLookup ty.Namespace
               TypeParameters = 0u }
 
     struct(Unsafe.As<TypeDefinitionImport[], ImmutableArray<TypeDefinitionImport>> &imports, lookup)
@@ -110,8 +111,7 @@ let private writeMethodDefinitions
 
     for i = 0 to definitions.Length - 1 do
         let method = methods.[i]
-        let mindex = MethodIndex.Index(uint32 methodImportCount + uint32 i)
-        indices.Add(method, mindex)
+        indices.Add(method, MethodIndex.Index(uint32 methodImportCount + uint32 i))
         definitions.[i] <-
             { Method.MethodOwner = definedTypeIndices.[method.DeclaringType]
               Method.MethodName = identifierIndexLookup(method.Name.Content.ToString())
@@ -133,17 +133,17 @@ let private writeMethodDefinitions
 
 let private writeTypeDefinitions
     identifierIndexLookup
-    namespaceIndexLookup
+    fullNamespaceLookup
     (typeImportLookup: Dictionary<_, _>)
     (methodDefinitionLookup: Dictionary<_, MethodIndex>)
     (types: Dictionary<CheckedTypeDefinition, TypeDefinitionIndex>)
     =
     let mutable definitions = Array.zeroCreate types.Count
 
-    for KeyValue(ty, Index i) in types do
-        definitions.[int32 i] <-
+    for KeyValue(ty, Index tindex) in types do
+        definitions.[int32 tindex - typeImportLookup.Count] <-
             { TypeDefinition.TypeName = identifierIndexLookup(ty.Identifier.Name.Content.ToString())
-              TypeDefinition.TypeNamespace = namespaceIndexLookup ty.Identifier.Namespace
+              TypeDefinition.TypeNamespace = fullNamespaceLookup ty.Identifier.Namespace
               TypeDefinition.TypeVisibility = ty.Visibility
               TypeDefinition.TypeFlags = ty.Flags
               TypeDefinition.TypeLayout = TypeDefinitionLayout.Unspecified
@@ -504,11 +504,12 @@ let write (mdl: CheckedModule) =
     let struct(namespaces, namespaceIndexLookup: _ -> NamespaceIndex) =
         createIndexedLookup
             EqualityComparer.Default
-            (fun (ns: FullNamespaceName) ->
-                let names = FullNamespaceName.toParsedName ns
+            (fun (names: ImmutableArray<string>) ->
                 let mutable indices = Array.zeroCreate names.Length
-                for i = 0 to indices.Length - 1 do indices.[i] <- identifierIndexLookup(names.[0].Content.ToString())
+                for i = 0 to indices.Length - 1 do indices.[i] <- identifierIndexLookup names.[i]
                 Unsafe.As<IdentifierIndex[], ImmutableArray<IdentifierIndex>> &indices)
+
+    let fullNamespaceLookup ns = namespaceIndexLookup(FullNamespaceName.toStrings ns)
 
     let struct (data, dataIndexLookup: ImmutableArray<byte> -> DataIndex) =
         createIndexedLookup EqualityComparer.Default id
@@ -552,16 +553,10 @@ let write (mdl: CheckedModule) =
                   MethodSignature.ParameterTypes = getSignatureArray signature.ParameterTypes })
 
     let struct(importedTypeDefinitions, typeImportLookup) =
-        writeTypeImports identifierIndexLookup moduleImportLookup mdl.ImportedTypes
-
-    let translateExternalType (rm: UByte.Resolver.ResolvedModule) =
-        function
-        | AnyType.ValueType(ValueType.Primitive prim) -> CheckedType.primitive prim
-        | AnyType.SafePointer _ -> raise(NotImplementedException "TODO: Add support for managed pointers")
-        | bad -> failwithf "TODO: Implement translation of %A" bad
+        writeTypeImports identifierIndexLookup namespaceIndexLookup moduleImportLookup mdl.ImportedTypes
 
     let struct(importedMethodDefinitions, methodImportLookup) =
-        writeMethodImports identifierIndexLookup methodSignatureLookup typeImportLookup translateExternalType mdl.ImportedMethods
+        writeMethodImports identifierIndexLookup methodSignatureLookup typeImportLookup TypeChecker.TranslateType.signature mdl.ImportedMethods
 
     let definedTypeIndices = assignDefinedTypeIndices importedTypeDefinitions.Length mdl.DefinedTypes
 
@@ -576,7 +571,7 @@ let write (mdl: CheckedModule) =
     let declaredTypeDefinitions =
         writeTypeDefinitions
             identifierIndexLookup
-            namespaceIndexLookup
+            fullNamespaceLookup
             typeImportLookup
             methodDefinitionLookup
             definedTypeIndices

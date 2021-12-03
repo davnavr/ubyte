@@ -38,7 +38,7 @@ type ResolvedField =
 
 [<Sealed>]
 type ResolvedTypeDefinition =
-    //member Namespace : ImmutableArray<string>
+    member Namespace : ImmutableArray<string>
     member Name : string
     member Index : TypeDefinitionIndex
     member DeclaringModule : ResolvedModule
