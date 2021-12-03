@@ -72,10 +72,8 @@ type ModuleNotFoundException =
 type TypeNotFoundException =
     inherit Exception
 
-    new : ResolvedModule * typeNamespace: string * typeName: string * message: string -> TypeNotFoundException
-
     member Module : ResolvedModule
-    member TypeNamespace : string
+    member TypeNamespace : ImmutableArray<string>
     member TypeName : string
 
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
@@ -114,6 +112,6 @@ type ResolvedModule with
     member CodeAt : index: CodeIndex -> Code
 
     /// Finds the first type defined in this module with the specified name.
-    member FindType : typeNamespace: string * typeName: string -> ResolvedTypeDefinition
+    member FindType : typeNamespace: ImmutableArray<string> * typeName: string -> ResolvedTypeDefinition
 
-    member TryFindType : typeNamespace: string * typeName: string -> ResolvedTypeDefinition voption
+    member TryFindType : typeNamespace: ImmutableArray<string> * typeName: string -> ResolvedTypeDefinition voption

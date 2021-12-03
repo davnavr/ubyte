@@ -63,7 +63,8 @@ and [<Sealed>] ResolvedModule =
     val private fieldResolvingEvent : Event<ResolutionEventArguments<ResolvedTypeDefinition, Choice<Field, FieldImport>>>
     [<DebuggerBrowsable(DebuggerBrowsableState.Never)>]
     val private fieldResolvedEvent : Event<ResolvedField>
-    val private typeNameLookup : Dictionary<struct(string * string), ResolvedTypeDefinition>
+    val private typeNamespaceLookup : Dictionary<NamespaceIndex, ImmutableArray<string>>
+    val private typeNameLookup : Dictionary<struct(ImmutableArray<string> * string), ResolvedTypeDefinition>
 
     member this.Identifier = this.source.Header.Module
     member this.Name = this.Identifier.ModuleName.ToString()
@@ -79,8 +80,17 @@ and [<Sealed>] ResolvedModule =
 
     member this.IdentifierAt index = this.source.Identifiers.[index]
 
-    member this.NamespaceAt(ItemIndex i: NamespaceIndex): string =
-        this.source.Namespaces.[i] |> Seq.map this.IdentifierAt |> String.concat "::" // TODO: Cache namespaces
+    member this.NamespaceAt(ItemIndex i: NamespaceIndex as nindex): ImmutableArray<string> =
+        match this.typeNamespaceLookup.TryGetValue nindex with
+        | true, existing -> existing
+        | false, _ ->
+            let indices = this.source.Namespaces.[i]
+            let mutable strings = Array.zeroCreate indices.Length
+            for i = 0 to strings.Length - 1 do
+                strings.[i] <- this.IdentifierAt indices.[i]
+            let name = Unsafe.As<string[], ImmutableArray<string>> &strings
+            this.typeNamespaceLookup.[nindex] <- name
+            name
 
     override this.ToString() = this.source.Header.Module.ToString()
 
@@ -101,11 +111,9 @@ and [<Sealed>] ResolvedTypeDefinition =
     member this.DefinedFields = this.fields.Value
 
     override this.ToString() =
-        StringBuilder(this.DeclaringModule.ToString())
-            .Append(if this.Namespace.Length > 0 then "::" + this.Namespace else String.Empty)
-            .Append("::")
-            .Append(this.Name)
-            .ToString()
+        let sb = StringBuilder(this.DeclaringModule.ToString())
+        for ns in this.Namespace do sb.Append("::").Append(ns.ToString()) |> ignore
+        sb.Append("::").Append(this.Name).ToString()
 
 and [<Sealed>] ResolvedMethod =
     val private owner : ResolvedTypeDefinition
@@ -170,7 +178,7 @@ type ModuleNotFoundException (identifier: ModuleIdentifier, message) =
 type TypeNotFoundException (m: ResolvedModule, typeNamespace, typeName, message: string) =
     inherit Exception(message)
 
-    member _.TypeNamespace: string = typeNamespace
+    member _.TypeNamespace: ImmutableArray<string> = typeNamespace
     member _.TypeName: string = typeName
     member _.Module = m
 
@@ -184,7 +192,7 @@ type ResolvedModule with
     member this.DataAt(ItemIndex i: DataIndex) = this.source.Data.[i]
     member this.CodeAt(ItemIndex i: CodeIndex) = this.source.Code.[i]
 
-    member this.TryFindType(typeNamespace: string, typeName: string): ResolvedTypeDefinition voption =
+    member this.TryFindType(typeNamespace: ImmutableArray<string>, typeName: string): ResolvedTypeDefinition voption =
         let key = struct(typeNamespace, typeName)
         match this.typeNameLookup.TryGetValue key with
         | false, _ ->
@@ -210,16 +218,15 @@ type ResolvedModule with
         | true, existing ->
             ValueSome existing
 
-    member this.FindType(typeNamespace: string, typeName: string): ResolvedTypeDefinition =
+    member this.FindType(typeNamespace: ImmutableArray<string>, typeName: string): ResolvedTypeDefinition =
         match this.TryFindType(typeNamespace, typeName) with
         | ValueSome t -> t
         | ValueNone ->
-            TypeNotFoundException (
-                this,
-                typeNamespace,
-                typeName, sprintf "Unable to find type %s %s" typeNamespace typeName
-            )
-            |> raise
+            let message = System.Text.StringBuilder("Unable to find type ").Append(this.ToString())
+
+            for ns in typeNamespace do message.Append("::").Append(ns) |> ignore
+
+            raise(TypeNotFoundException(this, typeNamespace, typeName, message.Append("::").Append(typeName).ToString()))
 
 type ResolvedTypeDefinition with
     new (rm, source, index) =
@@ -346,6 +353,7 @@ type ResolvedModule with
                 rf
           fieldResolvingEvent = Event<_>()
           fieldResolvedEvent = Event<_>()
+          typeNamespaceLookup = Dictionary()
           typeNameLookup = Dictionary() }
 
     member this.EntryPoint =

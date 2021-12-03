@@ -457,13 +457,11 @@ module TypeChecker =
 
     let private namespaceSearchString (FullNamespaceName ns) =
         if not ns.IsDefaultOrEmpty then
-            let sb = System.Text.StringBuilder()
-            for i = 0 to ns.Length - 1 do
-                sb.Append ns.[i].Content |> ignore
-                if i > 0 then sb.Append '.' |> ignore
-            sb.ToString()
+            let mutable names = Array.zeroCreate ns.Length
+            for i = 0 to names.Length - 1 do names.[i] <- ns.[i].Content.ToString()
+            Unsafe.As<string[], ImmutableArray<string>> &names
         else
-            String.Empty
+            ImmutableArray.Empty
 
     let private importedTypeLookup (imports: ImmutableArray<UByte.Resolver.ResolvedModule>.Builder) =
         let lookup = Dictionary<FullTypeIdentifier, UByte.Resolver.ResolvedTypeDefinition voption>()
