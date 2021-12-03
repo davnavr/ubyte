@@ -68,6 +68,7 @@ type CheckedElementType =
 and [<RequireQualifiedAccess; NoComparison; StructuralEquality; DebuggerDisplay("{ToString()}")>] CheckedReferenceType =
     | Any
     | Array of CheckedElementType
+    | Class of NamedType
 
     override ToString : unit -> string
 

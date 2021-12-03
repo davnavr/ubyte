@@ -72,11 +72,17 @@ and [<NoComparison; StructuralEquality>] CheckedValueType =
 and [<RequireQualifiedAccess; NoComparison; StructuralEquality>] CheckedReferenceType =
     | Any
     | Array of CheckedElementType
+    | Class of NamedType
 
     override this.ToString() =
         match this with
-        | Any -> "anyobj"
+        | Any -> "any^"
         | Array etype -> etype.ToString() + "[]"
+        | Class named ->
+            "^" +
+            match named with
+            | Choice1Of2 defined -> defined.Identifier.ToString()
+            | Choice2Of2 imported -> imported.ToString()
 
 and [<RequireQualifiedAccess; NoComparison; StructuralEquality>] CheckedElementType =
     | ValueType of CheckedValueType
@@ -535,7 +541,7 @@ module TypeChecker =
         | 0 -> Error(UndefinedTypeIdentifier identifier)
         | _ -> Error(AmbiguousTypeIdentifier(identifier, Seq.map fst matches))
 
-    let private checkAnyType namedTypeLookup: _ -> Result<_, SemanticError> =
+    let private checkAnyType namedTypeLookup source namespaces: _ -> Result<_, SemanticError> =
         let cachedTypeLookup valueFactory =
             let lookup = Dictionary<'Key, 'Value>()
             fun key ->
@@ -562,9 +568,21 @@ module TypeChecker =
             match atype.Content with
             | AnyTypeNode.Primitive prim -> primitiveTypeCache prim
             | AnyTypeNode.Array elemt ->
-                match inner elemt with
-                | Ok etype -> arrayTypeCache etype
-                | Error _ as error -> error
+                validated {
+                    let! etype = inner elemt
+                    return! arrayTypeCache etype
+                }
+            | AnyTypeNode.ObjectReference({ Content = AnyTypeNode.Defined referencedClassName }) ->
+                match findNamedType namedTypeLookup namespaces referencedClassName.Content with
+                | Ok(_, foundNamedClass) ->
+                    failwith "A"
+                | Error message ->
+                    Error(SemanticError.ofNode referencedClassName source message)
+            | AnyTypeNode.ObjectReference bad ->
+                raise(NotImplementedException(sprintf "TODO: Handle object reference to %O" bad.Content))
+            | AnyTypeNode.Defined _ ->
+                raise(NotImplementedException "Struct types are not yet supported")
+
         inner
 
     let private checkTypeAttributes errors (declarations: Dictionary<FullTypeIdentifier, _>) namedTypeLookup =
@@ -645,7 +663,7 @@ module TypeChecker =
 
     let private checkDefinedMethods
         (errors: ImmutableArray<_>.Builder)
-        anyTypeChecker
+        (anyTypeChecker: _ -> ImmutableArray<FullNamespaceName> -> _ -> _)
         (declarations: Dictionary<CheckedTypeDefinition, Dictionary<ParsedIdentifier, CheckedMethod>>)
         (entryPointMethod: byref<_ voption>)
         =
@@ -673,7 +691,7 @@ module TypeChecker =
                 parameterNameLookup.Clear()
 
                 for (name, ty) in method.ParameterNodes do
-                    match anyTypeChecker ty with
+                    match anyTypeChecker  method.DeclaringType.Source method.DeclaringType.UsedNamespaces ty with
                     | Ok ptype ->
                         if parameterNameLookup.Add name.Content then
                             parameters.Add { CheckedParameter.Name = name; CheckedParameter.Type = ptype }
@@ -686,7 +704,7 @@ module TypeChecker =
                 returns.Clear()
 
                 for ty in method.ReturnTypeNodes do
-                    match anyTypeChecker ty with
+                    match anyTypeChecker method.DeclaringType.Source method.DeclaringType.UsedNamespaces ty with
                     | Ok rtype -> returns.Add rtype
                     | Error error -> errors.Add error
                     // TODO: If an error occurs, add a placeholder return type
@@ -958,7 +976,7 @@ module TypeChecker =
                             localVariableLookup.[lname] <- CheckedType.Void
                             validated {
                                 // TODO: Check that type of local and type of value is compatible.
-                                let! ltype = checkAnyType namedTypeLookup ty
+                                let! ltype = checkAnyType namedTypeLookup method.DeclaringType.Source method.DeclaringType.UsedNamespaces ty
                                 localVariableLookup.[lname] <- ltype
                                 let! lvalue = checkParsedExpression method value
                                 return CheckedStatement.LocalDeclaration(constant, name, ltype, lvalue)

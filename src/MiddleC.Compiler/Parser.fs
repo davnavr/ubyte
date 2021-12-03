@@ -62,11 +62,15 @@ type ParsedTypeIdentifier = ParsedNode<TypeIdentifier>
 type AnyTypeNode =
     | Primitive of UByte.Format.Model.PrimitiveType
     | Array of ParsedNode<AnyTypeNode>
+    | Defined of ParsedTypeIdentifier
+    | ObjectReference of ParsedNode<AnyTypeNode>
 
     override this.ToString() =
         match this with
         | Primitive prim -> prim.ToString().ToLowerInvariant()
         | Array etype -> etype.ToString() + "[]"
+        | Defined id -> id.Content.ToString()
+        | ObjectReference o -> o.Content.ToString() + "^"
 
 [<RequireQualifiedAccess; Struct>]
 type BinaryOperation =
@@ -387,6 +391,7 @@ module Parse =
         parser.TermParser <-
             choice [|
                 primitiveTypeNode
+                typeIdentifierNode |>> AnyTypeNode.Defined
             |]
             |> withNodeContent
             .>> whitespace
@@ -394,14 +399,18 @@ module Parse =
         let typeNodeMapping mapping (node: ParsedNode<AnyTypeNode>) =
             { node with Content = mapping node }
 
-        PostfixOperator<_, unit, unit> (
-            "[]",
-            whitespace,
-            precedence = 1,
-            isAssociative = true,
-            mapping = typeNodeMapping AnyTypeNode.Array
-        )
-        |> parser.AddOperator
+        let inline postfixTypeModifier symbol afterStringParser precedence mapping =
+            PostfixOperator<_, unit, unit> (
+                symbol,
+                afterStringParser,
+                precedence,
+                true,
+                mapping
+            )
+            |> parser.AddOperator
+
+        postfixTypeModifier "[]" whitespace 1 (typeNodeMapping AnyTypeNode.Array)
+        postfixTypeModifier "^" whitespace 1 (typeNodeMapping AnyTypeNode.ObjectReference)
 
         parser.ExpressionParser
 

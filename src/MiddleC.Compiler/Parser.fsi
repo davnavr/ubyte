@@ -47,7 +47,8 @@ type ParsedTypeIdentifier = ParsedNode<TypeIdentifier>
 type AnyTypeNode =
     | Primitive of UByte.Format.Model.PrimitiveType
     | Array of ParsedNode<AnyTypeNode>
-    //| ObjectReference of Choice<TypeNode, ParsedTypeIdentifier>
+    | Defined of ParsedTypeIdentifier
+    | ObjectReference of ParsedNode<AnyTypeNode>
 
     override ToString : unit -> string
 
