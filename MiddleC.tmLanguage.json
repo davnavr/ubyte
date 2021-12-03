@@ -39,14 +39,34 @@
         },
         {
           "include": "#comment"
+        },
+        {
+          "match": "\\b(using)\\s+(\\w+)(::(\\w+))*\\s*\\;",
+          "captures": {
+            "1": {
+              "name": "keyword.other.middlec"
+            },
+            "2": {
+              "name": "entity.name.namespace.middlec"
+            },
+            "4": {
+              "name": "entity.name.namespace.middlec"
+            }
+          }
         }
       ]
     },
     "namespace-declaration": {
-      "begin": "\\b(namespace)",
+      "begin": "\\b(namespace)\\s+(\\w+)(::(\\w+))*\\s*\\{",
       "beginCaptures": {
         "1": {
           "name": "keyword.other.middlec"
+        },
+        "2": {
+          "name": "entity.name.namespace.middlec"
+        },
+        "4": {
+          "name": "entity.name.namespace.middlec"
         }
       },
       "end": "\\}",
@@ -59,12 +79,8 @@
     "type": {
       "patterns": [
         {
-          "match": "(((char|s|u|f)(32|64))|([su](8|16))|bool)",
-          "captures": {
-            "1": {
-              "name": "storage.type.middlec"
-            }
-          }
+          "match": "((char|s|u|f)(32|64))|([su](8|16))|bool",
+          "name": "storage.type.middlec"
         }
       ]
     },

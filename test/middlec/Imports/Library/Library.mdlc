@@ -1,0 +1,9 @@
+namespace Library {
+
+type Messages {
+    method Greeting public () -> (char32[]) {
+        return new char32[] "Hello There...";
+    }
+}
+
+}

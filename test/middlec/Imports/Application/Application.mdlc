@@ -1,0 +1,17 @@
+namespace Application {
+
+using Library;
+
+type Program {
+    method Main entrypoint () -> () {
+        var message char32[] = Messages::Greeting();
+        Print(message);
+    }
+
+    method Print private (message char32[]) -> () external {
+        entry = "testhelperprintln",
+        library = "runmdl"
+    }
+}
+
+}
