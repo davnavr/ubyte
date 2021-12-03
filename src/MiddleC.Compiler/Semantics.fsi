@@ -181,6 +181,7 @@ type SemanticErrorMessage =
     | ExpectedExpressionType of expected: CheckedType * actual: CheckedType
     | InvalidCharacterType of ParsedNode<AnyTypeNode>
     | InvalidElementType of CheckedType
+    | MissingThisParameter
     | MultipleEntryPoints
     | TypeHasNoMethods of CheckedType
     | UndefinedLocal of ParsedIdentifier

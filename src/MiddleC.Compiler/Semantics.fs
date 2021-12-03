@@ -320,6 +320,7 @@ type SemanticErrorMessage =
     | ExpectedExpressionType of expected: CheckedType * actual: CheckedType
     | InvalidCharacterType of ParsedNode<AnyTypeNode>
     | InvalidElementType of CheckedType
+    | MissingThisParameter
     | MultipleEntryPoints
     | TypeHasNoMethods of CheckedType
     | UndefinedLocal of ParsedIdentifier
@@ -344,6 +345,7 @@ type SemanticErrorMessage =
             ty.Content.ToString() + " is not a valid character type"
         | InvalidElementType ty ->
             ty.ToString() + " is not a valid element type, only value types and reference types are allowed"
+        | MissingThisParameter -> "An instance method must contain at least one parameter"
         | MultipleEntryPoints -> "Only one entry point method in a module is allowed"
         | TypeHasNoMethods ty -> ty.ToString() + " is a type that does not define any methods"
         | UndefinedLocal id -> "A local or parameter with the name " + id.ToString() + " does not exist"
@@ -685,6 +687,10 @@ module TypeChecker =
                     | MethodAttributeNode.Public ->
                         // TODO: Check for duplicate visibility flags
                         method.Visibility <- Model.VisibilityFlags.Public
+                    | MethodAttributeNode.Instance ->
+                        method.Flags <- method.Flags ||| Model.MethodFlags.Instance
+                        if method.ParameterNodes.IsDefaultOrEmpty then
+                            addErrorMessage errors method.Name method.DeclaringType.Source MissingThisParameter
                     | _ ->
                         failwith "TODO: Set other method flags"
 
