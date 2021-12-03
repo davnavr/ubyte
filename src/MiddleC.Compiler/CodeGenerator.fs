@@ -169,6 +169,7 @@ let private writeTypeDefinitions
 [<NoComparison; NoEquality; RequireQualifiedAccess>]
 type private LocalRegister =
     { Index: unit -> RegisterIndex
+      Mutable: bool
       Type: CheckedType }
 
 let private updateRegisterIndices currentTemporaryCount oldTemporaryCount (registers: RegisterIndex[]) =
@@ -313,7 +314,14 @@ let rec private writeExpressionCode
                 raise(NotImplementedException "NON-DATA arrays not yet implemented")
         | _ ->
             raise(NotImplementedException(sprintf "Code generation for new array containing %O is not yet implemented" etype))
-    | CheckedExpression.Local name -> [| localRegisterLookup.[name].Index() |] // TODO: If local is mutable, then read the value, don't use the address.
+    | CheckedExpression.Local name ->
+        let local = localRegisterLookup.[name]
+        let lindex = localRegisterLookup.[name].Index()
+        if not local.Mutable then
+            [| lindex |]
+        else
+            instructions.Add(InstructionSet.Mem_ld(InstructionSet.MemoryAccessFlags.ThrowOnInvalidAccess, typeSignatureLookup local.Type, lindex))
+            writeOneRegister()
     | CheckedExpression.ArrayLengthAccess expression ->
         let array = writeNestedExpression expression
         if array.Length <> 1 then invalidOp "Attempt to access array length for multiple values"
@@ -429,7 +437,7 @@ let private writeMethodBodies
                 let getLocalIndex() = RegisterIndex.Index(nextTemporaryIndex.Value + uint32 method.Parameters.Length + lindex)
 
                 blockLocalMap.Add(struct(tindex, LocalIndex.Index lindex))
-                localRegisterLookup.Add(name.Content, { LocalRegister.Index = getLocalIndex; LocalRegister.Type = ty })
+                localRegisterLookup.Add(name.Content, { LocalRegister.Index = getLocalIndex; LocalRegister.Mutable = not immutable; LocalRegister.Type = ty })
             | CheckedStatement.Return values ->
                 if values.IsDefaultOrEmpty then
                     instructions.Add(InstructionSet.Ret ImmutableArray.Empty)
@@ -470,6 +478,7 @@ let private writeMethodBodies
             localRegisterLookup.Add (
                 parameter.Name.Content,
                 { LocalRegister.Index = (fun() -> RegisterIndex.Index(nextTemporaryIndex.Value + uint32 i))
+                  LocalRegister.Mutable = false
                   LocalRegister.Type = parameter.Type }
             )
 
