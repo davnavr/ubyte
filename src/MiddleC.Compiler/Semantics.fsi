@@ -6,10 +6,12 @@ open System.Runtime.CompilerServices
 
 open MiddleC.Compiler.Parser
 
-[<IsReadOnly; Struct; NoComparison; StructuralEquality>]
+[<IsReadOnly; Struct; NoComparison; StructuralEquality; DebuggerDisplay("{ToString()}")>]
 type FullNamespaceName =
     internal
     | FullNamespaceName of ParsedNamespaceName
+
+    override ToString : unit -> string
 
     interface System.IEquatable<FullNamespaceName>
 

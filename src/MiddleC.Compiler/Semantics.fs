@@ -14,6 +14,14 @@ type FullNamespaceName =
     internal
     | FullNamespaceName of ParsedNamespaceName
 
+    override this.ToString() =
+        let (FullNamespaceName names) = this
+        let sb = System.Text.StringBuilder()
+        for i = 0 to names.Length - 1 do
+            if i > 0 then sb.Append "::" |> ignore
+            sb.Append names.[i].Content |> ignore
+        sb.ToString()
+
 [<RequireQualifiedAccess>]
 module FullNamespaceName =
     let empty = FullNamespaceName ImmutableArray.Empty
@@ -397,6 +405,7 @@ module TypeChecker =
     let private validated = CheckResultBuilder()
 
     let private findTypeDeclarations errors (files: ImmutableArray<ParsedFile>) =
+        /// Checks and adds all declarations inside of a file or namespace block.
         let rec inner
             errors
             file
@@ -406,7 +415,7 @@ module TypeChecker =
             (nodes: ParsedNodeArray<TopLevelNode>)
             =
             let usings = ImmutableArray.CreateBuilder<FullNamespaceName>()
-            let declaredTypeNodes = List()
+            let declaredTypeNodes = List<_ -> CheckedTypeDefinition>()
             let nestedNamespaceDeclarations = List()
 
             usings.AddRange parentUsingDeclarations
@@ -426,7 +435,7 @@ module TypeChecker =
                             usedNamespaceDeclarations
                         )
                 | TopLevelNode.UsingNamespace ns ->
-                    usings.Add(FullNamespaceName.append ns currentNamespaceName)
+                    usings.Add(FullNamespaceName ns)
                 | TopLevelNode.Error msg -> // TODO: Error nodes should be treated as UserState in parser stage, TypeChecker should have to deal with parser errors.
                     addErrorMessage errors node file (UnknownError msg)
 
