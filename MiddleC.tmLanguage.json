@@ -279,6 +279,10 @@
         },
         {
           "include": "#comment"
+        },
+        {
+          "match": "(new)\\s+",
+          "name": "keyword.other.middlec"
         }
       ]
     },

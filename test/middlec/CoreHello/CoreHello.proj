@@ -1,0 +1,11 @@
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+
+  <Import Project="..\..\..\src\MiddleC.targets" />
+
+  <ItemGroup>
+    <Compile Include="CoreHello.mdlc" />
+
+    <ProjectReference Include="..\..\..\src\Coremdl.Base\Coremdl.Base.proj" />
+  </ItemGroup>
+
+</Project>

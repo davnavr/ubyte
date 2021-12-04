@@ -411,6 +411,8 @@ and [<Sealed>] CheckedTypeDefinition
 
 type SemanticErrorMessage =
     | AmbiguousTypeIdentifier of name: TypeIdentifier * matches: seq<FullTypeIdentifier>
+    | AmbiguousConstructorOverload of declaringTypeName: FullTypeIdentifier *
+        expectedParameterTypes: ImmutableArray<CheckedType> * candidates: seq<ImmutableArray<CheckedType>>
     | ArrayConstructorCall
     | DuplicateConstructorDefinition of name: FullTypeIdentifier
     | DuplicateLocalDeclaration of name: ParsedIdentifier
@@ -422,6 +424,7 @@ type SemanticErrorMessage =
     | MissingThisParameter
     | MultipleEntryPoints
     | TypeHasNoMembers of CheckedType
+    | UndefinedConstructor of declaringTypeName: FullTypeIdentifier * expectedParameterTypes: ImmutableArray<CheckedType>
     | UndefinedField of declaringTypeName: FullTypeIdentifier * fieldName: IdentifierNode
     | UndefinedLocal of ParsedIdentifier
     | UndefinedMethod of declaringTypeName: FullTypeIdentifier * methodName: IdentifierNode
@@ -434,6 +437,12 @@ type SemanticErrorMessage =
             System.Text.StringBuilder(id.ToString())
                 .Append(" could refer to any of the following types: ")
                 .AppendJoin(", ", matches)
+                .ToString()
+        | AmbiguousConstructorOverload(declaringTypeName, expectedParameterTypes, candidates) ->
+            System.Text.StringBuilder().Append("Ambiguous constructor call, new ").Append(declaringTypeName.ToString())
+                .Append('(').AppendJoin(", ", expectedParameterTypes)
+                .Append(") could refer to any of the following constructors: ")
+                .AppendJoin(", ", Seq.map (fun parameterTypeList -> String.Join<_>(", ", parameterTypeList)) candidates)
                 .ToString()
         | ArrayConstructorCall -> "Cannot create new array instance with a constructor call, use array literal syntax instead"
         | DuplicateConstructorDefinition id -> "A constructor for the type " + id.ToString() + " with the same signature already exists"
@@ -449,6 +458,9 @@ type SemanticErrorMessage =
         | MissingThisParameter -> "An instance method or constructor must define the this parameter"
         | MultipleEntryPoints -> "Only one entry point method in a module is allowed"
         | TypeHasNoMembers ty -> ty.ToString() + " is a type that does not define any members"
+        | UndefinedConstructor(declaringTypeName, expectedParameterTypes) ->
+            System.Text.StringBuilder("A constructor for ").Append(declaringTypeName.ToString()).Append(" with the signature (")
+                .AppendJoin(", ", expectedParameterTypes).Append(") could not be found").ToString()
         | UndefinedField(declaringTypeName, fieldName) ->
             "A field named " + fieldName.Content.ToString() + " could not be found in the type " + declaringTypeName.ToString()
         | UndefinedLocal id -> "A local or parameter with the name " + id.ToString() + " does not exist"
@@ -975,9 +987,52 @@ module TypeChecker =
             else
                 voidReturnValues
 
+    let private findIdentifiedType namedTypeLookup (method: ICheckedMethod) (id: ParsedTypeIdentifier) =
+        match findNamedType namedTypeLookup method.DeclaringType.UsedNamespaces id.Content with
+        | Ok ty -> Ok ty
+        | Error msg -> Error(SemanticError.ofNode id method.DeclaringType.Source msg)
+
+    let private getArgumentTypes (arguments: ImmutableArray<TypedExpression>) =
+        let mutable types = Array.zeroCreate arguments.Length
+        for i = 0 to arguments.Length - 1 do types.[i] <- arguments.[i].Type
+        Unsafe.As<CheckedType[], ImmutableArray<CheckedType>> &types
+
+    let private findConstructorDefinition
+        (declaringTypeDefinition: CheckedTypeDefinition)
+        (arguments: ImmutableArray<_>)
+        =
+        let matches = List<CheckedConstructor>(1)
+        let types = getArgumentTypes arguments
+
+        for ctor in declaringTypeDefinition.Constructors do
+            // TODO: Check for compatibility of argument types.
+            if ctor.Parameters.Length = arguments.Length then matches.Add ctor
+
+        match matches.Count with
+        | 1 -> Ok matches.[0]
+        | 0 -> Error(SemanticErrorMessage.UndefinedConstructor(declaringTypeDefinition.Identifier, types))
+        | _ -> Error(SemanticErrorMessage.AmbiguousConstructorOverload(declaringTypeDefinition.Identifier, types, Seq.map (fun (ctor: CheckedConstructor) -> ctor.Signature.ParameterTypes) matches))
+
+    let private findConstructorImport
+        (declaringTypeImport: UByte.Resolver.ResolvedTypeDefinition)
+        (translateMethodSignature: _ -> CheckedMethodSignature)
+        arguments
+        =
+        let matches = List<UByte.Resolver.ResolvedMethod>(1)
+        let types = getArgumentTypes arguments
+
+        for ctor in declaringTypeImport.DefinedConstructors do
+            if ctor.Visibility <= Model.VisibilityFlags.Public && translateMethodSignature(ctor).ParameterTypes = types then
+                matches.Add ctor
+
+        match matches.Count with
+        | 1 -> Ok matches.[0]
+        | _ -> raise(NotImplementedException "TODO: Get type identifier for error reporting when matching constructor for type import was not found")
+
     let private checkMethodBodies
         (errors: ImmutableArray<_>.Builder)
         namedTypeLookup
+        translateMethodSignature
         (namedFieldLookup: _ -> _ -> NamedField voption)
         (namedMethodLookup: _ -> _ -> NamedMethod voption)
         (methodImportLookup: HashSet<_>)
@@ -1007,7 +1062,6 @@ module TypeChecker =
                 ok (CheckedExpression.LiteralBoolean value) (CheckedType.primitive Model.PrimitiveType.Bool)
             | ExpressionNode.LiteralS32 value ->
                 ok (CheckedExpression.LiteralSignedInteger(int64 value)) (CheckedType.primitive Model.PrimitiveType.S32)
-            // Since stack allocations will look something like stackalloc MyClass, heap allocations should lookup like new MyClass() instead of new ^MyClass()
             | ExpressionNode.NewObject({ Content = AnyTypeNode.Array etype } as ty, oconstructor) ->
                 match oconstructor.Content with
                 | ConstructionExpression.ConstructorCall arguments ->
@@ -1049,6 +1103,27 @@ module TypeChecker =
                     // TODO: Add case for UTF-16 strings
                     | _ -> error ty (SemanticErrorMessage.InvalidCharacterType etype)
                 | bad -> raise(NotImplementedException "TODO: Add support for array literals")
+            // "new" keyword already implies a stack allocation, so a "^" symbol is not expected.
+            | ExpressionNode.NewObject({ Content = AnyTypeNode.Defined id }, ctor) ->
+                validated {
+                    let! _, ty = findIdentifiedType namedTypeLookup method id
+
+                    let! args =
+                        match ctor.Content with
+                        | ConstructionExpression.ConstructorCall arguments ->
+                            checkArgumentExpressions method arguments
+                        | _ ->
+                            raise(NotImplementedException(sprintf "Shortcuts for some constructor calls such as %O are not yet supported" ctor.Content))
+
+                    match ty with
+                    | Choice1Of2 defined ->
+                        // TODO: Do a proper search for constructor definition, checking argument types against constructor signature.
+                        let! constructor = findConstructorDefinition defined args |> Result.mapError (SemanticError.ofNode ctor method.DeclaringType.Source)
+                        return! ok (CheckedExpression.NewObject(Choice1Of2 constructor, args)) (CheckedType.ReferenceType(CheckedReferenceType.Class ty))
+                    | Choice2Of2 imported ->
+                        let! constructor = findConstructorImport imported translateMethodSignature args
+                        return! ok (CheckedExpression.NewObject(Choice2Of2 constructor, args)) (CheckedType.ReferenceType(CheckedReferenceType.Class ty))
+                }
             // TODO: When nested types are supported, use :: to refer to nested types.
             | ExpressionNode.MemberAccess(source, name, ValueSome arguments) ->
                 validated {
@@ -1346,11 +1421,26 @@ module TypeChecker =
         checkedMethodDefinitions.AddRange allDefinedMethods
         checkedMethodDefinitions.AddRange allDefinedConstructors
 
+        let translateMethodSignature =
+            let cache = Dictionary<UByte.Resolver.ResolvedMethod, CheckedMethodSignature>()
+            fun import ->
+                match cache.TryGetValue import with
+                | true, signature -> signature
+                | false, _ ->
+                    let signature =
+                        { CheckedMethodSignature.ParameterTypes =
+                            TranslateType.methodImportTypes import.DeclaringModule import.Signature.ParameterTypes
+                          CheckedMethodSignature.ReturnTypes =
+                            TranslateType.methodImportTypes import.DeclaringModule import.Signature.ReturnTypes }
+                    cache.[import] <- signature
+                    signature
+
         // The types defined in this module, types of fields, and types of methods have been determined, so analysis of method
         // bodies can begin.
         checkMethodBodies
             errors
             namedTypeLookup
+            translateMethodSignature
             (fun declaringType fieldName ->
                 match declaringType with
                 | Choice1Of2 defined ->

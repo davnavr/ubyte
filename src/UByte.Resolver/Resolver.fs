@@ -101,6 +101,8 @@ and [<Sealed>] ResolvedTypeDefinition =
     val private specifiedInheritedTypes : Lazy<ImmutableArray<ResolvedTypeDefinition>>
     val private vtable : Lazy<Dictionary<ResolvedMethod, ResolvedMethod>>
     val private fields : Lazy<ImmutableArray<ResolvedField>>
+    val private methods : Lazy<ImmutableArray<ResolvedMethod>>
+    val private constructors : Lazy<ImmutableArray<ResolvedMethod>>
 
     member this.DeclaringModule = this.rmodule
     member this.BaseTypes = this.specifiedInheritedTypes.Value
@@ -109,6 +111,8 @@ and [<Sealed>] ResolvedTypeDefinition =
     member this.Index = this.index
     member this.Namespace = this.DeclaringModule.NamespaceAt this.source.TypeNamespace
     member this.DefinedFields = this.fields.Value
+    member this.DefinedMethods = this.methods.Value
+    member this.DefinedConstructors = this.constructors.Value
 
     override this.ToString() =
         let sb = StringBuilder(this.DeclaringModule.ToString())
@@ -228,8 +232,18 @@ type ResolvedModule with
 
             raise(TypeNotFoundException(this, typeNamespace, typeName, message.Append("::").Append(typeName).ToString()))
 
+[<RequireQualifiedAccess>]
+module MemberPredicates =
+    let isNotConstructor = Predicate(fun (method: ResolvedMethod) -> not method.IsConstructor)
+
 type ResolvedTypeDefinition with
-    new (rm, source, index) =
+    new (rm: ResolvedModule, source, index) =
+        let methods =
+            let indices = source.Methods
+            lazy
+                let mutable methods = Array.zeroCreate indices.Length
+                for i = 0 to methods.Length - 1 do methods.[i] <- rm.MethodAt indices.[i]
+                Unsafe.As<ResolvedMethod[], ImmutableArray<ResolvedMethod>> &methods
         { rmodule = rm
           source = source
           index = index
@@ -254,9 +268,11 @@ type ResolvedTypeDefinition with
           fields =
             let indices = source.Fields
             lazy
-                let mutable fields = Array.zeroCreate source.Fields.Length
+                let mutable fields = Array.zeroCreate indices.Length
                 for i = 0 to fields.Length - 1 do fields.[i] <- rm.FieldAt indices.[i]
-                Unsafe.As<ResolvedField[], ImmutableArray<ResolvedField>> &fields }
+                Unsafe.As<ResolvedField[], ImmutableArray<ResolvedField>> &fields
+          methods = methods
+          constructors = lazy methods.Value.RemoveAll MemberPredicates.isNotConstructor }
 
 type ResolvedMethod with
     member this.Visibility = this.source.MethodVisibility

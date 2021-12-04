@@ -202,6 +202,8 @@ type CheckedTypeDefinition with
 [<NoComparison; NoEquality>]
 type SemanticErrorMessage =
     | AmbiguousTypeIdentifier of name: TypeIdentifier * matches: seq<FullTypeIdentifier>
+    | AmbiguousConstructorOverload of declaringTypeName: FullTypeIdentifier *
+        expectedParameterTypes: ImmutableArray<CheckedType> * candidates: seq<ImmutableArray<CheckedType>>
     | ArrayConstructorCall
     | DuplicateConstructorDefinition of name: FullTypeIdentifier
     | DuplicateLocalDeclaration of name: ParsedIdentifier
@@ -213,6 +215,7 @@ type SemanticErrorMessage =
     | MissingThisParameter
     | MultipleEntryPoints
     | TypeHasNoMembers of CheckedType
+    | UndefinedConstructor of declaringTypeName: FullTypeIdentifier * expectedParameterTypes: ImmutableArray<CheckedType>
     | UndefinedField of declaringTypeName: FullTypeIdentifier * fieldName: IdentifierNode
     | UndefinedLocal of ParsedIdentifier
     | UndefinedMethod of declaringTypeName: FullTypeIdentifier * methodName: IdentifierNode

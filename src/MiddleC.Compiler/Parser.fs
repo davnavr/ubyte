@@ -424,6 +424,7 @@ module Parse =
             )
             |> parser.AddOperator
 
+        //postfixTypeModifier "^"
         prefixTypeModifier "^" whitespace 1 (typeNodeMapping AnyTypeNode.ObjectReference)
 
         parser.ExpressionParser
@@ -464,6 +465,7 @@ module Parse =
                     numberlit signedIntegerLiteralOptions Int32.Parse ExpressionNode.LiteralS32
                     numberlit unsignedIntegerLiteralOptions UInt32.Parse ExpressionNode.LiteralU32
 
+                    // TODO: Since stack allocations will look something like stackalloc MyClass, heap allocations should look like new MyClass() instead of new ^MyClass()
                     skipString "new"
                     >>. whitespace
                     >>. anyTypeNode

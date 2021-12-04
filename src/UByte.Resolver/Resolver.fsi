@@ -46,6 +46,8 @@ type ResolvedTypeDefinition =
     member BaseTypes : ImmutableArray<ResolvedTypeDefinition>
     member VTable: IReadOnlyDictionary<ResolvedMethod, ResolvedMethod>
     member DefinedFields : ImmutableArray<ResolvedField>
+    member DefinedMethods : ImmutableArray<ResolvedMethod>
+    member DefinedConstructors : ImmutableArray<ResolvedMethod>
 
     member FindMethod : name: string -> ResolvedMethod
     member TryFindMethod : name: string -> ResolvedMethod voption

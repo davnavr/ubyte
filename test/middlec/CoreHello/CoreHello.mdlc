@@ -1,0 +1,18 @@
+namespace HelloWorld {
+
+using Coremdl;
+
+type Program {
+    method Main entrypoint () -> (s32) {
+        let text char32[] = new char32[] "Hello World!";
+        let message ^String32 = new String32 (text);
+        return message.length;
+    }
+
+    method Print private (message ^String32) -> () external {
+        entry = "testhelperprintln",
+        library = "runmdl"
+    }
+}
+
+}
