@@ -233,6 +233,7 @@ let rec private writeExpressionCode
     (localRegisterLookup: Dictionary<_, LocalRegister>)
     (instructions: ImmutableArray<_>.Builder)
     (expression: TypedExpression)
+    : RegisterIndex[]
     =
     let inline writeOneRegister() = [| nextTemporaryIndex() |]
 
@@ -248,6 +249,19 @@ let rec private writeExpressionCode
             localRegisterLookup
             instructions
             nested
+
+    let writeMethodArguments (arguments: ImmutableArray<_>) =
+        let mutable registers = Array.zeroCreate arguments.Length
+
+        for i = 0 to registers.Length - 1 do
+            let results = writeNestedExpression arguments.[i]
+
+            if results.Length <> 1 then
+                invalidOp(sprintf "Invalid number of return values (%i) for method argument" results.Length)
+
+            registers.[i] <- results.[0]
+
+        Unsafe.As<RegisterIndex[], ImmutableArray<RegisterIndex>> &registers
 
     match expression.Expression with
     | CheckedExpression.LiteralBoolean value ->
@@ -314,18 +328,7 @@ let rec private writeExpressionCode
 
         writeOneRegister()
     | CheckedExpression.MethodCall(callee, arguments) -> // TODO: Add support for instance methods and virtual methods.
-        let callArgumentRegisters =
-            let mutable registers = Array.zeroCreate arguments.Length
-
-            for i = 0 to registers.Length - 1 do
-                let results = writeNestedExpression arguments.[i]
-
-                if results.Length <> 1 then
-                    invalidOp(sprintf "Invalid number of return values (%i) for method argument" results.Length)
-
-                registers.[i] <- results.[0]
-
-            Unsafe.As<RegisterIndex[], ImmutableArray<RegisterIndex>> &registers
+        let callArgumentRegisters = writeMethodArguments arguments
 
         let struct(returnValueCount, mindex) =
             match callee with
@@ -370,6 +373,16 @@ let rec private writeExpressionCode
                 raise(NotImplementedException "NON-DATA arrays not yet implemented")
         | _ ->
             raise(NotImplementedException(sprintf "Code generation for new array containing %O is not yet implemented" etype))
+    | CheckedExpression.NewObject(constructor, arguments) ->
+        let constructorArgumentRegisters = writeMethodArguments arguments
+
+        let cindex =
+            match constructor with
+            | Choice1Of2 defined -> definedMethodIndices.[defined]
+            | Choice2Of2 imported -> importedMethodIndices.[imported]
+
+        instructions.Add(InstructionSet.Obj_new(cindex, constructorArgumentRegisters))
+        writeOneRegister()
     | CheckedExpression.Local name ->
         let local = localRegisterLookup.[name]
         let lindex = localRegisterLookup.[name].Index()
