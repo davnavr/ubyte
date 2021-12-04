@@ -670,7 +670,14 @@ module TypeChecker =
         =
         for definedFields in declarations.Values do
             for field in definedFields.Values do
-                // TODO:Check field flags
+                for attr in field.AttributeNodes do
+                    match attr.Content with
+                    | FieldAttributeNode.Mutable ->
+                        field.Flags <- field.Flags ||| Model.FieldFlags.Mutable
+                    | FieldAttributeNode.Private ->
+                        field.Visibility <- Model.VisibilityFlags.Private
+                    | FieldAttributeNode.Static ->
+                        field.Flags <- field.Flags ||| Model.FieldFlags.Static
 
                 match anyTypeChecker field.DeclaringType.Source field.DeclaringType.UsedNamespaces field.TypeNode with
                 | Ok ftype -> field.FieldType <- ftype
