@@ -105,6 +105,7 @@ type CheckedExpression =
     | Local of name: ParsedIdentifier // CheckedLocal
     | MethodCall of method: NamedMethod * arguments: ImmutableArray<TypedExpression>
     | NewArray of CheckedElementType * elements: ImmutableArray<TypedExpression>
+    | NewObject of constructor: NamedConstructor * arguments: ImmutableArray<TypedExpression>
     ///// Represents the absence of a value, used when a method that is called does not have any return values.
     //| Nothing
 
@@ -117,6 +118,14 @@ and [<RequireQualifiedAccess; NoComparison; NoEquality; DebuggerDisplay("{ToStri
 
     override ToString : unit -> string
 
+/// Helper interface used when validating the method bodies of regular methods, constructors, and initializers.
+and [<Interface>] internal ICheckedMethod =
+    abstract DeclaringType : CheckedTypeDefinition
+    abstract Parameters : ImmutableArray<CheckedParameter>
+    abstract BodyNode : MethodBodyNode
+    abstract SetBody : CheckedMethodBody -> unit
+    abstract ReturnTypes : ImmutableArray<CheckedType>
+
 and [<Sealed; DebuggerDisplay("{ToString()}")>] CheckedMethod =
     member DeclaringType : CheckedTypeDefinition
     member Name : IdentifierNode
@@ -126,6 +135,8 @@ and [<Sealed; DebuggerDisplay("{ToString()}")>] CheckedMethod =
     member ReturnTypes : ImmutableArray<CheckedType>
 
     override ToString : unit -> string
+
+    interface ICheckedMethod
 
 and NamedMethod = Choice<CheckedMethod, UByte.Resolver.ResolvedMethod>
 
@@ -139,8 +150,16 @@ and [<Sealed>] CheckedField =
 
 and NamedField = Choice<CheckedField, UByte.Resolver.ResolvedField>
 
-[<RequireQualifiedAccess; NoComparison; NoEquality; DebuggerDisplay("{ToString()}")>]
-type CheckedStatement =
+and [<Sealed>] CheckedConstructor =
+    member DeclaringType : CheckedTypeDefinition
+    member Visibility : UByte.Format.Model.VisibilityFlags
+    member Parameters : ImmutableArray<CheckedParameter>
+
+    interface ICheckedMethod
+
+and NamedConstructor = Choice<CheckedConstructor, UByte.Resolver.ResolvedMethod>
+
+and [<RequireQualifiedAccess; NoComparison; NoEquality; DebuggerDisplay("{ToString()}")>] CheckedStatement =
     | Expression of TypedExpression
     | If of condition: TypedExpression * thenBlockStatements: ImmutableArray<CheckedStatement> *
         elseBlockStatements: ImmutableArray<CheckedStatement>
@@ -151,8 +170,7 @@ type CheckedStatement =
 
     override ToString : unit -> string
 
-[<RequireQualifiedAccess; NoComparison; NoEquality>]
-type CheckedMethodBody =
+and [<RequireQualifiedAccess; NoComparison; NoEquality>] CheckedMethodBody =
     | Defined of ImmutableArray<CheckedStatement>
     | External of string * library: string
 
@@ -167,18 +185,23 @@ type CheckedMethod with
     member Signature : CheckedMethodSignature
     member Body : CheckedMethodBody
 
+type CheckedConstructor with
+    member Body : CheckedMethodBody
+
 type CheckedTypeDefinition with
     member InheritedTypes : ImmutableArray<NamedType>
     member Methods : ImmutableArray<CheckedMethod>
     member Fields : ImmutableArray<CheckedField>
+    member Constructors : ImmutableArray<CheckedConstructor>
 
 [<NoComparison; NoEquality>]
 type SemanticErrorMessage =
-    | AmbiguousTypeIdentifier of TypeIdentifier * matches: seq<FullTypeIdentifier>
+    | AmbiguousTypeIdentifier of name: TypeIdentifier * matches: seq<FullTypeIdentifier>
     | ArrayConstructorCall
-    | DuplicateLocalDeclaration of ParsedIdentifier
-    | DuplicateParameter of ParsedIdentifier
-    | DuplicateTypeDefinition of FullTypeIdentifier
+    | DuplicateConstructorDefinition of name: FullTypeIdentifier
+    | DuplicateLocalDeclaration of name: ParsedIdentifier
+    | DuplicateParameter of name: ParsedIdentifier
+    | DuplicateTypeDefinition of name: FullTypeIdentifier
     | ExpectedExpressionType of expected: CheckedType * actual: CheckedType
     | InvalidCharacterType of ParsedNode<AnyTypeNode>
     | InvalidElementType of CheckedType
@@ -210,11 +233,13 @@ type CheckedModule with
     member DefinedTypes : ImmutableArray<CheckedTypeDefinition>
     member DefinedMethods : ImmutableArray<CheckedMethod>
     member DefinedFields : ImmutableArray<CheckedField>
+    member DefinedConstructors : ImmutableArray<CheckedConstructor>
     member EntryPoint : CheckedMethod voption
     member Errors : ImmutableArray<SemanticError>
     member ImportedModules : ImmutableArray<UByte.Resolver.ResolvedModule>
     /// Contains the types imported by this module, in the order that they were resolved.
     member ImportedTypes : ImmutableArray<UByte.Resolver.ResolvedTypeDefinition>
+    /// Contains the methods and constructors imported by this module.
     member ImportedMethods : ImmutableArray<UByte.Resolver.ResolvedMethod>
 
 [<RequireQualifiedAccess>]

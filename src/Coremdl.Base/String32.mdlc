@@ -8,7 +8,13 @@ type String32 {
         return str.chars.length;
     }
 
-    constructor (content char32[]) {
+    constructor (str ^String32, content char32[]) {
+        //str.chars <- new char32[content.length];
+        //var index s32 = 0;
+        //while (index < content.length) {
+        //    str.chars[index] <- content[index];
+        //    index <- index + 1;
+        //}
         ;
     }
 }

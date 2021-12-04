@@ -114,6 +114,7 @@ and [<RequireQualifiedAccess>] CheckedExpression =
     | Local of name: ParsedIdentifier
     | MethodCall of method: NamedMethod * arguments: ImmutableArray<TypedExpression>
     | NewArray of CheckedElementType * elements: ImmutableArray<TypedExpression>
+    | NewObject of constructor: NamedConstructor * arguments: ImmutableArray<TypedExpression>
     //| Nothing
 
     override this.ToString() =
@@ -140,6 +141,16 @@ and [<RequireQualifiedAccess>] CheckedExpression =
         | NewArray(etype, elements) ->
             System.Text.StringBuilder("new ").Append(etype.ToString()).Append("[] { ").AppendJoin(", ", elements).Append(" }")
                 .ToString()
+        | NewObject(constructor, arguments) ->
+            let sb = System.Text.StringBuilder("new ")
+
+            match constructor with
+            | Choice1Of2 defined -> (defined.DeclaringType: CheckedTypeDefinition).Identifier.ToString()
+            | Choice2Of2 imported -> imported.DeclaringType.ToString()
+            |> sb.Append
+            |> ignore
+
+            sb.Append('(').AppendJoin(", ", arguments).Append(')').ToString()
         //| Nothing -> "()"
 
 and TypedExpression =
@@ -151,7 +162,7 @@ and TypedExpression =
         match this with
         | { Expression = CheckedExpression.LiteralBoolean _ | CheckedExpression.NewArray _ | CheckedExpression.MethodCall _
                 | CheckedExpression.InstanceFieldAccess _ | CheckedExpression.Local _ | CheckedExpression.ArrayLengthAccess _
-                | CheckedExpression.BinaryOperation _ as expr } ->
+                | CheckedExpression.BinaryOperation _ | CheckedExpression.NewObject _ as expr } ->
             expr.ToString() // add casting syntax?
         | { Expression = CheckedExpression.LiteralSignedInteger _ | CheckedExpression.LiteralUnsignedInteger _ as expr } ->
             match this.Type with
@@ -217,6 +228,13 @@ and [<RequireQualifiedAccess; Struct; NoComparison; StructuralEquality>] Checked
     { ParameterTypes: ImmutableArray<CheckedType>
       ReturnTypes: ImmutableArray<CheckedType> }
 
+and [<Interface>] ICheckedMethod =
+    abstract DeclaringType : CheckedTypeDefinition
+    abstract Parameters : ImmutableArray<CheckedParameter>
+    abstract SetBody : CheckedMethodBody -> unit
+    abstract BodyNode : MethodBodyNode
+    abstract ReturnTypes : ImmutableArray<CheckedType>
+
 and [<Sealed>] CheckedMethod
     (
         owner: CheckedTypeDefinition,
@@ -260,6 +278,13 @@ and [<Sealed>] CheckedMethod
             .Append(')')
             .ToString()
 
+    interface ICheckedMethod with
+        member _.DeclaringType = owner
+        member _.Parameters = parameters
+        member _.BodyNode = methodBodyNode
+        member method.SetBody body = method.Body <- body
+        member _.ReturnTypes = returns
+
 and NamedMethod = Choice<CheckedMethod, UByte.Resolver.ResolvedMethod>
 
 and [<Sealed>] CheckedField
@@ -286,6 +311,36 @@ and [<Sealed>] CheckedField
 
 and NamedField = Choice<CheckedField, UByte.Resolver.ResolvedField>
 
+and [<Sealed>] CheckedConstructor
+    (
+        owner: CheckedTypeDefinition,
+        node: ParsedNode<TypeMemberNode>,
+        parameterNodes: ImmutableArray<IdentifierNode * ParsedNode<AnyTypeNode>>,
+        bodyNode: ParsedNodeArray<StatementNode>
+    )
+    =
+    let mutable visibility = Model.VisibilityFlags.Unspecified
+    let mutable parameters = ImmutableArray<CheckedParameter>.Empty
+    let mutable body = Unchecked.defaultof<CheckedMethodBody>
+    let translatedBodyNode = MethodBodyNode.Defined bodyNode
+
+    member _.DeclaringType = owner
+    member _.Visibility with get() = visibility and set value = visibility <- value
+    member _.ParameterNodes = parameterNodes
+    member _.Parameters with get() = parameters and set value = parameters <- value
+    member _.BodyNode = bodyNode
+    member _.Body with get() = body and set value = body <- value
+    member _.Node = node
+
+    interface ICheckedMethod with
+        member _.DeclaringType = owner
+        member _.Parameters = parameters
+        member constructor.SetBody body = constructor.Body <- body
+        member _.BodyNode = translatedBodyNode
+        member _.ReturnTypes = ImmutableArray.Empty
+
+and NamedConstructor = Choice<CheckedConstructor, UByte.Resolver.ResolvedMethod>
+
 and [<Sealed>] CheckedTypeDefinition
     (
         identifier: FullTypeIdentifier,
@@ -300,6 +355,7 @@ and [<Sealed>] CheckedTypeDefinition
     let mutable inheritedTypeDefinitions = ImmutableArray.Empty
     let mutable methods = ImmutableArray<CheckedMethod>.Empty
     let mutable fields = ImmutableArray<CheckedField>.Empty
+    let mutable constructors = ImmutableArray<CheckedConstructor>.Empty
 
     member _.Identifier = identifier
     member _.Source = source
@@ -312,6 +368,7 @@ and [<Sealed>] CheckedTypeDefinition
     member _.Flags with get() = flags and set value = flags <- value
     member _.InheritedTypes with get() = inheritedTypeDefinitions and set value = inheritedTypeDefinitions <- value
     member _.Methods with get() = methods and set value = methods <- value
+    member _.Constructors with get() = constructors and set value = constructors <- value
     member _.Fields with get() = fields and set value = fields <- value
 
     override this.Equals o =
@@ -324,11 +381,12 @@ and [<Sealed>] CheckedTypeDefinition
     interface IEquatable<CheckedTypeDefinition> with member _.Equals other = identifier = other.Identifier
 
 type SemanticErrorMessage =
-    | AmbiguousTypeIdentifier of TypeIdentifier * matches: seq<FullTypeIdentifier>
+    | AmbiguousTypeIdentifier of name: TypeIdentifier * matches: seq<FullTypeIdentifier>
     | ArrayConstructorCall
-    | DuplicateLocalDeclaration of ParsedIdentifier
-    | DuplicateParameter of ParsedIdentifier
-    | DuplicateTypeDefinition of FullTypeIdentifier
+    | DuplicateConstructorDefinition of name: FullTypeIdentifier
+    | DuplicateLocalDeclaration of name: ParsedIdentifier
+    | DuplicateParameter of name: ParsedIdentifier
+    | DuplicateTypeDefinition of name: FullTypeIdentifier
     | ExpectedExpressionType of expected: CheckedType * actual: CheckedType
     | InvalidCharacterType of ParsedNode<AnyTypeNode>
     | InvalidElementType of CheckedType
@@ -349,6 +407,7 @@ type SemanticErrorMessage =
                 .AppendJoin(", ", matches)
                 .ToString()
         | ArrayConstructorCall -> "Cannot create new array instance with a constructor call, use array literal syntax instead"
+        | DuplicateConstructorDefinition id -> "A constructor for the type " + id.ToString() + " with the same signature already exists"
         | DuplicateLocalDeclaration id -> "Duplicate local declaration " + id.ToString()
         | DuplicateParameter id -> "A parameter with the name " + id.ToString() + " was already defined"
         | DuplicateTypeDefinition id -> "Duplicate definition of type " + id.ToString()
@@ -358,7 +417,7 @@ type SemanticErrorMessage =
             ty.Content.ToString() + " is not a valid character type"
         | InvalidElementType ty ->
             ty.ToString() + " is not a valid element type, only value types and reference types are allowed"
-        | MissingThisParameter -> "An instance method must contain at least one parameter"
+        | MissingThisParameter -> "An instance method or constructor must define the this parameter"
         | MultipleEntryPoints -> "Only one entry point method in a module is allowed"
         | TypeHasNoMembers ty -> ty.ToString() + " is a type that does not define any members"
         | UndefinedField(declaringTypeName, fieldName) ->
@@ -384,8 +443,10 @@ type CheckedModule
         definedTypes: ImmutableArray<CheckedTypeDefinition>,
         importedTypes: ImmutableArray<UByte.Resolver.ResolvedTypeDefinition>,
         definedFields: ImmutableArray<CheckedField>,
+        //importedFields: ImmutableArray<UByte.Resolver.ResolvedField>,
         definedMethods: ImmutableArray<CheckedMethod>,
         importedMethods: ImmutableArray<UByte.Resolver.ResolvedMethod>,
+        definedConstructors: ImmutableArray<CheckedConstructor>,
         entryPointMethod: CheckedMethod voption,
         errors: ImmutableArray<SemanticError>
     )
@@ -399,6 +460,7 @@ type CheckedModule
     member _.DefinedFields = definedFields
     member _.ImportedMethods = importedMethods
     member _.DefinedMethods = definedMethods
+    member _.DefinedConstructors = definedConstructors
     member _.EntryPoint = entryPointMethod
     member _.Errors = errors
 
@@ -637,6 +699,10 @@ module TypeChecker =
         let allDefinedFields = ImmutableArray.CreateBuilder()
         let definedTypeFields = ImmutableArray.CreateBuilder()
 
+        let definedConstructorLookup = Dictionary<CheckedTypeDefinition, _>()
+        let allDefinedConstructors = ImmutableArray.CreateBuilder()
+        let definedTypeConstructors = ImmutableArray.CreateBuilder()
+
         for ty in declarations.Values do
             let methods = Dictionary<ParsedIdentifier, CheckedMethod>() // TODO: Allow overloading by parameter count AND parameter types.
             let fields = Dictionary<ParsedIdentifier, CheckedField>()
@@ -658,23 +724,47 @@ module TypeChecker =
                             body
                         )
 
-                    methods.Add(name.Content, method)
+                    methods.Add(name.Content, method) // TODO: Return an error if add fails. // TODO: Remove this dictionary, could use methodParametersComparer in checkDefinedMethods instead.
                     definedTypeMethods.Add method
                     allDefinedMethods.Add method
                 | TypeMemberNode.FieldDeclaration(name, attributes, fieldType, initialValue) ->
                     if initialValue.IsSome then raise(NotImplementedException "Fields with initial values are not yet supported")
                     let field = CheckedField(ty, name, attributes, fieldType)
-                    fields.Add(name.Content, field)
+                    fields.Add(name.Content, field) // TODO: Return an error if add fails.
                     definedTypeFields.Add field
                     allDefinedFields.Add field
+                | TypeMemberNode.ConstructorDeclaration(parameters, body) ->
+                    let ctor = CheckedConstructor(ty, node, parameters, body)
+                    definedTypeConstructors.Add ctor
+                    allDefinedConstructors.Add ctor
 
             ty.Methods <- definedTypeMethods.ToImmutable()
             ty.Fields <- definedTypeFields.ToImmutable()
+            ty.Constructors <- definedTypeConstructors.ToImmutable()
 
             definedTypeMethods.Clear()
             definedTypeFields.Clear()
+            definedTypeConstructors.Clear()
 
-        struct(allDefinedFields, fieldNameLookup, allDefinedMethods, methodNameLookup)
+            definedConstructorLookup.Add(ty, ty.Constructors)
+
+        struct(allDefinedFields.ToImmutable(), fieldNameLookup, allDefinedMethods.ToImmutable(), methodNameLookup, allDefinedConstructors.ToImmutable(), definedConstructorLookup)
+
+    let private methodParametersComparer =
+        { new IEqualityComparer<ImmutableArray<CheckedParameter>> with
+            member _.GetHashCode parameters =
+                let mutable hash = HashCode()
+                for { CheckedParameter.Type = ty } in parameters do hash.Add ty
+                hash.ToHashCode()
+
+            member _.Equals(x, y) =
+                if x.Length = y.Length then
+                    let mutable i, equal = 0, true
+                    while i < x.Length && equal do
+                        equal <- x.[i].Type = y.[i].Type
+                    equal
+                else
+                    false }
 
     let private checkDefinedFields
         (errors: ImmutableArray<_>.Builder)
@@ -696,9 +786,28 @@ module TypeChecker =
                 | Ok ftype -> field.FieldType <- ftype
                 | Error err -> errors.Add err
 
-    let private checkDefinedMethods
+    let private checkMethodParameters
         (errors: ImmutableArray<_>.Builder)
         (anyTypeChecker: _ -> ImmutableArray<FullNamespaceName> -> _ -> _)
+        (parameterNameLookup: HashSet<ParsedIdentifier>)
+        (declaringTypeDefinition: CheckedTypeDefinition)
+        (parameters: ImmutableArray<_>.Builder)
+        (methodParameterNodes: ImmutableArray<_>)
+        =
+        for (name, ty) in methodParameterNodes do
+            match anyTypeChecker declaringTypeDefinition.Source declaringTypeDefinition.UsedNamespaces ty with
+            | Ok ptype ->
+                if parameterNameLookup.Add name.Content then
+                    parameters.Add { CheckedParameter.Name = name; CheckedParameter.Type = ptype }
+                else
+                    addErrorMessage errors name declaringTypeDefinition.Source (DuplicateParameter name.Content)
+            | Error error ->
+                errors.Add error
+            // TODO: If an error occurs, add a placeholder parameter
+
+    let private checkDefinedMethods
+        (errors: ImmutableArray<_>.Builder)
+        anyTypeChecker
         (declarations: Dictionary<CheckedTypeDefinition, Dictionary<ParsedIdentifier, CheckedMethod>>)
         (entryPointMethod: byref<_ voption>)
         =
@@ -727,20 +836,11 @@ module TypeChecker =
                     | _ ->
                         failwith "TODO: Set other method flags"
 
+                parameters.Clear()
                 parameterNameLookup.Clear()
-
-                for (name, ty) in method.ParameterNodes do
-                    match anyTypeChecker  method.DeclaringType.Source method.DeclaringType.UsedNamespaces ty with
-                    | Ok ptype ->
-                        if parameterNameLookup.Add name.Content then
-                            parameters.Add { CheckedParameter.Name = name; CheckedParameter.Type = ptype }
-                        else
-                            addErrorMessage errors name method.DeclaringType.Source (DuplicateParameter name.Content)
-                    | Error error ->
-                        errors.Add error
-                    // TODO: If an error occurs, add a placeholder parameter
-
                 returns.Clear()
+
+                checkMethodParameters errors anyTypeChecker parameterNameLookup method.DeclaringType parameters method.ParameterNodes
 
                 for ty in method.ReturnTypeNodes do
                     match anyTypeChecker method.DeclaringType.Source method.DeclaringType.UsedNamespaces ty with
@@ -750,6 +850,32 @@ module TypeChecker =
 
                 method.Parameters <- parameters.ToImmutable()
                 method.ReturnTypes <- returns.ToImmutable()
+
+    let private checkDefinedConstructors
+        (errors: ImmutableArray<_>.Builder)
+        anyTypeChecker
+        (declarations: Dictionary<CheckedTypeDefinition, ImmutableArray<CheckedConstructor>>)
+        =
+        let parameterNameLookup = HashSet<ParsedIdentifier>()
+        let parameters = ImmutableArray.CreateBuilder()
+        let overloads = HashSet<ImmutableArray<_>> methodParametersComparer
+
+        for definedConstructors in declarations.Values do
+            for constructor in definedConstructors do
+                parameters.Clear()
+                parameterNameLookup.Clear()
+
+                if constructor.ParameterNodes.IsDefaultOrEmpty then
+                    errors.Add(SemanticError.ofNode constructor.Node constructor.DeclaringType.Source MissingThisParameter)
+
+                checkMethodParameters errors anyTypeChecker parameterNameLookup constructor.DeclaringType parameters constructor.ParameterNodes
+
+                constructor.Parameters <- parameters.ToImmutable()
+
+                if not(overloads.Add(constructor.Parameters)) then
+                    DuplicateConstructorDefinition constructor.DeclaringType.Identifier
+                    |> SemanticError.ofNode constructor.Node constructor.DeclaringType.Source
+                    |> errors.Add
 
     /// Compares local variables, ensuring that a local variable that is nested does not share a name with a local variable in an
     /// outer scope.
@@ -805,7 +931,7 @@ module TypeChecker =
         (namedFieldLookup: _ -> _ -> NamedField voption)
         (namedMethodLookup: _ -> _ -> NamedMethod voption)
         (methodImportLookup: HashSet<_>)
-        (declarations: Dictionary<CheckedTypeDefinition, Dictionary<ParsedIdentifier, CheckedMethod>>)
+        (declarations: ImmutableArray<ICheckedMethod>)
         =
         let localVariableLookup = Dictionary<ParsedIdentifier, CheckedType>() // HashSet<CheckedLocal> localVariableComparer
         (*
@@ -819,7 +945,7 @@ module TypeChecker =
         *)
         //let inScopeLocals = Stack()
 
-        let rec checkParsedExpression (method: CheckedMethod) expr: Result<_, SemanticError> =
+        let rec checkParsedExpression (method: ICheckedMethod) expr: Result<_, SemanticError> =
             let inline ok expression ty =
                 Ok { TypedExpression.Expression = expression; Type = ty; Node = expr }
 
@@ -952,7 +1078,7 @@ module TypeChecker =
             | Choice2Of2 expression ->
                 Result.map Choice2Of2 (checkParsedExpression method expression)
 
-        and determineSourceType (method: CheckedMethod) errorNode (source: Choice<ParsedNamespaceName, TypedExpression>) =
+        and determineSourceType (method: ICheckedMethod) errorNode (source: Choice<ParsedNamespaceName, TypedExpression>) =
             match source with
             | Choice1Of2 named ->
                 let typeNameIndex = named.Length - 1
@@ -1083,30 +1209,29 @@ module TypeChecker =
 
         let statements = ImmutableArray.CreateBuilder<CheckedStatement>()
 
-        for methods in declarations.Values do
-            for method in methods.Values do
-                statements.Clear()
-                localVariableLookup.Clear()
+        for method in declarations do
+            statements.Clear()
+            localVariableLookup.Clear()
 
-                for parameter in method.Parameters do
-                    let name = parameter.Name.Content
-                    if not(localVariableLookup.TryAdd(name, parameter.Type)) then
-                        SemanticError.ofNode
-                            parameter.Name
-                            method.DeclaringType.Source
-                            (DuplicateLocalDeclaration name)
-                        |> errors.Add
+            for parameter in method.Parameters do
+                let name = parameter.Name.Content
+                if not(localVariableLookup.TryAdd(name, parameter.Type)) then
+                    SemanticError.ofNode
+                        parameter.Name
+                        method.DeclaringType.Source
+                        (DuplicateLocalDeclaration name)
+                    |> errors.Add
 
-                method.Body <-
-                    match method.BodyNode with
-                    | MethodBodyNode.Defined nodes ->
-                        //match checkBlockNodes method statements nodes with
-                        //| ValueSome body ->
-                            CheckedMethodBody.Defined(checkBlockNodes method statements nodes)
-                        //| ValueNone ->
-                        //    CheckedMethodBody.Error
-                    | MethodBodyNode.External(name, library) ->
-                        CheckedMethodBody.External(name.Content, library.Content)
+            method.SetBody <|
+                match method.BodyNode with
+                | MethodBodyNode.Defined nodes ->
+                    //match checkBlockNodes method statements nodes with
+                    //| ValueSome body ->
+                        CheckedMethodBody.Defined(checkBlockNodes method statements nodes)
+                    //| ValueNone ->
+                    //    CheckedMethodBody.Error
+                | MethodBodyNode.External(name, library) ->
+                    CheckedMethodBody.External(name.Content, library.Content)
 
     let check name version files (imports: ImmutableArray<_>) =
         let errors = ImmutableArray.CreateBuilder()
@@ -1132,7 +1257,7 @@ module TypeChecker =
 
         let anyTypeChecker = checkAnyType namedTypeLookup
 
-        let struct(allDefinedFields, fieldNameLookup, allDefinedMethods, methodNameLookup) =
+        let struct(allDefinedFields, fieldNameLookup, allDefinedMethods, methodNameLookup, allDefinedConstructors, definedConstructorLookup) =
             findTypeMembers errors declaredTypesLookup
 
         checkDefinedFields errors anyTypeChecker fieldNameLookup
@@ -1140,7 +1265,13 @@ module TypeChecker =
         let mutable entryPointMethod = ValueNone
         checkDefinedMethods errors anyTypeChecker methodNameLookup &entryPointMethod
 
+        checkDefinedConstructors errors anyTypeChecker definedConstructorLookup
+
         let methodImportLookup = HashSet()
+
+        let checkedMethodDefinitions = ImmutableArray.CreateBuilder<ICheckedMethod>(allDefinedMethods.Length + allDefinedConstructors.Length)
+        checkedMethodDefinitions.AddRange allDefinedMethods
+        checkedMethodDefinitions.AddRange allDefinedConstructors
 
         // The types defined in this module, types of fields, and types of methods have been determined, so analysis of method
         // bodies can begin.
@@ -1165,15 +1296,16 @@ module TypeChecker =
                     // TODO: Figure out how to allow overloads of imported methods in middlec.
                     ValueOption.map Choice2Of2 (imported.TryFindMethod(methodName.ToString())))
             methodImportLookup
-            methodNameLookup
+            (checkedMethodDefinitions.MoveToImmutable())
 
         CheckedModule (
             name = Model.Name.ofStr name,
             version = Model.VersionNumbers(ImmutableArray.CreateRange version),
             importedModules = moduleImportList.ToImmutable(),
             definedTypes = declaredTypesLookup.Values.ToImmutableArray(),
-            definedFields = allDefinedFields.ToImmutable(),
-            definedMethods = allDefinedMethods.ToImmutable(),
+            definedFields = allDefinedFields,
+            definedMethods = allDefinedMethods,
+            definedConstructors = allDefinedConstructors,
             importedTypes = typeImportList.ToImmutable(),
             importedMethods = methodImportLookup.ToImmutableArray(),
             entryPointMethod = entryPointMethod,
