@@ -96,13 +96,14 @@ type CheckedParameter =
 [<RequireQualifiedAccess; NoComparison; NoEquality; DebuggerDisplay("{ToString()}")>]
 type CheckedExpression =
     /// <summary>Represents access of the <c>length</c> field of an array.</summary>
-    | ArrayLengthAccess of TypedExpression
+    | ArrayLengthAccess of array: TypedExpression
     | BinaryOperation of BinaryOperation * x: TypedExpression * y: TypedExpression
+    | InstanceFieldAccess of source: TypedExpression * field: NamedField
     | LiteralBoolean of bool
     | LiteralSignedInteger of int64
     | LiteralUnsignedInteger of uint64
-    | Local of ParsedIdentifier // CheckedLocal
-    | MethodCall of NamedMethod * arguments: ImmutableArray<TypedExpression>
+    | Local of name: ParsedIdentifier // CheckedLocal
+    | MethodCall of method: NamedMethod * arguments: ImmutableArray<TypedExpression>
     | NewArray of CheckedElementType * elements: ImmutableArray<TypedExpression>
     ///// Represents the absence of a value, used when a method that is called does not have any return values.
     //| Nothing
@@ -136,8 +137,8 @@ and [<Sealed>] CheckedField =
     member FieldType : CheckedType
     member InitialValue : TypedExpression voption
 
-/// Simplified representation of a statement that has been type checked, constructs such as if-statements and while loops are
-/// lowered.
+and NamedField = Choice<CheckedField, UByte.Resolver.ResolvedField>
+
 [<RequireQualifiedAccess; NoComparison; NoEquality; DebuggerDisplay("{ToString()}")>]
 type CheckedStatement =
     | Expression of TypedExpression
@@ -183,9 +184,10 @@ type SemanticErrorMessage =
     | InvalidElementType of CheckedType
     | MissingThisParameter
     | MultipleEntryPoints
-    | TypeHasNoMethods of CheckedType
+    | TypeHasNoMembers of CheckedType
+    | UndefinedField of declaringTypeName: FullTypeIdentifier * fieldName: IdentifierNode
     | UndefinedLocal of ParsedIdentifier
-    | UndefinedMethod of FullTypeIdentifier * methodName: IdentifierNode
+    | UndefinedMethod of declaringTypeName: FullTypeIdentifier * methodName: IdentifierNode
     | UndefinedTypeIdentifier of TypeIdentifier
     | UnknownError of message: string
 

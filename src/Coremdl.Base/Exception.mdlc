@@ -1,8 +1,12 @@
 namespace Coremdl {
 
-/// Base type for exceptions thrown during program execution, allocated on the heap.
+/// Base type for exceptions thrown during program execution allocated on the heap.
 type Exception {
     field message private ^String32;
+
+    method Message instance (ex ^Exception) -> (^String32) {
+        return ex.message;
+    }
 }
 
 }

@@ -105,13 +105,14 @@ and [<RequireQualifiedAccess; NoComparison; StructuralEquality>] CheckedType =
         | Void -> "()"
 
 and [<RequireQualifiedAccess>] CheckedExpression =
-    | ArrayLengthAccess of TypedExpression
+    | ArrayLengthAccess of array: TypedExpression
     | BinaryOperation of BinaryOperation * x: TypedExpression * y: TypedExpression
+    | InstanceFieldAccess of source: TypedExpression * field: NamedField
     | LiteralBoolean of bool
     | LiteralSignedInteger of int64
     | LiteralUnsignedInteger of uint64
-    | Local of ParsedIdentifier
-    | MethodCall of NamedMethod * arguments: ImmutableArray<TypedExpression>
+    | Local of name: ParsedIdentifier
+    | MethodCall of method: NamedMethod * arguments: ImmutableArray<TypedExpression>
     | NewArray of CheckedElementType * elements: ImmutableArray<TypedExpression>
     //| Nothing
 
@@ -119,6 +120,11 @@ and [<RequireQualifiedAccess>] CheckedExpression =
         match this with
         | ArrayLengthAccess array -> array.ToString() + ".length"
         | BinaryOperation(op, x, y) -> "(" + x.ToString() + " " + op.ToString() + " " + y.ToString() + ")"
+        | InstanceFieldAccess(source, field) ->
+            source.ToString() + "." +
+            match field with
+            | Choice1Of2 defined -> defined.Name.Content.ToString()
+            | Choice2Of2 imported -> imported.Name
         | LiteralBoolean true -> "true"
         | LiteralBoolean false -> "false"
         | LiteralSignedInteger i -> string i
@@ -143,7 +149,9 @@ and TypedExpression =
 
     override this.ToString() =
         match this with
-        | { Expression = CheckedExpression.LiteralBoolean _ | CheckedExpression.NewArray _ | CheckedExpression.MethodCall _ | CheckedExpression.Local _ | CheckedExpression.ArrayLengthAccess _ | CheckedExpression.BinaryOperation _ as expr } ->
+        | { Expression = CheckedExpression.LiteralBoolean _ | CheckedExpression.NewArray _ | CheckedExpression.MethodCall _
+                | CheckedExpression.InstanceFieldAccess _ | CheckedExpression.Local _ | CheckedExpression.ArrayLengthAccess _
+                | CheckedExpression.BinaryOperation _ as expr } ->
             expr.ToString() // add casting syntax?
         | { Expression = CheckedExpression.LiteralSignedInteger _ | CheckedExpression.LiteralUnsignedInteger _ as expr } ->
             match this.Type with
@@ -276,6 +284,8 @@ and [<Sealed>] CheckedField
     member _.InitialValue with get() = initialFieldValue
     member _.TypeNode = fieldTypeNode
 
+and NamedField = Choice<CheckedField, UByte.Resolver.ResolvedField>
+
 and [<Sealed>] CheckedTypeDefinition
     (
         identifier: FullTypeIdentifier,
@@ -324,9 +334,10 @@ type SemanticErrorMessage =
     | InvalidElementType of CheckedType
     | MissingThisParameter
     | MultipleEntryPoints
-    | TypeHasNoMethods of CheckedType
+    | TypeHasNoMembers of CheckedType
+    | UndefinedField of declaringTypeName: FullTypeIdentifier * fieldName: IdentifierNode
     | UndefinedLocal of ParsedIdentifier
-    | UndefinedMethod of FullTypeIdentifier * methodName: IdentifierNode
+    | UndefinedMethod of declaringTypeName: FullTypeIdentifier * methodName: IdentifierNode
     | UndefinedTypeIdentifier of TypeIdentifier
     | UnknownError of message: string
 
@@ -349,7 +360,9 @@ type SemanticErrorMessage =
             ty.ToString() + " is not a valid element type, only value types and reference types are allowed"
         | MissingThisParameter -> "An instance method must contain at least one parameter"
         | MultipleEntryPoints -> "Only one entry point method in a module is allowed"
-        | TypeHasNoMethods ty -> ty.ToString() + " is a type that does not define any methods"
+        | TypeHasNoMembers ty -> ty.ToString() + " is a type that does not define any members"
+        | UndefinedField(declaringTypeName, fieldName) ->
+            "A field named " + fieldName.Content.ToString() + " could not be found in the type " + declaringTypeName.ToString()
         | UndefinedLocal id -> "A local or parameter with the name " + id.ToString() + " does not exist"
         | UndefinedMethod(declaringTypeName, methodName) ->
             "A method named " + methodName.Content.ToString() + " could not be found in the type " + declaringTypeName.ToString()
@@ -789,6 +802,7 @@ module TypeChecker =
     let private checkMethodBodies
         (errors: ImmutableArray<_>.Builder)
         namedTypeLookup
+        (namedFieldLookup: _ -> _ -> NamedField voption)
         (namedMethodLookup: _ -> _ -> NamedMethod voption)
         (methodImportLookup: HashSet<_>)
         (declarations: Dictionary<CheckedTypeDefinition, Dictionary<ParsedIdentifier, CheckedMethod>>)
@@ -879,7 +893,19 @@ module TypeChecker =
                         return! ok (CheckedExpression.ArrayLengthAccess array) (CheckedType.primitive Model.PrimitiveType.UNative)
                     | _, _ ->
                         let! declaringTypeName, declaringTypeDefinition = determineSourceType method expr src
-                        return raise(NotImplementedException "TODO: Field access")
+                        match src with
+                        | Choice2Of2 o ->
+                            match namedFieldLookup declaringTypeDefinition name.Content with
+                            | ValueSome field ->
+                                return!
+                                    match field with
+                                    | Choice1Of2 defined -> defined.FieldType
+                                    | Choice2Of2 imported -> TranslateType.signature imported.DeclaringModule imported.FieldType
+                                    |> ok (CheckedExpression.InstanceFieldAccess(o, field))
+                            | ValueNone ->
+                                return! error name (SemanticErrorMessage.UndefinedField(declaringTypeName, name))
+                        | Choice1Of2 _ ->
+                            return raise(NotImplementedException "TODO: Static field access")
                 }
             | ExpressionNode.Local name ->
                 match localVariableLookup.TryGetValue name.Content with
@@ -939,9 +965,12 @@ module TypeChecker =
                 |> Result.mapError (SemanticError.ofNode errorNode method.DeclaringType.Source)
             | Choice2Of2 inner ->
                 match inner.Type with
-                //| CheckedType.ReferenceType(CheckedReferenceType.Defined)
+                | CheckedType.ReferenceType(CheckedReferenceType.Class named) ->
+                    match named with
+                    | Choice1Of2 defined -> Ok(defined.Identifier, named)
+                    | Choice2Of2 imported -> raise(NotImplementedException "TODO: Allow lookup of FullTypeIdentifier for type import")
                 | bad ->
-                    Error(SemanticError.ofNode inner.Node method.DeclaringType.Source (SemanticErrorMessage.TypeHasNoMethods bad))
+                    Error(SemanticError.ofNode inner.Node method.DeclaringType.Source (SemanticErrorMessage.TypeHasNoMembers bad))
 
         and checkArgumentExpressions method (arguments: ImmutableArray<_>) =
             if arguments.IsDefaultOrEmpty then
@@ -1106,17 +1135,6 @@ module TypeChecker =
         let struct(allDefinedFields, fieldNameLookup, allDefinedMethods, methodNameLookup) =
             findTypeMembers errors declaredTypesLookup
 
-        let namedMethodLookup: NamedType -> ParsedIdentifier -> NamedMethod voption =
-            fun declaringType methodName ->
-                match declaringType with
-                | Choice1Of2 defined ->
-                    match methodNameLookup.[defined].TryGetValue methodName with
-                    | true, method -> ValueSome(Choice1Of2 method)
-                    | false, _ -> ValueNone
-                | Choice2Of2 imported ->
-                    // TODO: Figure out how to allow overloads of imported methods in middlec.
-                    ValueOption.map Choice2Of2 (imported.TryFindMethod(methodName.ToString()))
-
         checkDefinedFields errors anyTypeChecker fieldNameLookup
 
         let mutable entryPointMethod = ValueNone
@@ -1126,7 +1144,28 @@ module TypeChecker =
 
         // The types defined in this module, types of fields, and types of methods have been determined, so analysis of method
         // bodies can begin.
-        checkMethodBodies errors namedTypeLookup namedMethodLookup methodImportLookup methodNameLookup
+        checkMethodBodies
+            errors
+            namedTypeLookup
+            (fun declaringType fieldName ->
+                match declaringType with
+                | Choice1Of2 defined ->
+                    match fieldNameLookup.[defined].TryGetValue fieldName with
+                    | true, field -> ValueSome(Choice1Of2 field)
+                    | false, _ -> ValueNone
+                | Choice2Of2 imported ->
+                    raise(NotImplementedException "TODO: Lookup fields in type imports"))
+            (fun declaringType methodName ->
+                match declaringType with
+                | Choice1Of2 defined ->
+                    match methodNameLookup.[defined].TryGetValue methodName with
+                    | true, method -> ValueSome(Choice1Of2 method)
+                    | false, _ -> ValueNone
+                | Choice2Of2 imported ->
+                    // TODO: Figure out how to allow overloads of imported methods in middlec.
+                    ValueOption.map Choice2Of2 (imported.TryFindMethod(methodName.ToString())))
+            methodImportLookup
+            methodNameLookup
 
         CheckedModule (
             name = Model.Name.ofStr name,

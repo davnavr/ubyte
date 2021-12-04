@@ -351,7 +351,7 @@ let rec private writeExpressionCode
         instructions.Add(InstructionSet.Obj_arr_len(InstructionSet.ArithmeticFlags.None, PrimitiveType.UNative, array.[0]))
         writeOneRegister()
     | _ ->
-        raise(NotImplementedException(sprintf "Code generation is not yet implemented for %O" expression))
+        raise(NotImplementedException(sprintf "Code generation is not yet implemented for %s" (expression.ToString())))
 
 let private writeMethodBodies
     dataIndexLookup
