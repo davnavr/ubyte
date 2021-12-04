@@ -208,6 +208,7 @@ let rec private writeExpressionCode
     (currentTemporaryCount: _ ref)
     dataIndexLookup
     typeSignatureLookup
+    (definedFieldIndices: Dictionary<_, FieldIndex>)
     (importedMethodIndices: Dictionary<_, MethodIndex>)
     (definedMethodIndices: Dictionary<_, MethodIndex>)
     (localRegisterLookup: Dictionary<_, LocalRegister>)
@@ -222,6 +223,7 @@ let rec private writeExpressionCode
             currentTemporaryCount
             dataIndexLookup
             typeSignatureLookup
+            definedFieldIndices
             importedMethodIndices
             definedMethodIndices
             localRegisterLookup
@@ -316,6 +318,18 @@ let rec private writeExpressionCode
         match returnValueCount with
         | 0 -> Array.Empty()
         | _ -> Array.init returnValueCount (fun _ -> nextTemporaryIndex())
+    | CheckedExpression.InstanceFieldAccess(o, field) ->
+        let sources = writeNestedExpression o
+        if sources.Length <> 1 then
+            invalidOp(sprintf "Expected 1 value, but got %i when accessing instance field" sources.Length)
+
+        let findex =
+            match field with
+            | Choice1Of2 defined -> definedFieldIndices.[defined]
+            | Choice2Of2 imported -> raise(NotImplementedException "TODO: Use importedFieldIndices.[imported] to lookup field import")
+
+        instructions.Add(InstructionSet.Obj_fd_ld(findex, sources.[0]))
+        writeOneRegister()
     | CheckedExpression.NewArray(etype, elements) ->
         match etype with
         | CheckedElementType.ValueType(CheckedValueType.Primitive(PrimitiveType.Char32 | PrimitiveType.U32) as vtype) ->
@@ -356,6 +370,7 @@ let rec private writeExpressionCode
 let private writeMethodBodies
     dataIndexLookup
     typeSignatureLookup
+    definedFieldIndices
     importedMethodIndices
     definedMethodIndices
     (methodBodyLookup: Dictionary<CheckedMethod, struct(CodeIndex * ImmutableArray<_>)>) =
@@ -395,6 +410,7 @@ let private writeMethodBodies
             nextTemporaryIndex
             dataIndexLookup
             typeSignatureLookup
+            definedFieldIndices
             importedMethodIndices
             definedMethodIndices
             localRegisterLookup
@@ -613,7 +629,14 @@ let write (mdl: CheckedModule) =
             methodDefinitionLookup
             definedTypeIndices
 
-    let code = writeMethodBodies dataIndexLookup typeSignatureLookup methodImportLookup methodDefinitionLookup methodBodyLookup
+    let code =
+        writeMethodBodies
+            dataIndexLookup
+            typeSignatureLookup
+            fieldDefinitionLookup
+            methodImportLookup
+            methodDefinitionLookup
+            methodBodyLookup
 
     //writeDebugInformation
 
