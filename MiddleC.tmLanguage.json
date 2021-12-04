@@ -146,10 +146,13 @@
           ]
         },
         {
-          "begin": "\\b(constructor)\\s+",
+          "begin": "\\b(constructor)\\s+((public|private)\\s*)*\\s*",
           "beginCaptures": {
             "1": {
               "name": "storage.type.function.middlec"
+            },
+            "3": {
+              "name": "storage.modifier.middlec"
             }
           },
           "end": "\\}",

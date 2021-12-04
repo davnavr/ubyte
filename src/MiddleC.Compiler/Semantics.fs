@@ -319,6 +319,7 @@ and [<Sealed>] CheckedConstructor
     (
         owner: CheckedTypeDefinition,
         node: ParsedNode<TypeMemberNode>,
+        attributeNodes: ParsedNodeArray<ConstructorAttributeNode>,
         parameterNodes: ImmutableArray<IdentifierNode * ParsedNode<AnyTypeNode>>,
         bodyNode: ParsedNodeArray<StatementNode>
     )
@@ -331,6 +332,7 @@ and [<Sealed>] CheckedConstructor
 
     member _.DeclaringType = owner
     member _.Visibility with get() = visibility and set value = visibility <- value
+    member _.AttributeNodes = attributeNodes
     member _.ParameterNodes = parameterNodes
 
     member _.Parameters
@@ -748,8 +750,8 @@ module TypeChecker =
                     fields.Add(name.Content, field) // TODO: Return an error if add fails.
                     definedTypeFields.Add field
                     allDefinedFields.Add field
-                | TypeMemberNode.ConstructorDeclaration(parameters, body) ->
-                    let ctor = CheckedConstructor(ty, node, parameters, body)
+                | TypeMemberNode.ConstructorDeclaration(attributes, parameters, body) ->
+                    let ctor = CheckedConstructor(ty, node, attributes, parameters, body)
                     definedTypeConstructors.Add ctor
                     allDefinedConstructors.Add ctor
 
@@ -877,6 +879,13 @@ module TypeChecker =
 
         for definedConstructors in declarations.Values do
             for constructor in definedConstructors do
+                for attr in constructor.AttributeNodes do
+                    match attr.Content with
+                    | ConstructorAttributeNode.Public ->
+                         constructor.Visibility <- Model.VisibilityFlags.Public
+                    | ConstructorAttributeNode.Private ->
+                         constructor.Visibility <- Model.VisibilityFlags.Private
+
                 parameters.Clear()
                 parameterNameLookup.Clear()
 

@@ -4,7 +4,7 @@ namespace Coremdl {
 type Exception {
     field message private ^String32;
 
-    constructor (ex ^Exception, message ^String32) {
+    constructor public (ex ^Exception, message ^String32) {
         ex.message <- message;
     }
 

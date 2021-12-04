@@ -144,6 +144,11 @@ type FieldAttributeNode =
     | Static
 
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
+type ConstructorAttributeNode =
+    | Public
+    | Private
+
+[<RequireQualifiedAccess; NoComparison; NoEquality>]
 type MethodBodyNode =
     | Defined of ParsedNodeArray<StatementNode>
     | External of ParsedNode<string> * library: ParsedNode<string>
@@ -156,8 +161,8 @@ type TypeMemberNode =
         parameters: ImmutableArray<IdentifierNode * ParsedNode<AnyTypeNode>> * returnTypes: ParsedNodeArray<AnyTypeNode> *
         body: MethodBodyNode
     //| InitializerDeclaration of body: ParsedNodeArray<StatementNode>
-    | ConstructorDeclaration of parameters: ImmutableArray<IdentifierNode * ParsedNode<AnyTypeNode>> *
-        body: ParsedNodeArray<StatementNode>
+    | ConstructorDeclaration of attributes: ParsedNodeArray<ConstructorAttributeNode> *
+        parameters: ImmutableArray<IdentifierNode * ParsedNode<AnyTypeNode>> * body: ParsedNodeArray<StatementNode>
     //| NestedType of 
 
 [<RequireQualifiedAccess; NoComparison; NoEquality>]

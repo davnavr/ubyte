@@ -206,12 +206,13 @@ type MethodAttributeNode =
     | Virtual
 
 [<RequireQualifiedAccess>]
-type MethodBodyNode =
-    | Defined of ParsedNodeArray<StatementNode>
-    | External of ParsedNode<string> * library: ParsedNode<string>
+type MethodBodyNode = | Defined of ParsedNodeArray<StatementNode> | External of ParsedNode<string> * library: ParsedNode<string>
 
 [<RequireQualifiedAccess>]
 type FieldAttributeNode = | Mutable | Private | Static
+
+[<RequireQualifiedAccess>]
+type ConstructorAttributeNode = | Public | Private
 
 [<RequireQualifiedAccess>]
 type TypeMemberNode =
@@ -220,8 +221,8 @@ type TypeMemberNode =
     | MethodDeclaration of name: IdentifierNode * attributes: ParsedNodeArray<MethodAttributeNode> *
         parameters: ImmutableArray<IdentifierNode * ParsedNode<AnyTypeNode>> * returnTypes: ParsedNodeArray<AnyTypeNode> *
         body: MethodBodyNode
-    | ConstructorDeclaration of parameters: ImmutableArray<IdentifierNode * ParsedNode<AnyTypeNode>> *
-        body: ParsedNodeArray<StatementNode>
+    | ConstructorDeclaration of attributes: ParsedNodeArray<ConstructorAttributeNode> *
+        parameters: ImmutableArray<IdentifierNode * ParsedNode<AnyTypeNode>> * body: ParsedNodeArray<StatementNode>
 
 [<RequireQualifiedAccess>]
 type TopLevelNode =
@@ -663,7 +664,13 @@ module Parse =
 
                 skipString "constructor"
                 >>. whitespace
-                >>. tuple2 (methodParameterNodes .>> whitespace) block
+                >>. tuple3
+                    (attributes [|
+                        "public", ConstructorAttributeNode.Public
+                        "private", ConstructorAttributeNode.Private
+                    |])
+                    (whitespace >>. methodParameterNodes .>> whitespace)
+                    block
                 |>> TypeMemberNode.ConstructorDeclaration
             |]
         .>> whitespace
