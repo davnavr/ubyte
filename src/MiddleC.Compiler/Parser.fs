@@ -220,6 +220,8 @@ type TypeMemberNode =
     | MethodDeclaration of name: IdentifierNode * attributes: ParsedNodeArray<MethodAttributeNode> *
         parameters: ImmutableArray<IdentifierNode * ParsedNode<AnyTypeNode>> * returnTypes: ParsedNodeArray<AnyTypeNode> *
         body: MethodBodyNode
+    | ConstructorDeclaration of parameters: ImmutableArray<IdentifierNode * ParsedNode<AnyTypeNode>> *
+        body: ParsedNodeArray<StatementNode>
 
 [<RequireQualifiedAccess>]
 type TopLevelNode =
@@ -532,7 +534,7 @@ module Parse =
             ".",
             memberAccessAfterString,
             200,
-            false,
+            true,
             (),
             (fun access x -> access x)
         )
@@ -542,8 +544,7 @@ module Parse =
     let private block, private blockRef : Parser<ParsedNodeArray<StatementNode>, unit> * _ = createParserForwardedToRef()
 
     let private statement : Parser<ParsedNode<StatementNode>, _> =
-        whitespace
-        >>. choice
+        choice
             [|
                 let elseIfBlock =
                     skipString "elif"
@@ -593,7 +594,7 @@ module Parse =
         .>> whitespace
         |> withNodeContent
 
-    blockRef.Value <- betweenCurlyBrackets(CollectionParsers.ImmutableArray.many statement)
+    blockRef.Value <- betweenCurlyBrackets(whitespace >>. CollectionParsers.ImmutableArray.many statement)
 
     let private typeMemberNode : Parser<ParsedNode<TypeMemberNode>, unit> =
         let methodParameterNodes =
@@ -660,14 +661,10 @@ module Parse =
 
                 //skipString "initializer" >>. whitespace >>. block |>> TypeMemberNode.Initializer
 
-                //skipString "constructor"
-                //>>. whitespace
-                //>>. tuple3
-                //    (attributes [|
-                //    |])
-                //    (whitespace >>. methodParameterNodes .>> whitespace)
-                //    block
-                //|>> TypeMemberNode.Constructor
+                skipString "constructor"
+                >>. whitespace
+                >>. tuple2 (methodParameterNodes .>> whitespace) block
+                |>> TypeMemberNode.ConstructorDeclaration
             |]
         .>> whitespace
         |> withNodeContent

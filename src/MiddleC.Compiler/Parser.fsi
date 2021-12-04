@@ -156,7 +156,8 @@ type TypeMemberNode =
         parameters: ImmutableArray<IdentifierNode * ParsedNode<AnyTypeNode>> * returnTypes: ParsedNodeArray<AnyTypeNode> *
         body: MethodBodyNode
     //| InitializerDeclaration of body: ParsedNodeArray<StatementNode>
-    //| ConstructorDeclaration of parameters: ParsedNodeArray<ParameterNode> * body: ParsedNodeArray<StatementNode>
+    | ConstructorDeclaration of parameters: ImmutableArray<IdentifierNode * ParsedNode<AnyTypeNode>> *
+        body: ParsedNodeArray<StatementNode>
     //| NestedType of 
 
 [<RequireQualifiedAccess; NoComparison; NoEquality>]

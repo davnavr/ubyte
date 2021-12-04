@@ -146,6 +146,23 @@
           ]
         },
         {
+          "begin": "\\b(constructor)\\s+",
+          "beginCaptures": {
+            "1": {
+              "name": "storage.type.function.middlec"
+            }
+          },
+          "end": "\\}",
+          "patterns": [
+            {
+              "include": "#method-parameters"
+            },
+            {
+              "include": "#block"
+            }
+          ]
+        },
+        {
           "begin": "\\b(field)\\s+([a-zA-Z0-9]\\w*)(\\s+(public|private|mutable|static))*",
           "beginCaptures": {
             "1": {

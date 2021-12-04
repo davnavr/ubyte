@@ -4,8 +4,12 @@ namespace Coremdl {
 type String32 {
     field chars private char32[];
 
-    method Count public () -> (u32) {
-        return 0;
+    method Count public (str ^String32) -> (u32) {
+        return str.chars.length;
+    }
+
+    constructor (content char32[]) {
+        ;
     }
 }
 
