@@ -123,7 +123,7 @@ and [<Interface>] internal ICheckedMethod =
     abstract DeclaringType : CheckedTypeDefinition
     abstract Parameters : ImmutableArray<CheckedParameter>
     abstract BodyNode : MethodBodyNode
-    abstract SetBody : CheckedMethodBody -> unit
+    abstract Body : CheckedMethodBody with get, set
     abstract ReturnTypes : ImmutableArray<CheckedType>
 
 and [<Sealed; DebuggerDisplay("{ToString()}")>] CheckedMethod =
@@ -186,6 +186,7 @@ type CheckedMethod with
     member Body : CheckedMethodBody
 
 type CheckedConstructor with
+    member Signature : CheckedMethodSignature
     member Body : CheckedMethodBody
 
 type CheckedTypeDefinition with

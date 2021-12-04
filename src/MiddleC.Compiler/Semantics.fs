@@ -231,7 +231,7 @@ and [<RequireQualifiedAccess; Struct; NoComparison; StructuralEquality>] Checked
 and [<Interface>] ICheckedMethod =
     abstract DeclaringType : CheckedTypeDefinition
     abstract Parameters : ImmutableArray<CheckedParameter>
-    abstract SetBody : CheckedMethodBody -> unit
+    abstract Body : CheckedMethodBody with get, set
     abstract BodyNode : MethodBodyNode
     abstract ReturnTypes : ImmutableArray<CheckedType>
 
@@ -267,8 +267,12 @@ and [<Sealed>] CheckedMethod
             parameters <- value
             parameterTypes <- ImmutableArray.CreateRange(Seq.map (fun { CheckedParameter.Type = ty } -> ty) parameters)
 
+    member _.Signature =
+        { CheckedMethodSignature.ReturnTypes = returns
+          CheckedMethodSignature.ParameterTypes = parameterTypes }
+
+
     member _.ReturnTypes with get() = returns and set value = returns <- value
-    member _.Signature = { CheckedMethodSignature.ReturnTypes = returns; CheckedMethodSignature.ParameterTypes = parameterTypes }
     member _.Body with get() = body and set value = body <- value // TODO: Make available dictionary of all locals.
 
     override this.ToString() =
@@ -282,7 +286,7 @@ and [<Sealed>] CheckedMethod
         member _.DeclaringType = owner
         member _.Parameters = parameters
         member _.BodyNode = methodBodyNode
-        member method.SetBody body = method.Body <- body
+        member method.Body with get() = method.Body and set body = method.Body <- body
         member _.ReturnTypes = returns
 
 and NamedMethod = Choice<CheckedMethod, UByte.Resolver.ResolvedMethod>
@@ -321,13 +325,24 @@ and [<Sealed>] CheckedConstructor
     =
     let mutable visibility = Model.VisibilityFlags.Unspecified
     let mutable parameters = ImmutableArray<CheckedParameter>.Empty
+    let mutable parameterTypes = ImmutableArray<CheckedType>.Empty
     let mutable body = Unchecked.defaultof<CheckedMethodBody>
     let translatedBodyNode = MethodBodyNode.Defined bodyNode
 
     member _.DeclaringType = owner
     member _.Visibility with get() = visibility and set value = visibility <- value
     member _.ParameterNodes = parameterNodes
-    member _.Parameters with get() = parameters and set value = parameters <- value
+
+    member _.Parameters
+        with get() = parameters
+        and set value =
+            parameters <- value
+            parameterTypes <- ImmutableArray.CreateRange(Seq.map (fun { CheckedParameter.Type = ty } -> ty) parameters)
+
+    member _.Signature =
+        { CheckedMethodSignature.ReturnTypes = ImmutableArray.Empty
+          CheckedMethodSignature.ParameterTypes = parameterTypes }
+
     member _.BodyNode = bodyNode
     member _.Body with get() = body and set value = body <- value
     member _.Node = node
@@ -335,7 +350,7 @@ and [<Sealed>] CheckedConstructor
     interface ICheckedMethod with
         member _.DeclaringType = owner
         member _.Parameters = parameters
-        member constructor.SetBody body = constructor.Body <- body
+        member constructor.Body with get() = constructor.Body and set body = constructor.Body <- body
         member _.BodyNode = translatedBodyNode
         member _.ReturnTypes = ImmutableArray.Empty
 
@@ -1222,7 +1237,7 @@ module TypeChecker =
                         (DuplicateLocalDeclaration name)
                     |> errors.Add
 
-            method.SetBody <|
+            method.Body <-
                 match method.BodyNode with
                 | MethodBodyNode.Defined nodes ->
                     //match checkBlockNodes method statements nodes with

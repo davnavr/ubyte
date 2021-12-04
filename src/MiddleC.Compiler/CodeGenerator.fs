@@ -127,14 +127,27 @@ let private writeMethodDefinitions
     (definedTypeIndices: Dictionary<_, TypeDefinitionIndex>)
     methodImportCount
     (methods: ImmutableArray<CheckedMethod>)
+    (constructors: ImmutableArray<CheckedConstructor>)
     =
-    let mutable definitions = Array.zeroCreate methods.Length
-    let indices = Dictionary<_, MethodIndex>(capacity = methods.Length)
-    let bodies = Dictionary<_, struct(CodeIndex * _)>(capacity = methods.Length)
+    let mutable definitions = Array.zeroCreate(methods.Length + constructors.Length)
+    let indices = Dictionary<ICheckedMethod, MethodIndex>(capacity = definitions.Length)
+    let bodies = Dictionary<ICheckedMethod, struct(CodeIndex * _)>(capacity = definitions.Length)
 
-    for i = 0 to definitions.Length - 1 do
-        let method = methods.[i]
+    let inline addMethodIndex (method: #ICheckedMethod) i =
         indices.Add(method, MethodIndex.Index(uint32 methodImportCount + uint32 i))
+
+    let defineMethodBody (method: #ICheckedMethod) =
+        match method.Body with
+        | CheckedMethodBody.Defined statements ->
+            let cindex = CodeIndex.Index(uint32 bodies.Count)
+            bodies.Add(method :> ICheckedMethod, struct(cindex, statements))
+            MethodBody.Defined cindex
+        | CheckedMethodBody.External(name, library) ->
+            MethodBody.External(identifierIndexLookup library, identifierIndexLookup name)
+
+    for i = 0 to methods.Length - 1 do
+        let method = methods.[i]
+        addMethodIndex method i
         definitions.[i] <-
             { Method.MethodOwner = definedTypeIndices.[method.DeclaringType]
               Method.MethodName = identifierIndexLookup(method.Name.Content.ToString())
@@ -143,14 +156,20 @@ let private writeMethodDefinitions
               Method.TypeParameters = ImmutableArray.Empty
               Method.Signature = methodSignatureLookup method.Signature
               Method.MethodAnnotations = ImmutableArray.Empty
-              Method.Body =
-                match method.Body with
-                | CheckedMethodBody.Defined statements ->
-                    let cindex = CodeIndex.Index(uint32 bodies.Count)
-                    bodies.Add(method, struct(cindex, statements))
-                    MethodBody.Defined cindex
-                | CheckedMethodBody.External(name, library) ->
-                    MethodBody.External(identifierIndexLookup library, identifierIndexLookup name) }
+              Method.Body = defineMethodBody method }
+
+    for i = 0 to constructors.Length - 1 do
+        let ctor = constructors.[i]
+        addMethodIndex ctor (uint32 methods.Length + uint32 i)
+        definitions.[methods.Length + i] <-
+            { Method.MethodOwner = definedTypeIndices.[ctor.DeclaringType]
+              Method.MethodName = identifierIndexLookup String.Empty
+              Method.MethodVisibility = ctor.Visibility
+              Method.MethodFlags = MethodFlags.ConstructorMask
+              Method.TypeParameters = ImmutableArray.Empty
+              Method.Signature = methodSignatureLookup ctor.Signature
+              Method.MethodAnnotations = ImmutableArray.Empty
+              Method.Body = defineMethodBody ctor }
 
     struct(Unsafe.As<Method[], ImmutableArray<Method>> &definitions, indices, bodies)
 
@@ -158,7 +177,7 @@ let private writeTypeDefinitions
     identifierIndexLookup
     fullNamespaceLookup
     (typeImportLookup: Dictionary<_, _>)
-    (methodDefinitionLookup: Dictionary<_, MethodIndex>)
+    (methodDefinitionLookup: Dictionary<ICheckedMethod, MethodIndex>)
     (types: Dictionary<CheckedTypeDefinition, TypeDefinitionIndex>)
     =
     let mutable definitions = Array.zeroCreate types.Count
@@ -210,7 +229,7 @@ let rec private writeExpressionCode
     typeSignatureLookup
     (definedFieldIndices: Dictionary<_, FieldIndex>)
     (importedMethodIndices: Dictionary<_, MethodIndex>)
-    (definedMethodIndices: Dictionary<_, MethodIndex>)
+    (definedMethodIndices: Dictionary<ICheckedMethod, MethodIndex>)
     (localRegisterLookup: Dictionary<_, LocalRegister>)
     (instructions: ImmutableArray<_>.Builder)
     (expression: TypedExpression)
@@ -372,8 +391,8 @@ let private writeMethodBodies
     typeSignatureLookup
     definedFieldIndices
     importedMethodIndices
-    definedMethodIndices
-    (methodBodyLookup: Dictionary<CheckedMethod, struct(CodeIndex * ImmutableArray<_>)>) =
+    (definedMethodIndices: Dictionary<ICheckedMethod, MethodIndex>)
+    (methodBodyLookup: Dictionary<ICheckedMethod, struct(CodeIndex * ImmutableArray<_>)>) =
     let mutable bodies = Array.zeroCreate methodBodyLookup.Count
 
     /// A lookup table for local and argument registers.
@@ -417,7 +436,7 @@ let private writeMethodBodies
             instructions
             expression
 
-    let rec writeBlockCode (method: CheckedMethod) (statements: ImmutableArray<_>) =
+    let rec writeBlockCode (method: ICheckedMethod) (statements: ImmutableArray<_>) =
         for statement in statements do
             match statement with
             | CheckedStatement.Expression value ->
@@ -613,6 +632,7 @@ let write (mdl: CheckedModule) =
             0 //importedFieldDefinitions.Length
             mdl.DefinedFields
 
+    // Generate methods from middlec method definitions, constructors //, and initializers
     let struct(declaredMethodDefinitions, methodDefinitionLookup, methodBodyLookup) =
         writeMethodDefinitions
             identifierIndexLookup
@@ -620,6 +640,8 @@ let write (mdl: CheckedModule) =
             definedTypeIndices
             importedMethodDefinitions.Length
             mdl.DefinedMethods
+            mdl.DefinedConstructors
+            //mdl.DefinedInitializers
 
     let declaredTypeDefinitions =
         writeTypeDefinitions
