@@ -400,7 +400,7 @@ module Parse =
             { node with Content = mapping node }
 
         let inline postfixTypeModifier symbol afterStringParser precedence mapping =
-            PostfixOperator<_, unit, unit> (
+            PostfixOperator<_, _, unit> (
                 symbol,
                 afterStringParser,
                 precedence,
@@ -410,7 +410,18 @@ module Parse =
             |> parser.AddOperator
 
         postfixTypeModifier "[]" whitespace 1 (typeNodeMapping AnyTypeNode.Array)
-        postfixTypeModifier "^" whitespace 1 (typeNodeMapping AnyTypeNode.ObjectReference)
+
+        let inline prefixTypeModifier symbol afterStringParser precedence mapping =
+            PrefixOperator<_, _, unit> (
+                symbol,
+                afterStringParser,
+                precedence,
+                true,
+                mapping
+            )
+            |> parser.AddOperator
+
+        prefixTypeModifier "^" whitespace 1 (typeNodeMapping AnyTypeNode.ObjectReference)
 
         parser.ExpressionParser
 

@@ -98,10 +98,33 @@ let private assignDefinedTypeIndices typeImportCount (types: ImmutableArray<Chec
         lookup.Add(types.[i], TypeDefinitionIndex.Index(uint32 typeImportCount + uint32 i))
     lookup
 
+let private writeFieldDefinitions
+    identifierIndexLookup
+    typeSignatureLookup
+    (definedTypeIndices: Dictionary<_, TypeDefinitionIndex>)
+    fieldImportCount
+    (fields: ImmutableArray<CheckedField>)
+    =
+    let mutable definitions = Array.zeroCreate fields.Length
+    let indices = Dictionary<_, FieldIndex>(capacity = fields.Length)
+
+    for i = 0 to definitions.Length - 1 do
+        let field = fields.[i]
+        indices.Add(field, FieldIndex.Index(uint32 fieldImportCount + uint32 i))
+        definitions.[i] <-
+            { Field.FieldOwner = definedTypeIndices.[field.DeclaringType]
+              Field.FieldName = identifierIndexLookup(field.Name.Content.ToString())
+              Field.FieldVisibility = field.Visibility
+              Field.FieldFlags = field.Flags
+              Field.FieldType = typeSignatureLookup field.FieldType
+              FieldAnnotations = ImmutableArray.Empty }
+
+    struct(Unsafe.As<Field[], ImmutableArray<Field>> &definitions, indices)
+
 let private writeMethodDefinitions
     identifierIndexLookup
     methodSignatureLookup
-    (definedTypeIndices: Dictionary<_, _>)
+    (definedTypeIndices: Dictionary<_, TypeDefinitionIndex>)
     methodImportCount
     (methods: ImmutableArray<CheckedMethod>)
     =
@@ -514,20 +537,29 @@ let write (mdl: CheckedModule) =
     let struct (data, dataIndexLookup: ImmutableArray<byte> -> DataIndex) =
         createIndexedLookup EqualityComparer.Default id
 
-    let mutable mapElementType = Unchecked.defaultof<_>
+    let struct(importedTypeDefinitions, typeImportLookup) =
+        writeTypeImports identifierIndexLookup namespaceIndexLookup moduleImportLookup mdl.ImportedTypes
 
-    let mapReferenceType rtype =
-        match rtype with
-        | CheckedReferenceType.Any -> ReferenceType.Any
-        | CheckedReferenceType.Array etype -> ReferenceType.Vector(mapElementType etype)
+    let definedTypeIndices = assignDefinedTypeIndices importedTypeDefinitions.Length mdl.DefinedTypes
 
-    mapElementType <-
+    // Since all type indices have been assigned, translation of types is safe.
+    let rec mapElementType =
         // TODO: Cache element types.
         function
         | CheckedElementType.ValueType(CheckedValueType.Primitive prim) ->
             ReferenceOrValueType.Value(ValueType.Primitive prim)
         | CheckedElementType.ReferenceType rtype ->
             ReferenceOrValueType.Reference(mapReferenceType rtype)
+
+    and mapReferenceType rtype =
+        match rtype with
+        | CheckedReferenceType.Any -> ReferenceType.Any
+        | CheckedReferenceType.Array etype -> ReferenceType.Vector(mapElementType etype)
+        | CheckedReferenceType.Class named ->
+            match named with
+            | Choice1Of2 defined -> definedTypeIndices.[defined]
+            | Choice2Of2 imported -> typeImportLookup.[imported]
+            |> ReferenceType.Defined
 
     let struct(tsignatures, typeSignatureLookup: CheckedType -> TypeSignatureIndex) =
         createIndexedLookup
@@ -552,13 +584,18 @@ let write (mdl: CheckedModule) =
                 { MethodSignature.ReturnTypes = getSignatureArray signature.ReturnTypes
                   MethodSignature.ParameterTypes = getSignatureArray signature.ParameterTypes })
 
-    let struct(importedTypeDefinitions, typeImportLookup) =
-        writeTypeImports identifierIndexLookup namespaceIndexLookup moduleImportLookup mdl.ImportedTypes
+    //    writeFieldImports
 
     let struct(importedMethodDefinitions, methodImportLookup) =
         writeMethodImports identifierIndexLookup methodSignatureLookup typeImportLookup TypeChecker.TranslateType.signature mdl.ImportedMethods
 
-    let definedTypeIndices = assignDefinedTypeIndices importedTypeDefinitions.Length mdl.DefinedTypes
+    let struct(declaredFieldDefinitions, fieldDefinitionLookup) =
+        writeFieldDefinitions
+            identifierIndexLookup
+            typeSignatureLookup
+            definedTypeIndices
+            0 //importedFieldDefinitions.Length
+            mdl.DefinedFields
 
     let struct(declaredMethodDefinitions, methodDefinitionLookup, methodBodyLookup) =
         writeMethodDefinitions
@@ -597,7 +634,7 @@ let write (mdl: CheckedModule) =
           ModuleImports.ImportedMethods = importedMethodDefinitions }
       Module.Definitions =
         { ModuleDefinitions.DefinedTypes = declaredTypeDefinitions
-          ModuleDefinitions.DefinedFields = ImmutableArray.Empty
+          ModuleDefinitions.DefinedFields = declaredFieldDefinitions
           ModuleDefinitions.DefinedMethods = declaredMethodDefinitions }
       Module.Data = data.ToImmutable()
       Module.Code = code

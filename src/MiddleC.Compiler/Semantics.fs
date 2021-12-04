@@ -258,7 +258,8 @@ and [<Sealed>] CheckedField
     (
         owner: CheckedTypeDefinition,
         name: IdentifierNode,
-        attributes: ParsedNodeArray<FieldAttributeNode>
+        attributes: ParsedNodeArray<FieldAttributeNode>,
+        fieldTypeNode: ParsedNode<AnyTypeNode>
     )
     =
     let mutable flags = Unchecked.defaultof<Model.FieldFlags>
@@ -273,6 +274,7 @@ and [<Sealed>] CheckedField
     member _.Visibility with get() = visibility and set value = visibility <- value
     member _.FieldType with get() = fieldValueType and set value = fieldValueType <- value
     member _.InitialValue with get() = initialFieldValue
+    member _.TypeNode = fieldTypeNode
 
 and [<Sealed>] CheckedTypeDefinition
     (
@@ -576,10 +578,8 @@ module TypeChecker =
                 }
             | AnyTypeNode.ObjectReference({ Content = AnyTypeNode.Defined referencedClassName }) ->
                 match findNamedType namedTypeLookup namespaces referencedClassName.Content with
-                | Ok(_, foundNamedClass) ->
-                    failwith "A"
-                | Error message ->
-                    Error(SemanticError.ofNode referencedClassName source message)
+                | Ok(_, foundNamedClass) -> Ok(CheckedType.ReferenceType(CheckedReferenceType.Class foundNamedClass))
+                | Error message -> Error(SemanticError.ofNode referencedClassName source message)
             | AnyTypeNode.ObjectReference bad ->
                 raise(NotImplementedException(sprintf "TODO: Handle object reference to %O" bad.Content))
             | AnyTypeNode.Defined _ ->
@@ -650,7 +650,7 @@ module TypeChecker =
                     allDefinedMethods.Add method
                 | TypeMemberNode.FieldDeclaration(name, attributes, fieldType, initialValue) ->
                     if initialValue.IsSome then raise(NotImplementedException "Fields with initial values are not yet supported")
-                    let field = CheckedField(ty, name, attributes)
+                    let field = CheckedField(ty, name, attributes, fieldType)
                     fields.Add(name.Content, field)
                     definedTypeFields.Add field
                     allDefinedFields.Add field
@@ -662,6 +662,19 @@ module TypeChecker =
             definedTypeFields.Clear()
 
         struct(allDefinedFields, fieldNameLookup, allDefinedMethods, methodNameLookup)
+
+    let private checkDefinedFields
+        (errors: ImmutableArray<_>.Builder)
+        (anyTypeChecker: _ -> ImmutableArray<FullNamespaceName> -> _ -> _)
+        (declarations: Dictionary<CheckedTypeDefinition, Dictionary<ParsedIdentifier, CheckedField>>)
+        =
+        for definedFields in declarations.Values do
+            for field in definedFields.Values do
+                // TODO:Check field flags
+
+                match anyTypeChecker field.DeclaringType.Source field.DeclaringType.UsedNamespaces field.TypeNode with
+                | Ok ftype -> field.FieldType <- ftype
+                | Error err -> errors.Add err
 
     let private checkDefinedMethods
         (errors: ImmutableArray<_>.Builder)
@@ -1096,6 +1109,8 @@ module TypeChecker =
                 | Choice2Of2 imported ->
                     // TODO: Figure out how to allow overloads of imported methods in middlec.
                     ValueOption.map Choice2Of2 (imported.TryFindMethod(methodName.ToString()))
+
+        checkDefinedFields errors anyTypeChecker fieldNameLookup
 
         let mutable entryPointMethod = ValueNone
         checkDefinedMethods errors anyTypeChecker methodNameLookup &entryPointMethod
