@@ -221,6 +221,14 @@ let private updateRegisterIndices currentTemporaryCount oldTemporaryCount (regis
             let (Index value) = registers.[i]
             if value > oldTemporaryCount then registers.[i] <- RegisterIndex.Index(diff + value)
 
+let lookupNamedField
+    (definedFieldIndices: Dictionary<_, FieldIndex>)
+    (field: NamedField)
+    =
+    match field with
+    | Choice1Of2 defined -> definedFieldIndices.[defined]
+    | Choice2Of2 imported -> raise(NotImplementedException "TODO: Use importedFieldIndices.[imported] to lookup field import")
+
 /// Generates the corresponding byte code for a given expression.
 let rec private writeExpressionCode
     nextTemporaryIndex
@@ -277,7 +285,8 @@ let rec private writeExpressionCode
             raise(NotImplementedException(sprintf "Cannot generate integer literal of type %O" expression.Type))
     | CheckedExpression.BinaryOperation(BinaryOperation.Assignment, destination, source) ->
         let values = writeNestedExpression source
-        if values.Length <> 1 then invalidOp "Attempt to store multiple values"
+        if values.Length <> 1 then
+            invalidOp(sprintf "Attempt to store %i values in an assignment statement" values.Length)
 
         match destination.Expression with
         | CheckedExpression.Local id ->
@@ -289,6 +298,10 @@ let rec private writeExpressionCode
                 typeSignatureLookup dest.Type,
                 dest.Index()
             )
+        | CheckedExpression.InstanceFieldAccess(source, field) ->
+            let o = writeNestedExpression source
+            if o.Length <> 1 then invalidOp(sprintf "Attempted to into the instance field of %i values" o.Length)
+            InstructionSet.Obj_fd_st(lookupNamedField definedFieldIndices field, o.[0], values.[0])
         | _ ->
             invalidOp(sprintf "Invalid assignment destination %O" destination)
         |> instructions.Add
@@ -345,12 +358,7 @@ let rec private writeExpressionCode
         if sources.Length <> 1 then
             invalidOp(sprintf "Expected 1 value, but got %i when accessing instance field" sources.Length)
 
-        let findex =
-            match field with
-            | Choice1Of2 defined -> definedFieldIndices.[defined]
-            | Choice2Of2 imported -> raise(NotImplementedException "TODO: Use importedFieldIndices.[imported] to lookup field import")
-
-        instructions.Add(InstructionSet.Obj_fd_ld(findex, sources.[0]))
+        instructions.Add(InstructionSet.Obj_fd_ld(lookupNamedField definedFieldIndices field, sources.[0]))
         writeOneRegister()
     | CheckedExpression.NewArray(etype, elements) ->
         match etype with

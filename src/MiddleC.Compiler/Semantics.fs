@@ -1061,6 +1061,7 @@ module TypeChecker =
                     // TODO: Check that the type of arguments are correct, some shift operators may expect a certain integer type for an argument.
                     return!
                         match op with
+                        | BinaryOperation.Assignment -> CheckedType.Void
                         | BinaryOperation.LessThan | BinaryOperation.LessThanOrEqual
                         | BinaryOperation.GreaterThan | BinaryOperation.GreaterThanOrEqual
                         | BinaryOperation.IsEqual | BinaryOperation.IsNotEqual ->

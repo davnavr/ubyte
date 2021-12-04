@@ -4,6 +4,10 @@ namespace Coremdl {
 type Exception {
     field message private ^String32;
 
+    constructor (ex ^Exception, message ^String32) {
+        ex.message <- message;
+    }
+
     method Message instance (ex ^Exception) -> (^String32) {
         return ex.message;
     }
