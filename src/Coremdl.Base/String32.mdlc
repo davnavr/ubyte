@@ -9,7 +9,7 @@ type String32 {
     }
 
     constructor public (str ^String32, content char32[]) {
-        //str.chars <- new char32[content.length];
+        str.chars <- new char32[](content.length);
         //var index s32 = 0;
         //while (index < content.length) {
         //    str.chars[index] <- content[index];

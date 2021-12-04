@@ -113,7 +113,7 @@ and [<RequireQualifiedAccess>] CheckedExpression =
     | LiteralUnsignedInteger of uint64
     | Local of name: ParsedIdentifier
     | MethodCall of method: NamedMethod * arguments: ImmutableArray<TypedExpression>
-    | NewArray of CheckedElementType * elements: ImmutableArray<TypedExpression>
+    | NewArray of CheckedElementType * contents: CheckedArrayContents
     | NewObject of constructor: NamedConstructor * arguments: ImmutableArray<TypedExpression>
     //| Nothing
 
@@ -138,9 +138,17 @@ and [<RequireQualifiedAccess>] CheckedExpression =
                 | Choice2Of2 imported -> imported.ToString()
 
             System.Text.StringBuilder(methodName).Append('(').AppendJoin(", ", arguments).Append(')').ToString()
-        | NewArray(etype, elements) ->
-            System.Text.StringBuilder("new ").Append(etype.ToString()).Append("[] { ").AppendJoin(", ", elements).Append(" }")
-                .ToString()
+        | NewArray(etype, contents) ->
+            let sb = System.Text.StringBuilder("new ").Append(etype.ToString()).Append("[]")
+
+            match contents with
+            | CheckedArrayContents.Elements elements ->
+                sb.Append(" {").AppendJoin(", ", elements).Append(" }")
+            | CheckedArrayContents.Empty length ->
+                sb.Append('(').Append(length.ToString()).Append(')')
+            |> ignore
+
+            sb.ToString()
         | NewObject(constructor, arguments) ->
             let sb = System.Text.StringBuilder("new ")
 
@@ -152,6 +160,10 @@ and [<RequireQualifiedAccess>] CheckedExpression =
 
             sb.Append('(').AppendJoin(", ", arguments).Append(')').ToString()
         //| Nothing -> "()"
+
+and [<RequireQualifiedAccess>] CheckedArrayContents =
+    | Empty of length: TypedExpression
+    | Elements of elements: ImmutableArray<TypedExpression>
 
 and TypedExpression =
     { Expression: CheckedExpression
@@ -515,6 +527,11 @@ module CheckedElementType =
             primitives.[ptype] <- ty
             ty
 
+    let toType etype =
+        match etype with
+        | CheckedElementType.ReferenceType rtype -> CheckedType.ReferenceType rtype
+        | CheckedElementType.ValueType vtype -> CheckedType.ValueType vtype
+
 [<RequireQualifiedAccess>]
 module SemanticError =
     let ofNode (node: ParsedNode<_>) source message =
@@ -678,6 +695,15 @@ module TypeChecker =
                 raise(NotImplementedException "Struct types are not yet supported")
 
         inner
+
+    let private expectElementType node source atype =
+        match atype with
+        | CheckedType.ReferenceType rtype -> Ok(CheckedElementType.ReferenceType rtype)
+        | CheckedType.ValueType vtype -> Ok(CheckedElementType.ValueType vtype)
+        | CheckedType.Void ->
+            SemanticErrorMessage.InvalidElementType atype
+            |> SemanticError.ofNode node source
+            |> Error
 
     let private checkTypeAttributes errors (declarations: Dictionary<FullTypeIdentifier, _>) namedTypeLookup =
         let inheritedTypeBuilder = ImmutableArray.CreateBuilder<NamedType>()
@@ -981,10 +1007,30 @@ module TypeChecker =
                 ok (CheckedExpression.LiteralBoolean value) (CheckedType.primitive Model.PrimitiveType.Bool)
             | ExpressionNode.LiteralS32 value ->
                 ok (CheckedExpression.LiteralSignedInteger(int64 value)) (CheckedType.primitive Model.PrimitiveType.S32)
+            // Since stack allocations will look something like stackalloc MyClass, heap allocations should lookup like new MyClass() instead of new ^MyClass()
             | ExpressionNode.NewObject({ Content = AnyTypeNode.Array etype } as ty, oconstructor) ->
                 match oconstructor.Content with
-                | ConstructionExpression.ConstructorCall _ ->
-                    error oconstructor SemanticErrorMessage.ArrayConstructorCall
+                | ConstructionExpression.ConstructorCall arguments ->
+                    if arguments.Length <> 1 then
+                        error oconstructor SemanticErrorMessage.ArrayConstructorCall
+                    else
+                        validated {
+                            let! arrayElementType =
+                                checkAnyType namedTypeLookup method.DeclaringType.Source method.DeclaringType.UsedNamespaces etype
+
+                            let! checkedElementType = expectElementType etype method.DeclaringType.Source arrayElementType
+
+                            match! checkParsedExpression method arguments.[0] with
+                            | ltype ->
+                                return!
+                                    ok
+                                        (CheckedExpression.NewArray(checkedElementType, CheckedArrayContents.Empty ltype))
+                                        (CheckedType.array checkedElementType)
+                            //| { TypedExpression.Type = CheckedType.ValueType(CheckedValueType.Primitive Model.PrimitiveType.UNative) } ->
+                            //    return failwith "TODO: Array with length"
+                            //| { TypedExpression.Type = bad } ->
+                            //    return! error oconstructor (SemanticErrorMessage.ExpectedExpressionType(CheckedType.primitive Model.PrimitiveType.UNative, bad))
+                        }
                 | ConstructionExpression.String str ->
                     match etype.Content with
                     | AnyTypeNode.Primitive Model.PrimitiveType.Char32 ->
@@ -996,8 +1042,10 @@ module TypeChecker =
                               TypedExpression.Node = expr }
                             |> characters.Add
 
-                        let etype = CheckedElementType.primitive Model.PrimitiveType.Char32
-                        ok (CheckedExpression.NewArray(etype, characters.ToImmutable())) (CheckedType.array etype)
+                        let ctype = CheckedElementType.primitive Model.PrimitiveType.Char32
+                        ok
+                            (CheckedExpression.NewArray(ctype, CheckedArrayContents.Elements(characters.ToImmutable())))
+                            (CheckedType.array ctype)
                     // TODO: Add case for UTF-16 strings
                     | _ -> error ty (SemanticErrorMessage.InvalidCharacterType etype)
                 | bad -> raise(NotImplementedException "TODO: Add support for array literals")

@@ -360,7 +360,7 @@ let rec private writeExpressionCode
 
         instructions.Add(InstructionSet.Obj_fd_ld(lookupNamedField definedFieldIndices field, sources.[0]))
         writeOneRegister()
-    | CheckedExpression.NewArray(etype, elements) ->
+    | CheckedExpression.NewArray(etype, CheckedArrayContents.Elements elements) ->
         match etype with
         | CheckedElementType.ValueType(CheckedValueType.Primitive(PrimitiveType.Char32 | PrimitiveType.U32) as vtype) ->
             let mutable bytes, isConstantExpression, constantValueCount = Array.zeroCreate(4 * elements.Length), true, 0
@@ -381,6 +381,13 @@ let rec private writeExpressionCode
                 raise(NotImplementedException "NON-DATA arrays not yet implemented")
         | _ ->
             raise(NotImplementedException(sprintf "Code generation for new array containing %O is not yet implemented" etype))
+    | CheckedExpression.NewArray(etype, CheckedArrayContents.Empty length) ->
+        let values = writeNestedExpression length
+        if values.Length <> 1 then
+            invalidOp(sprintf "Expected array length but got %i values" values.Length)
+
+        instructions.Add(InstructionSet.Obj_arr_new(typeSignatureLookup(CheckedElementType.toType etype), values.[0]))
+        writeOneRegister()
     | CheckedExpression.NewObject(constructor, arguments) ->
         let constructorArgumentRegisters = writeMethodArguments arguments
 

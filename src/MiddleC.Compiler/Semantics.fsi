@@ -104,12 +104,16 @@ type CheckedExpression =
     | LiteralUnsignedInteger of uint64
     | Local of name: ParsedIdentifier // CheckedLocal
     | MethodCall of method: NamedMethod * arguments: ImmutableArray<TypedExpression>
-    | NewArray of CheckedElementType * elements: ImmutableArray<TypedExpression>
+    | NewArray of CheckedElementType * contents: CheckedArrayContents
     | NewObject of constructor: NamedConstructor * arguments: ImmutableArray<TypedExpression>
     ///// Represents the absence of a value, used when a method that is called does not have any return values.
     //| Nothing
 
     override ToString : unit -> string
+
+and [<RequireQualifiedAccess; NoComparison; NoEquality>] CheckedArrayContents =
+    | Empty of length: TypedExpression
+    | Elements of elements: ImmutableArray<TypedExpression>
 
 and [<RequireQualifiedAccess; NoComparison; NoEquality; DebuggerDisplay("{ToString()}")>] TypedExpression =
     { Expression: CheckedExpression
@@ -246,6 +250,10 @@ type CheckedModule with
 [<RequireQualifiedAccess>]
 module CheckedType =
     val primitive : UByte.Format.Model.PrimitiveType -> CheckedType
+
+[<RequireQualifiedAccess>]
+module CheckedElementType =
+    val toType : CheckedElementType -> CheckedType
 
 [<RequireQualifiedAccess>]
 module TypeChecker =
