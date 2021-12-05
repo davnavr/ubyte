@@ -409,6 +409,38 @@ and [<Sealed>] CheckedTypeDefinition
 
     interface IEquatable<CheckedTypeDefinition> with member _.Equals other = identifier = other.Identifier
 
+[<RequireQualifiedAccess>]
+module CheckedMethodSignature =
+    let comparer =
+        { new IEqualityComparer<CheckedMethodSignature> with
+            member _.Equals(x, y) =
+                let mutable equal = x.ParameterTypes.Length = y.ParameterTypes.Length
+                let mutable i = 0
+
+                while equal && i < x.ParameterTypes.Length do
+                    equal <- x.ParameterTypes.[i] = y.ParameterTypes.[i]
+                    i <- i + 1
+
+                if x.ReturnTypes.Length = y.ReturnTypes.Length then
+                    i <- 0
+                    while equal && i < x.ReturnTypes.Length do
+                        equal <- x.ReturnTypes.[i] = y.ReturnTypes.[i]
+                        i <- i + 1
+                    equal
+                else
+                    x.ReturnTypes.IsDefaultOrEmpty && y.ReturnTypes.Length = 1 && y.ReturnTypes.[0] = CheckedType.Void
+                    || y.ReturnTypes.IsDefaultOrEmpty && x.ReturnTypes.Length = 1 && x.ReturnTypes.[0] = CheckedType.Void
+
+            member _.GetHashCode signature =
+                let mutable hash = HashCode()
+                for ptype in signature.ParameterTypes do hash.Add ptype
+                for rtype in signature.ReturnTypes do hash.Add rtype
+                hash.ToHashCode() }
+
+    let ofConstructor parameterTypes =
+        { CheckedMethodSignature.ParameterTypes = parameterTypes
+          CheckedMethodSignature.ReturnTypes = ImmutableArray.Empty }
+
 type SemanticErrorMessage =
     | AmbiguousTypeIdentifier of name: TypeIdentifier * matches: seq<FullTypeIdentifier>
     | AmbiguousConstructorOverload of declaringTypeName: FullTypeIdentifier *
@@ -965,6 +997,7 @@ module TypeChecker =
         let rec referenceType (im: UByte.Resolver.ResolvedModule) rt =
             match rt with
             | ReferenceType.Vector etype -> CheckedReferenceType.Array(elementType im etype)
+            | ReferenceType.Defined tindex -> CheckedReferenceType.Class(Choice2Of2(im.TypeAt tindex))
             | _ -> raise(NotImplementedException(sprintf "Translation of reference type %O is not yet supported" rt))
 
         and elementType im et =
@@ -1019,10 +1052,11 @@ module TypeChecker =
         arguments
         =
         let matches = List<UByte.Resolver.ResolvedMethod>(1)
-        let types = getArgumentTypes arguments
+        let expectedConstructorSignature = CheckedMethodSignature.ofConstructor(getArgumentTypes arguments)
 
         for ctor in declaringTypeImport.DefinedConstructors do
-            if ctor.Visibility <= Model.VisibilityFlags.Public && translateMethodSignature(ctor).ParameterTypes = types then
+            // TODO: Fix, expected signature is missing type of "this"
+            if ctor.Visibility <= Model.VisibilityFlags.Public && CheckedMethodSignature.comparer.Equals(translateMethodSignature ctor, expectedConstructorSignature) then
                 matches.Add ctor
 
         match matches.Count with
@@ -1431,7 +1465,9 @@ module TypeChecker =
                         { CheckedMethodSignature.ParameterTypes =
                             TranslateType.methodImportTypes import.DeclaringModule import.Signature.ParameterTypes
                           CheckedMethodSignature.ReturnTypes =
-                            TranslateType.methodImportTypes import.DeclaringModule import.Signature.ReturnTypes }
+                            if import.Signature.ReturnTypes.IsDefaultOrEmpty
+                            then ImmutableArray.Empty
+                            else TranslateType.methodImportTypes import.DeclaringModule import.Signature.ReturnTypes }
                     cache.[import] <- signature
                     signature
 

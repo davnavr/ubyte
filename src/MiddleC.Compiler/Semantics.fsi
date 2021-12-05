@@ -178,12 +178,16 @@ and [<RequireQualifiedAccess; NoComparison; NoEquality>] CheckedMethodBody =
     | Defined of ImmutableArray<CheckedStatement>
     | External of string * library: string
 
-[<RequireQualifiedAccess; IsReadOnly; Struct; NoComparison; StructuralEquality>]
+[<RequireQualifiedAccess; IsReadOnly; Struct; NoComparison; NoEquality>]
 type CheckedMethodSignature =
     { ParameterTypes: ImmutableArray<CheckedType>
       ReturnTypes: ImmutableArray<CheckedType> }
 
-    interface System.IEquatable<CheckedMethodSignature>
+[<RequireQualifiedAccess>]
+module CheckedMethodSignature =
+    val comparer : System.Collections.Generic.IEqualityComparer<CheckedMethodSignature>
+
+    val ofConstructor : parameterTypes: ImmutableArray<CheckedType> -> CheckedMethodSignature
 
 type CheckedMethod with
     member Signature : CheckedMethodSignature

@@ -644,7 +644,7 @@ let write (mdl: CheckedModule) =
 
     let struct(msignatures, methodSignatureLookup: CheckedMethodSignature -> MethodSignatureIndex) =
         createIndexedLookup
-            EqualityComparer.Default // TODO: Compare method signatures instead to reduce number of method signatures in output.
+            CheckedMethodSignature.comparer
             (fun signature ->
                 let inline getSignatureArray (types: ImmutableArray<_>) =
                     let mutable types' = Array.zeroCreate types.Length
