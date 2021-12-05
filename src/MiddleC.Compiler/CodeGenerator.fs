@@ -171,6 +171,12 @@ let private writeMethodDefinitions
               Method.MethodAnnotations = ImmutableArray.Empty
               Method.Body = defineMethodBody ctor }
 
+    // Since initializers won't be referenced by index all that often, they will get the higher indices.
+    //for i = 0 to initializers.Length - 1 do
+    //    let init = initializers.[i]
+    //    addMethodIndex init (uint32 methods.Length + uint32 constructors.Length + uint32 i)
+    //    definitions.[methods.Length + constructors.Length + i] <-
+
     struct(Unsafe.As<Method[], ImmutableArray<Method>> &definitions, indices, bodies)
 
 let private writeTypeDefinitions
@@ -201,8 +207,9 @@ let private writeTypeDefinitions
               TypeDefinition.TypeAnnotations = ImmutableArray.Empty
               TypeDefinition.Fields = ImmutableArray.Empty
               TypeDefinition.Methods =
-                let mutable methods = Array.zeroCreate ty.Methods.Length
-                for i = 0 to methods.Length - 1 do methods.[i] <- methodDefinitionLookup.[ty.Methods.[i]]
+                let mutable methods = Array.zeroCreate(ty.Methods.Length + ty.Constructors.Length)
+                for i = 0 to ty.Methods.Length - 1 do methods.[i] <- methodDefinitionLookup.[ty.Methods.[i]]
+                for i = 0 to ty.Constructors.Length - 1 do methods.[ty.Methods.Length + i] <- methodDefinitionLookup.[ty.Constructors.[i]]
                 Unsafe.As<MethodIndex[], ImmutableArray<MethodIndex>> &methods
               TypeDefinition.VTable = ImmutableArray.Empty }
 
