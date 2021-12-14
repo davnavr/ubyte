@@ -1463,7 +1463,10 @@ module TypeChecker =
                 | false, _ ->
                     let signature =
                         { CheckedMethodSignature.ParameterTypes =
-                            TranslateType.methodImportTypes import.DeclaringModule import.Signature.ParameterTypes
+                            if import.IsInstance
+                            then import.Signature.ParameterTypes.RemoveAt(0)
+                            else import.Signature.ParameterTypes
+                            |> TranslateType.methodImportTypes import.DeclaringModule
                           CheckedMethodSignature.ReturnTypes =
                             if import.Signature.ReturnTypes.IsDefaultOrEmpty
                             then ImmutableArray.Empty
