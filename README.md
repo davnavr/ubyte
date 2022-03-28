@@ -1,3 +1,8 @@
+[![Project Status: Inactive – The project has reached a stable, usable state but is no longer being actively developed; support/maintenance will be provided as time allows.](https://www.repostatus.org/badges/latest/inactive.svg)](https://www.repostatus.org/#inactive)
+
+# Notice
+This has now been superceded by [`SAILAR`](https://github.com/davnavr/SAILAR-lang), a rewrite of this project in the Rust programming language for performance reasons and changes in design.
+
 # What is this?
 
 Another virtual machine and bytecode format written for fun, whose language is in [static single assignment form](https://en.wikipedia.org/wiki/Static_single_assignment_form).
