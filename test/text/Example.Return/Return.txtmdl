@@ -1,0 +1,35 @@
+﻿.module Return
+.version 0 1 0
+.format 0 0
+
+.identifier @id_namespace Example
+.identifier @id_class Hello
+.identifier @id_entry_point main
+
+.signature @sig_int type s32
+
+.signature @sig_main method (@sig_int) ()
+
+.code @code_main {
+    .block $ENTRY {
+        %l_exit = const.zero s32
+        ret (%l_exit)
+    }
+}
+
+.namespace @namespace_example {
+    .name @id_namespace
+}
+
+.type @class_hello public {
+    .name @id_class
+    .namespace @namespace_example
+
+    .method @method_main public {
+        .signature @sig_main
+        .name @id_entry_point
+        .body defined @code_main
+    }
+}
+
+.entrypoint @method_main
